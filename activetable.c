@@ -32,15 +32,15 @@ static smgrextend_hook_type prev_smgrextend_hook = NULL;
 static smgrtruncate_hook_type prev_smgrtruncate_hook = NULL;
 static void active_table_hook_smgrcreate(SMgrRelation reln,
 							  ForkNumber forknum,
-							  bool isRedo)
+							  bool isRedo);
 static void active_table_hook_smgrextend(SMgrRelation reln,
 							  ForkNumber forknum,
 							  BlockNumber blocknum,
 							  char *buffer,
-							  bool skipFsync)
-static void active_table_hook_smgrcreate(SMgrRelation reln,
+							  bool skipFsync);
+static void active_table_hook_smgrtruncate(SMgrRelation reln,
 							  ForkNumber forknum,
-							  BlockNumber blocknum)
+							  BlockNumber blocknum);
 
 static void report_active_table_SmgrStat(SMgrRelation reln);
 static HTAB* get_active_tables_stats(void);
@@ -64,7 +64,7 @@ init_active_table_hook(void)
 	smgrextend_hook = active_table_hook_smgrextend;
 
 	prev_smgrtruncate_hook = smgrtruncate_hook;
-	smgrtruncate_hook = active_table_hook_smgrcreate;
+	smgrtruncate_hook = active_table_hook_smgrtruncate;
 }
 
 static void
@@ -86,7 +86,7 @@ active_table_hook_smgrextend(SMgrRelation reln,
 }
 
 static void
-active_table_hook_smgrcreate(SMgrRelation reln,
+active_table_hook_smgrtruncate(SMgrRelation reln,
 							  pg_attribute_unused() ForkNumber forknum,
 							  pg_attribute_unused() BlockNumber blocknum)
 {
@@ -180,7 +180,7 @@ get_all_tables_stats()
 		if (classForm->relkind != RELKIND_RELATION &&
 				classForm->relkind != RELKIND_MATVIEW)
 			continue;
-		relOid = HeapTupleGetOid(tuple);
+		relOid = classForm->oid;
 
 		/* ignore system table*/
 		if (relOid < FirstNormalObjectId)
@@ -308,9 +308,6 @@ report_active_table_SmgrStat(SMgrRelation reln)
 	DiskQuotaActiveTableFileEntry *entry;
 	DiskQuotaActiveTableFileEntry item;
 	bool found = false;
-
-	if (prev_SmgrStat_hook)
-		(*prev_SmgrStat_hook)(reln);
 
 	MemSet(&item, 0, sizeof(DiskQuotaActiveTableFileEntry));
 	item.dbid = reln->smgr_rnode.node.dbNode;
