@@ -143,11 +143,17 @@ DiskQuotaShmemSize(void)
 
 	size = MAXALIGN(sizeof(disk_quota_shared_state));
 	size = add_size(size, size); // two locks
+	size = add_size(size, sizeof(MessageBox));
 	size = add_size(size, hash_estimate_size(MAX_DISK_QUOTA_BLACK_ENTRIES, sizeof(BlackMapEntry)));
 	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(DiskQuotaActiveTableEntry)));
 	return size;
 }
 
+static void
+init_lwlocks(void)
+{
+	dq_locks.mq_lock = &GetNamedLWLockTranche("disk_quota_message_box_shm_lock")->lock;
+}
 /*
  * DiskQuotaShmemInit
  *		Allocate and initialize diskquota-related shared memory
@@ -166,6 +172,12 @@ disk_quota_shmem_startup(void)
 
 	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
 
+	init_lwlocks();
+	message_box = ShmemInitStruct("disk_quota_message_box",
+								sizeof(MessageBox),
+								&found);
+	if (!found)
+		memset(message_box, 0, sizeof(MessageBox));
 	black_map_shm_lock = ShmemInitStruct("disk_quota_black_map_shm_lock",
 								 sizeof(disk_quota_shared_state),
 								 &found);
@@ -204,6 +216,7 @@ init_disk_quota_shmem(void)
 	RequestAddinShmemSpace(DiskQuotaShmemSize());
 	RequestNamedLWLockTranche("disk_quota_black_map_shm_lock", 1);
 	RequestNamedLWLockTranche("disk_quota_active_table_shm_lock", 1);
+	RequestNamedLWLockTranche("disk_quota_message_box_shm_lock", 1);
 
 	/*
 	 * Install startup hook to initialize our shared memory.
@@ -843,4 +856,24 @@ quota_check_common(Oid reloid)
 	}
 	LWLockRelease(black_map_shm_lock->lock);
 	return true;
+}
+
+/*
+ * invalidate all black entry with a specific dbid in SHM
+ */
+void
+diskquota_invalidate_db(Oid dbid)
+{
+	BlackMapEntry * entry;
+	HASH_SEQ_STATUS iter;
+	LWLockAcquire(black_map_shm_lock->lock, LW_EXCLUSIVE);
+	hash_seq_init(&iter, disk_quota_black_map);
+	while ((entry = hash_seq_search(&iter)) != NULL)
+	{
+		if (entry->databaseoid == dbid)
+		{
+			hash_search(disk_quota_black_map, entry, HASH_REMOVE, NULL);
+		}
+	}
+	LWLockRelease(black_map_shm_lock->lock);
 }
