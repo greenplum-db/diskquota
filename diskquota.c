@@ -40,6 +40,7 @@
 #include "utils/memutils.h"
 #include "utils/numeric.h"
 #include "utils/snapmgr.h"
+#include "utils/syscache.h"
 
 #include "activetable.h"
 #include "diskquota.h"
