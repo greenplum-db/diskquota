@@ -95,7 +95,7 @@ static void exec_simple_query_(const char *sql, int expected_code);
 static bool add_db_to_config(Oid dbid);
 static void del_db_from_config(Oid dbid);
 static void process_message_box();
-static void process_message_box_(MessageResult *code);
+static void process_message_box_internal(MessageResult *code);
 static void dq_object_access_hook(ObjectAccessType access, Oid classId,
 				Oid objectId, int subId, void *arg);
 extern void diskquota_invalidate_db(Oid dbid);
@@ -320,43 +320,15 @@ exec_simple_query_(const char *sql, int expected_code)
 static bool
 is_valid_dbid(Oid dbid)
 {
-	HeapTuple	tuple;
-	Relation	relation;
-	SysScanDesc scan;
-	ScanKeyData key[1];
-	bool ok;
+    HeapTuple       tuple;
 
-	if (dbid == InvalidOid)
-		return false;
-	/*
-	 * form a scan key
-	 */
-	ScanKeyInit(&key[0],
-				Anum_pg_database_oid,
-				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(dbid));
-
-	/*
-	 * Open pg_database and fetch a tuple.  Force heap scan if we haven't yet
-	 * built the critical shared relcache entries (i.e., we're starting up
-	 * without a shared relcache cache file).
-	 */
-	relation = heap_open(DatabaseRelationId, AccessShareLock);
-	scan = systable_beginscan(relation, DatabaseOidIndexId,
-							  criticalSharedRelcachesBuilt,
-							  NULL,
-							  1, key);
-
-	tuple = systable_getnext(scan);
-
-	/* Must copy tuple before releasing buffer */
-	ok = HeapTupleIsValid(tuple);
-
-	/* all done */
-	systable_endscan(scan);
-	heap_close(relation, AccessShareLock);
-
-	return ok;
+    if (dbid == InvalidOid)
+            return false;
+    tuple = SearchSysCache1(DATABASEOID, ObjectIdGetDatum(dbid));
+    if (!HeapTupleIsValid(tuple))
+            return false;
+    ReleaseSysCache(tuple);
+    return true;
 }
 /*
  * in early stage, start all worker processes of diskquota-enabled databases
@@ -916,7 +888,7 @@ diskquota_start_worker(PG_FUNCTION_ARGS)
 }
 
 static void
-process_message_box_(MessageResult *code)
+process_message_box_internal(MessageResult *code)
 {
 	Assert(message_box->launcher_pid == MyProcPid);
 	switch (message_box->cmd)
@@ -955,7 +927,7 @@ process_message_box()
 	{
 		StartTransactionCommand();
 		// do what you want
-		process_message_box_(&code);
+		process_message_box_internal(&code);
 		CommitTransactionCommand();
 	}
 	PG_CATCH();
