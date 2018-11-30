@@ -14,8 +14,6 @@
  */
 #include "postgres.h"
 
-#include <stdlib.h>
-
 #include "access/tupdesc.h"
 #include "access/xact.h"
 #include "catalog/indexing.h"
@@ -75,7 +73,7 @@ MessageBox * message_box = NULL;
 /* using hash table to support incremental update the table size entry.*/
 static HTAB *disk_quota_worker_map = NULL;
 static object_access_hook_type next_object_access_hook;
-DiskQuotaLocks dq_locks;
+DiskQuotaLocks diskquota_locks;
 static int num_db = 0;
 
 /* functions of disk quota*/
@@ -497,7 +495,7 @@ disk_quota_launcher_main(Datum main_arg)
 		/* emergency bailout if postmaster has died */
 		if (rc & WL_POSTMASTER_DEATH)
 			proc_exit(1);
-		/* process message box, now someone is holding mq_lock */
+		/* process message box, now someone is holding message_box_lock */
 		if (got_sigusr1)
 		{
 			got_sigusr1 = false;
@@ -864,7 +862,7 @@ Datum
 diskquota_start_worker(PG_FUNCTION_ARGS)
 {
 	elog(LOG, "DB = %d, MyProc=%p launcher pid=%d", MyDatabaseId, MyProc, message_box->launcher_pid);
-	LWLockAcquire(dq_locks.mq_lock, LW_EXCLUSIVE);
+	LWLockAcquire(diskquota_locks.message_box_lock, LW_EXCLUSIVE);
 	message_box->req_pid = MyProcPid;
 	message_box->cmd = CMD_CREATE_EXTENSION;
 	message_box->result = ERR_PENDING;
@@ -880,7 +878,7 @@ diskquota_start_worker(PG_FUNCTION_ARGS)
 		if (message_box->result != ERR_PENDING)
 			break;
 	}
-	LWLockRelease(dq_locks.mq_lock);
+	LWLockRelease(diskquota_locks.message_box_lock);
 	if (message_box->result != ERR_OK)
 		elog(ERROR, "start diskquota worker failed");
 	PG_RETURN_VOID();
@@ -958,7 +956,7 @@ dq_object_access_hook(ObjectAccessType access, Oid classId,
 	 * 1. stop bgworker for MyDatabaseId
 	 * 2. remove dbid from diskquota_catalog.database_list in postgres
 	 */
-	LWLockAcquire(dq_locks.mq_lock, LW_EXCLUSIVE);
+	LWLockAcquire(diskquota_locks.message_box_lock, LW_EXCLUSIVE);
 	message_box->req_pid = MyProcPid;
 	message_box->cmd = CMD_DROP_EXTENSION;
 	message_box->result = ERR_PENDING;
@@ -973,7 +971,7 @@ dq_object_access_hook(ObjectAccessType access, Oid classId,
 		if (message_box->result != ERR_PENDING)
 			break;
 	}
-	LWLockRelease(dq_locks.mq_lock);
+	LWLockRelease(diskquota_locks.message_box_lock);
 	if (message_box->result != ERR_OK)
 		elog(ERROR, "stop diskquota worker failed");
 	elog(LOG, "stop diskquota worker OK");

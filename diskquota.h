@@ -15,7 +15,9 @@ typedef struct
 } disk_quota_shared_state;
 struct DiskQuotaLocks
 {
-	LWLock *mq_lock;
+	LWLock *active_table_lock;
+	LWLock *black_map_lock;
+	LWLock *message_box_lock;
 };
 typedef struct DiskQuotaLocks DiskQuotaLocks;
 struct MessageBox
@@ -42,7 +44,7 @@ typedef struct MessageBox MessageBox;
 typedef enum MessageCommand MessageCommand;
 typedef enum MessageResult MessageResult;
 // FIXME: it's better to hide the name, not to expose it
-extern DiskQuotaLocks dq_locks;
+extern DiskQuotaLocks diskquota_locks;
 extern MessageBox *message_box;
 
 /* enforcement interface*/
