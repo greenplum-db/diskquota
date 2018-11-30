@@ -66,7 +66,7 @@ typedef struct DiskQuotaWorkerEntry DiskQuotaWorkerEntry;
 struct DiskQuotaWorkerEntry
 {
 	Oid dbid;
-	int pid; // worker pid
+	int pid; /* worker pid */
 	BackgroundWorkerHandle *handle;
 };
 
@@ -90,8 +90,8 @@ static void refresh_worker_list(void);
 static void set_quota_internal(Oid targetoid, int64 quota_limit_mb, QuotaType type);
 static int start_worker_id(Oid dbid);
 static void create_monitor_db_table();
-static void exec_simple_utility(const char *sql);
-static void exec_simple_query_(const char *sql, int expected_code);
+static inline void exec_simple_utility(const char *sql);
+static void exec_simple_spi(const char *sql, int expected_code);
 static bool add_db_to_config(Oid dbid);
 static void del_db_from_config(Oid dbid);
 static void process_message_box();
@@ -299,11 +299,11 @@ static inline void
 exec_simple_utility(const char *sql)
 {
 	StartTransactionCommand();
-	exec_simple_query_(sql, SPI_OK_UTILITY);
+	exec_simple_spi(sql, SPI_OK_UTILITY);
 	CommitTransactionCommand();
 }
 static void
-exec_simple_query_(const char *sql, int expected_code)
+exec_simple_spi(const char *sql, int expected_code)
 {
 	int ret;
 
@@ -386,7 +386,7 @@ start_workers_from_dblist()
 	PopActiveSnapshot();
 	CommitTransactionCommand();
 
-	// TODO: clean invalid database
+	/*  TODO: clean invalid database */
 
 }
 static bool
@@ -398,7 +398,7 @@ add_db_to_config(Oid dbid)
 
 	initStringInfo(&str);
 	appendStringInfo(&str, "insert into diskquota_catalog.database_list values(%d);", dbid);
-	exec_simple_query_(str.data, SPI_OK_INSERT);
+	exec_simple_spi(str.data, SPI_OK_INSERT);
 	return true;
 }
 static void
@@ -406,7 +406,7 @@ del_db_from_config(Oid dbid)
 {
 	char str[128];
 	snprintf(str, sizeof(str), "delete from diskquota_catalog.database_list where dbid=%d;", dbid);
-	exec_simple_query_(str, SPI_OK_DELETE);
+	exec_simple_spi(str, SPI_OK_DELETE);
 }
 static void
 try_kill_db_worker(Oid dbid)
@@ -863,13 +863,12 @@ Datum
 diskquota_start_worker(PG_FUNCTION_ARGS)
 {
 	elog(LOG, "DB = %d, MyProc=%p launcher pid=%d", MyDatabaseId, MyProc, message_box->launcher_pid);
-	elog(NOTICE, "DB = %d", MyDatabaseId);
 	LWLockAcquire(dq_locks.mq_lock, LW_EXCLUSIVE);
 	message_box->req_pid = MyProcPid;
 	message_box->cmd = CMD_CREATE_EXTENSION;
 	message_box->result = ERR_PENDING;
 	message_box->data[0] = MyDatabaseId;
-	// setup sig handler to receive message
+	/* setup sig handler to receive message */
 	kill(message_box->launcher_pid, SIGUSR1);
 	while(true)
 	{
@@ -880,7 +879,6 @@ diskquota_start_worker(PG_FUNCTION_ARGS)
 		if (message_box->result != ERR_PENDING)
 			break;
 	}
-	elog(LOG, "start worker result = %d", message_box->result);
 	LWLockRelease(dq_locks.mq_lock);
 	if (message_box->result != ERR_OK)
 		elog(ERROR, "start diskquota worker failed");
@@ -926,7 +924,6 @@ process_message_box()
 	PG_TRY();
 	{
 		StartTransactionCommand();
-		// do what you want
 		process_message_box_internal(&code);
 		CommitTransactionCommand();
 	}
@@ -955,9 +952,11 @@ dq_object_access_hook(ObjectAccessType access, Oid classId,
 	oid = get_extension_oid("diskquota", true);
 	if (oid != objectId)
 		goto out;
-	// invoke drop extension diskquota
-	// 1. stop bgworker for MyDatabaseId
-	// 2. remove dbid from diskquota_catalog.database_list in postgres
+	/*
+	 * invoke drop extension diskquota
+	 * 1. stop bgworker for MyDatabaseId
+	 * 2. remove dbid from diskquota_catalog.database_list in postgres
+	 */
 	LWLockAcquire(dq_locks.mq_lock, LW_EXCLUSIVE);
 	message_box->req_pid = MyProcPid;
 	message_box->cmd = CMD_DROP_EXTENSION;
@@ -973,7 +972,6 @@ dq_object_access_hook(ObjectAccessType access, Oid classId,
 		if (message_box->result != ERR_PENDING)
 			break;
 	}
-	elog(LOG, "stop worker result = %d", message_box->result);
 	LWLockRelease(dq_locks.mq_lock);
 	if (message_box->result != ERR_OK)
 		elog(ERROR, "stop diskquota worker failed");
