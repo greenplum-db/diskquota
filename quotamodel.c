@@ -57,11 +57,12 @@ typedef struct LocalBlackMapEntry LocalBlackMapEntry;
 /* local cache of table disk size and corresponding schema and owner */
 struct TableSizeEntry
 {
+	RelFileNode node;       /* hash table key */
 	Oid			reloid;
 	Oid			namespaceoid;
 	Oid			owneroid;
 	int64		totalsize;
-	bool		is_exist; /* flag used to check whether table is already dropped */
+
 };
 
 /* local cache of namespace disk size */
@@ -221,10 +222,10 @@ init_disk_quota_model(void)
 
 	/* init hash table for table/schema/role etc.*/
 	memset(&hash_ctl, 0, sizeof(hash_ctl));
-	hash_ctl.keysize = sizeof(Oid);
+	hash_ctl.keysize = sizeof(RelFileNode);
 	hash_ctl.entrysize = sizeof(TableSizeEntry);
 	hash_ctl.hcxt = CurrentMemoryContext;
-	hash_ctl.hash = oid_hash;
+	hash_ctl.hash = tag_hash;
 
 	table_size_map = hash_create("TableSizeEntry map",
 								1024 * 8,
@@ -511,6 +512,7 @@ calculate_table_disk_usage(bool force)
 	Relation	classRel;
 	HeapTuple	tuple;
 	HeapScanDesc relScan;
+	RelFileNode node;
 	TableSizeEntry *tsentry = NULL;
 	Oid			relOid;
 	HASH_SEQ_STATUS iter;
@@ -520,14 +522,8 @@ calculate_table_disk_usage(bool force)
 	classRel = heap_open(RelationRelationId, AccessShareLock);
 	relScan = heap_beginscan_catalog(classRel, 0, NULL);
 
+	/* TODO: init process could be separated to speed up processing */
 	local_active_table_stat_map = pg_fetch_active_tables(force);
-
-	/* unset is_exist flag for tsentry in table_size_map*/
-	hash_seq_init(&iter, table_size_map);
-	while ((tsentry = hash_seq_search(&iter)) != NULL)
-	{
-		tsentry->is_exist = false;
-	}
 
 	/*
 	 * scan pg_class to detect table event: drop, reset schema, reset owenr.
@@ -538,6 +534,7 @@ calculate_table_disk_usage(bool force)
 	{
 		Form_pg_class classForm = (Form_pg_class) GETSTRUCT(tuple);
 		found = false;
+
 		if (classForm->relkind != RELKIND_RELATION &&
 			classForm->relkind != RELKIND_MATVIEW)
 			continue;
@@ -547,35 +544,47 @@ calculate_table_disk_usage(bool force)
 		if(relOid < FirstNormalObjectId)
 			continue;
 
-		tsentry = (TableSizeEntry *)hash_search(table_size_map,
-							 &relOid,
-							 HASH_ENTER, &found);
-		/* mark tsentry is_exist */
-		if (tsentry)
-			tsentry->is_exist = true;
+		node.dbNode = MyDatabaseId;
+		node.spcNode = MyDatabaseTableSpace;
+		node.relNode = classForm->relfilenode;
 
-		active_table_entry = (DiskQuotaActiveTableEntry *) hash_search(local_active_table_stat_map, &relOid, HASH_FIND, &active_tbl_found);
+		tsentry = (TableSizeEntry *)hash_search(table_size_map,
+		                                        &node,
+		                                        HASH_ENTER, &found);
+
+
+		/* We need to check whether such table is in local cache yet. If not, we init the entry firstly. */
+		if(!found)
+		{
+			tsentry->node = node;
+			tsentry->reloid = relOid;
+			tsentry->namespaceoid = classForm->relnamespace;
+			tsentry->owneroid = classForm->relowner;
+			tsentry->totalsize = 0;
+
+		}
+
+		/* The worker is single thread, so it should be safe when using HASH_REMOVE as there is no other thread
+		 * on this hash table
+		 * */
+		active_table_entry = (DiskQuotaActiveTableEntry *) hash_search(local_active_table_stat_map, &node, HASH_REMOVE, &active_tbl_found);
 
 		/* skip to recalculate the tables which are not in active list and not at initializatio stage*/
 		if(active_tbl_found)
 		{
+			int64 oldtotalsize;
 
-			/* namespace and owner may be changed since last check*/
-			if (!found)
+			if (active_table_entry->type == AT_UNLINK)
 			{
-				/* if it's a new table*/
-				tsentry->reloid = relOid;
-				tsentry->namespaceoid = classForm->relnamespace;
-				tsentry->owneroid = classForm->relowner;
-				tsentry->totalsize = (int64) active_table_entry->tablesize;
-				update_namespace_map(tsentry->namespaceoid, tsentry->totalsize);
-				update_role_map(tsentry->owneroid, tsentry->totalsize);
+				/* in case of the relate file has been removed, but the relfilenode is still existing in catalog */
+				update_namespace_map(tsentry->namespaceoid, -1 * tsentry->totalsize);
+				update_role_map(tsentry->owneroid, -1 * tsentry->totalsize);
+				hash_search(table_size_map, &node, HASH_REMOVE, NULL);
 			}
 			else
 			{
-				/* if not new table in table_size_map, it must be in active table list */
-				int64 oldtotalsize = tsentry->totalsize;
-				tsentry->totalsize = (int64) active_table_entry->tablesize;
+				oldtotalsize = tsentry->totalsize;
+				tsentry->totalsize = active_table_entry->tablesize;
 				update_namespace_map(tsentry->namespaceoid, tsentry->totalsize - oldtotalsize);
 				update_role_map(tsentry->owneroid, tsentry->totalsize - oldtotalsize);
 			}
@@ -599,23 +608,60 @@ calculate_table_disk_usage(bool force)
 
 	heap_endscan(relScan);
 	heap_close(classRel, AccessShareLock);
-	hash_destroy(local_active_table_stat_map);
 
-	/* process removed tables */
-	hash_seq_init(&iter, table_size_map);
-	while ((tsentry = hash_seq_search(&iter)) != NULL)
+	/* process table objects that are not (visible) in catalog yet */
+	hash_seq_init(&iter, local_active_table_stat_map);
+	while ((active_table_entry = (DiskQuotaActiveTableEntry *) hash_seq_search(&iter)) != NULL)
 	{
-		if (tsentry->is_exist == false)
+
+		tsentry = (TableSizeEntry *)hash_search(table_size_map,
+		                                        &active_table_entry->node,
+		                                        HASH_ENTER, &found);
+
+
+
+		/* A new invisible table object found, we need to init it firstly and then do update */
+		if(!found && active_table_entry->type != AT_UNLINK)
+		{
+			tsentry->node = active_table_entry->node;
+			tsentry->reloid = InvalidOid;
+			tsentry->namespaceoid = active_table_entry->namespace;
+			tsentry->owneroid = active_table_entry->owner;
+			tsentry->totalsize = active_table_entry->tablesize;
+
+			update_namespace_map(tsentry->namespaceoid, tsentry->totalsize);
+			update_role_map(tsentry->reloid, tsentry->totalsize);
+
+			ereport(DEBUG1, (errmsg("An active relfilenode %d:%d is added into local cache",
+			                       active_table_entry->node.relNode, active_table_entry->node.spcNode)));
+
+		}
+		else if (found && active_table_entry->type != AT_UNLINK)
+		{
+			int64 oldtotalsize = tsentry->totalsize;
+			tsentry->totalsize = active_table_entry->tablesize;
+			update_namespace_map(tsentry->namespaceoid, tsentry->totalsize - oldtotalsize);
+			update_role_map(tsentry->owneroid, tsentry->totalsize - oldtotalsize);
+			ereport(DEBUG1, (errmsg("An active relfilenode %d:%d is updated into local cache",
+			                     active_table_entry->node.relNode, active_table_entry->node.spcNode)));
+		}
+		else if (found && active_table_entry->type == AT_UNLINK)
 		{
 			update_role_map(tsentry->owneroid, -1 * tsentry->totalsize);
 			update_namespace_map(tsentry->namespaceoid, -1 * tsentry->totalsize);
-
-			hash_search(table_size_map,
-					&tsentry->reloid,
-					HASH_REMOVE, NULL);
-			continue;
+			hash_search(table_size_map, &active_table_entry->node, HASH_REMOVE, NULL);
+			ereport(DEBUG1, (errmsg("An active relfilenode %d:%d is deleted into local cache",
+			                     active_table_entry->node.relNode, active_table_entry->node.spcNode)));
 		}
+		else
+		{
+			ereport(ERROR, (errmsg("An active relfilenode %d:%d is under incorrect status",
+			                     active_table_entry->node.relNode, active_table_entry->node.spcNode)));
+
+		}
+
 	}
+	hash_destroy(local_active_table_stat_map);
 }
 
 /*

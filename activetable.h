@@ -3,18 +3,45 @@
 
 #include "diskquota.h"
 
+/* Type of status of returned active table objects*/
+typedef enum
+{
+	TABLE_COMMIT_CHANGE = 0,
+	TABLE_COMMIT_CREATE = 1,
+	TABLE_COMMIT_DELETE = 2,
+	TABLE_IN_TRANSX_CHANGE = 3,
+	TABLE_IN_TRANSX_CREATE = 4,
+	TABLE_IN_TRANSX_DELETE = 5,
+	TABLE_NOT_FOUND = 6,
+	TABLE_UNKNOWN = 99,
+} ATStatus;
+
+typedef enum
+{
+	AT_CREATE = 1,
+	AT_EXTEND = 2,
+	AT_TRUNCATE = 3,
+	AT_UNLINK = 4,
+} ActiveType;
+
 /* Cache to detect the active table list */
 typedef struct DiskQuotaActiveTableFileEntry
 {
-	Oid         dbid;
-	Oid         relfilenode;
-	Oid         tablespaceoid;
+	RelFileNode     node;
+	Oid             inXnamespace;
+	Oid             inXowner;
+	ATStatus        tablestatus;
+	bool			ispushedback;
+
 } DiskQuotaActiveTableFileEntry;
 
 typedef struct DiskQuotaActiveTableEntry
 {
-	Oid     tableoid;
-	Size    tablesize;
+	RelFileNode     node;
+	int64           tablesize;
+	Oid             namespace;
+	Oid             owner;
+	ActiveType      type;
 } DiskQuotaActiveTableEntry;
 
 

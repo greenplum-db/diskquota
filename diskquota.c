@@ -57,9 +57,12 @@ static volatile sig_atomic_t got_sighup = false;
 static volatile sig_atomic_t got_sigterm = false;
 static volatile sig_atomic_t got_sigusr1 = false;
 
+ #define MAX_DISK_QUOTA_ACTIVE_ENTRIES (1 * 1024 * 1024)
+
 /* GUC variables */
 int	diskquota_naptime = 0;
-int diskquota_max_active_tables = 0;
+char *diskquota_monitored_database_list = NULL;
+int diskquota_max_active_tables = MAX_DISK_QUOTA_ACTIVE_ENTRIES;
 
 typedef struct DiskQuotaWorkerEntry DiskQuotaWorkerEntry;
 
