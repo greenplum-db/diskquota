@@ -56,7 +56,6 @@ static volatile sig_atomic_t got_sigusr1 = false;
 
 /* GUC variables */
 int	diskquota_naptime = 0;
-char *diskquota_monitored_database_list = NULL;
 int diskquota_max_active_tables = 0;
 
 typedef struct DiskQuotaWorkerEntry DiskQuotaWorkerEntry;
@@ -69,11 +68,11 @@ struct DiskQuotaWorkerEntry
 	BackgroundWorkerHandle *handle;
 };
 
+DiskQuotaLocks diskquota_locks;
 MessageBox * message_box = NULL;
 /* using hash table to support incremental update the table size entry.*/
 static HTAB *disk_quota_worker_map = NULL;
 static object_access_hook_type next_object_access_hook;
-DiskQuotaLocks diskquota_locks;
 static int num_db = 0;
 
 /* functions of disk quota*/
@@ -87,7 +86,7 @@ static void disk_quota_sighup(SIGNAL_ARGS);
 static int64 get_size_in_mb(char *str);
 static void refresh_worker_list(void);
 static void set_quota_internal(Oid targetoid, int64 quota_limit_mb, QuotaType type);
-static int start_worker_id(Oid dbid);
+static int start_worker_by_dboid(Oid dbid);
 static void create_monitor_db_table();
 static inline void exec_simple_utility(const char *sql);
 static void exec_simple_spi(const char *sql, int expected_code);
@@ -374,7 +373,7 @@ start_workers_from_dblist()
 			fake_dbid[fake_count++] = dbid;
 			continue;
 		}
-		if (start_worker_id(dbid)<1)
+		if (start_worker_by_dboid(dbid)<1)
 		{
 			elog(WARNING, "[diskquota]: start worker process of database(%d) failed", dbid);
 		}
@@ -428,7 +427,7 @@ on_add_db(Oid dbid)
 {
 	if (!add_db_to_config(dbid))
 		elog(ERROR, "failed to add dbid=%d", dbid);
-	if (start_worker_id(dbid)<=0)
+	if (start_worker_by_dboid(dbid)<=0)
 		elog(ERROR, "failed to start worker - dbid=%d", dbid);
 }
 static void
@@ -531,7 +530,7 @@ refresh_worker_list(void)
  * Dynamically launch an disk quota worker process.
  */
 static int
-start_worker_id(Oid dbid)
+start_worker_by_dboid(Oid dbid)
 {
 	BackgroundWorker worker;
 	BackgroundWorkerHandle *handle;
