@@ -227,7 +227,7 @@ void
 disk_quota_worker_main(Datum main_arg)
 {
 	char *dbname = MyBgworkerEntry->bgw_extra;
-	elog(LOG,"start disk quota worker process to monitor database:%s", dbname);
+	elog(LOG,"[diskquota]:start disk quota worker process to monitor database:%s", dbname);
 
 	/* Establish signal handlers before unblocking signals. */
 	pqsignal(SIGHUP, disk_quota_sighup);
@@ -861,22 +861,28 @@ get_size_in_mb(char *str)
 Datum
 diskquota_start_worker(PG_FUNCTION_ARGS)
 {
-	elog(LOG, "DB = %d, MyProc=%p launcher pid=%d", MyDatabaseId, MyProc, message_box->launcher_pid);
+	int rc;
+	elog(LOG, "[diskquota]:DB = %d, MyProc=%p launcher pid=%d", MyDatabaseId, MyProc, message_box->launcher_pid);
 	LWLockAcquire(diskquota_locks.message_box_lock, LW_EXCLUSIVE);
 	message_box->req_pid = MyProcPid;
 	message_box->cmd = CMD_CREATE_EXTENSION;
 	message_box->result = ERR_PENDING;
 	message_box->data[0] = MyDatabaseId;
 	/* setup sig handler to receive message */
-	kill(message_box->launcher_pid, SIGUSR1);
-	while(true)
+	rc = kill(message_box->launcher_pid, SIGUSR1);
+	if (rc == 0)
 	{
-		WaitLatch(&MyProc->procLatch,
-					   WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
-					   200L, PG_WAIT_EXTENSION);
-		ResetLatch(&MyProc->procLatch);
-		if (message_box->result != ERR_PENDING)
-			break;
+		while(true)
+		{
+			rc = WaitLatch(&MyProc->procLatch,
+						   WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
+						   200L, PG_WAIT_EXTENSION);
+			if (rc & WL_POSTMASTER_DEATH)
+				break;
+			ResetLatch(&MyProc->procLatch);
+			if (message_box->result != ERR_PENDING)
+				break;
+		}
 	}
 	LWLockRelease(diskquota_locks.message_box_lock);
 	if (message_box->result != ERR_OK)
@@ -901,7 +907,7 @@ process_message_box_internal(MessageResult *code)
 			*code = ERR_OK;
 			break;
 		default:
-			elog(LOG, "unsupported message cmd=%d", message_box->cmd);
+			elog(LOG, "[diskquota]:unsupported message cmd=%d", message_box->cmd);
 			*code = ERR_UNKNOWN;
 			break;
 	}
@@ -946,6 +952,7 @@ dq_object_access_hook(ObjectAccessType access, Oid classId,
 			Oid objectId, int subId, void *arg)
 {
 	Oid oid;
+	int rc;
 	if (access != OAT_DROP || classId != ExtensionRelationId)
 		goto out;
 	oid = get_extension_oid("diskquota", true);
@@ -961,15 +968,20 @@ dq_object_access_hook(ObjectAccessType access, Oid classId,
 	message_box->cmd = CMD_DROP_EXTENSION;
 	message_box->result = ERR_PENDING;
 	message_box->data[0] = MyDatabaseId;
-	kill(message_box->launcher_pid, SIGUSR1);
-	while(true)
+	rc = kill(message_box->launcher_pid, SIGUSR1);
+	if (rc == 0)
 	{
-		WaitLatch(&MyProc->procLatch,
-					   WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
-					   200L, PG_WAIT_EXTENSION);
-		ResetLatch(&MyProc->procLatch);
-		if (message_box->result != ERR_PENDING)
-			break;
+		while(true)
+		{
+			rc = WaitLatch(&MyProc->procLatch,
+						   WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
+						   200L, PG_WAIT_EXTENSION);
+			if (rc & WL_POSTMASTER_DEATH)
+				break;
+			ResetLatch(&MyProc->procLatch);
+			if (message_box->result != ERR_PENDING)
+				break;
+		}
 	}
 	LWLockRelease(diskquota_locks.message_box_lock);
 	if (message_box->result != ERR_OK)
