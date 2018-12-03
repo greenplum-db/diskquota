@@ -54,9 +54,12 @@ static volatile sig_atomic_t got_sighup = false;
 static volatile sig_atomic_t got_sigterm = false;
 static volatile sig_atomic_t got_sigusr1 = false;
 
+ #define MAX_DISK_QUOTA_ACTIVE_ENTRIES (1 * 1024 * 1024)
+
 /* GUC variables */
 int	diskquota_naptime = 0;
-int diskquota_max_active_tables = 0;
+char *diskquota_monitored_database_list = NULL;
+int diskquota_max_active_tables = MAX_DISK_QUOTA_ACTIVE_ENTRIES;
 
 typedef struct DiskQuotaWorkerEntry DiskQuotaWorkerEntry;
 
@@ -160,6 +163,8 @@ _PG_init(void)
 	snprintf(worker.bgw_name, BGW_MAXLEN, "[diskquota] - launcher");
 
 	RegisterBackgroundWorker(&worker);
+
+	elog(LOG, "INIT FINISH");
 }
 
 void
@@ -522,6 +527,7 @@ disk_quota_launcher_main(Datum main_arg)
 	hash_ctl.keysize = sizeof(Oid);
 	hash_ctl.entrysize = sizeof(DiskQuotaWorkerEntry);
 	hash_ctl.hash = oid_hash;
+	elog(LOG,"diskquota launcher starting");
 
 	disk_quota_worker_map = hash_create("disk quota worker map",
 						  1024,
