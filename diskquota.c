@@ -69,7 +69,7 @@ struct DiskQuotaWorkerEntry
 };
 
 DiskQuotaLocks diskquota_locks;
-MessageBox * message_box = NULL;
+volatile MessageBox * message_box = NULL;
 /* using hash table to support incremental update the table size entry.*/
 static HTAB *disk_quota_worker_map = NULL;
 static object_access_hook_type next_object_access_hook;
@@ -96,6 +96,7 @@ static void process_message_box();
 static void process_message_box_internal(MessageResult *code);
 static void dq_object_access_hook(ObjectAccessType access, Oid classId,
 				Oid objectId, int subId, void *arg);
+static const char *err_code_to_name(MessageResult code);
 extern void diskquota_invalidate_db(Oid dbid);
 
 /*
@@ -290,7 +291,6 @@ create_monitor_db_table()
 	const char *sql;
 	sql = "create schema if not exists diskquota_catalog;"
 		"create table if not exists diskquota_catalog.database_list(dbid oid not null unique);";
-	pg_usleep(4*1000*1000);
 	exec_simple_utility(sql);
 }
 static inline void
@@ -391,8 +391,6 @@ static bool
 add_db_to_config(Oid dbid)
 {
 	StringInfoData str;
-	if (num_db >=10 || !is_valid_dbid(dbid))
-		return false;
 
 	initStringInfo(&str);
 	appendStringInfo(&str, "insert into diskquota_catalog.database_list values(%d);", dbid);
@@ -422,14 +420,55 @@ try_kill_db_worker(Oid dbid)
 		pfree(handle);
 	}
 }
+
+/*
+ * handle create extension diskquota
+ * if we know the exact error which caused failure,
+ * we set it, and error out
+ */
 static void
-on_add_db(Oid dbid)
+on_add_db(Oid dbid, MessageResult *code)
 {
-	if (!add_db_to_config(dbid))
-		elog(ERROR, "failed to add dbid=%d", dbid);
+	if (num_db >= 10)
+	{
+		*code = ERR_EXCEED;
+		elog(ERROR, "too database to monitor");
+	}
+	if (!is_valid_dbid(dbid))
+	{
+		*code = ERR_INVALID_DBID;
+		elog(ERROR, "invalid database oid");
+	}
+
+	/*
+	 * add dbid to diskquota_catalog.database_list
+	 * set *code to ERR_ADD_TO_DB if any error occurs
+	 */
+	PG_TRY();
+	{
+		add_db_to_config(dbid);
+	}
+	PG_CATCH();
+	{
+		*code = ERR_ADD_TO_DB;
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+
 	if (start_worker_by_dboid(dbid)<=0)
+	{
+		*code = ERR_START_WORKER;
 		elog(ERROR, "failed to start worker - dbid=%d", dbid);
+	}
 }
+
+/*
+ * handle message: drop extension diskquota
+ * do our best to:
+ * 1. kill the associated worker process
+ * 2. delete dbid from diskquota_catalog.database_list
+ * 3. invalidate black-map entries from shared memory
+ */
 static void
 on_del_db(Oid dbid)
 {
@@ -871,11 +910,12 @@ diskquota_start_worker(PG_FUNCTION_ARGS)
 	rc = kill(message_box->launcher_pid, SIGUSR1);
 	if (rc == 0)
 	{
-		while(true)
+		int count = 120;
+		while(count-- >0)
 		{
 			rc = WaitLatch(&MyProc->procLatch,
 						   WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
-						   200L, PG_WAIT_EXTENSION);
+						   100L, PG_WAIT_EXTENSION);
 			if (rc & WL_POSTMASTER_DEATH)
 				break;
 			ResetLatch(&MyProc->procLatch);
@@ -883,9 +923,10 @@ diskquota_start_worker(PG_FUNCTION_ARGS)
 				break;
 		}
 	}
+	message_box->req_pid = 0;
 	LWLockRelease(diskquota_locks.message_box_lock);
 	if (message_box->result != ERR_OK)
-		elog(ERROR, "start diskquota worker failed");
+		elog(ERROR, "%s", err_code_to_name((MessageResult)message_box->result));
 	PG_RETURN_VOID();
 }
 
@@ -896,14 +937,12 @@ process_message_box_internal(MessageResult *code)
 	switch (message_box->cmd)
 	{
 		case CMD_CREATE_EXTENSION:
-			on_add_db(message_box->data[0]);
+			on_add_db(message_box->data[0], code);
 			num_db++;
-			*code = ERR_OK;
 			break;
 		case CMD_DROP_EXTENSION:
 			on_del_db(message_box->data[0]);
 			num_db--;
-			*code = ERR_OK;
 			break;
 		default:
 			elog(LOG, "[diskquota]:unsupported message cmd=%d", message_box->cmd);
@@ -930,6 +969,7 @@ process_message_box()
 		StartTransactionCommand();
 		process_message_box_internal(&code);
 		CommitTransactionCommand();
+		code = ERR_OK;
 	}
 	PG_CATCH();
 	{
@@ -938,7 +978,6 @@ process_message_box()
 		AbortCurrentTransaction();
 		FlushErrorState();
 		RESUME_INTERRUPTS();
-		code = ERR_UNKNOWN;
 		num_db = old_num_db;
 	}
 	PG_END_TRY();
@@ -970,11 +1009,12 @@ dq_object_access_hook(ObjectAccessType access, Oid classId,
 	rc = kill(message_box->launcher_pid, SIGUSR1);
 	if (rc == 0)
 	{
-		while(true)
+		int count = 120;
+		while(count-- >0)
 		{
 			rc = WaitLatch(&MyProc->procLatch,
 						   WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
-						   200L, PG_WAIT_EXTENSION);
+						   100L, PG_WAIT_EXTENSION);
 			if (rc & WL_POSTMASTER_DEATH)
 				break;
 			ResetLatch(&MyProc->procLatch);
@@ -982,13 +1022,28 @@ dq_object_access_hook(ObjectAccessType access, Oid classId,
 				break;
 		}
 	}
+	message_box->req_pid = 0;
 	LWLockRelease(diskquota_locks.message_box_lock);
 	if (message_box->result != ERR_OK)
-		elog(ERROR, "stop diskquota worker failed");
+		elog(ERROR, "%s", err_code_to_name((MessageResult)message_box->result));
 	elog(LOG, "stop diskquota worker OK");
 
 out:
 	if (next_object_access_hook)
 		(*next_object_access_hook)(access, classId, objectId,
 				subId, arg);
+}
+
+static const char *err_code_to_name(MessageResult code)
+{
+	switch (code)
+	{
+		case ERR_PENDING: return "ERR_PENDING";
+		case ERR_OK: return "NO ERROR";
+		case ERR_EXCEED: return "too many database to monitor";
+		case ERR_ADD_TO_DB: return "add dbid to database_list failed";
+		case ERR_START_WORKER: return "start worker failed";
+		case ERR_INVALID_DBID: return "invalid dbid";
+		default: return "unknown error";
+	}
 }

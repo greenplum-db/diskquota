@@ -37,6 +37,14 @@ enum MessageResult
 {
 	ERR_PENDING = 0,
 	ERR_OK,
+	/* the number of database exceeds the maximum */
+	ERR_EXCEED,
+	/* add the dbid to diskquota_catalog.database_list failed */
+	ERR_ADD_TO_DB,
+	/* cann't start worker process */
+	ERR_START_WORKER,
+	/* invalid dbid */
+	ERR_INVALID_DBID,
 	ERR_UNKNOWN,
 };
 #define mb_data_length  sizeof(((MessageBox*)0)->data)
@@ -45,7 +53,7 @@ typedef enum MessageCommand MessageCommand;
 typedef enum MessageResult MessageResult;
 // FIXME: it's better to hide the name, not to expose it
 extern DiskQuotaLocks diskquota_locks;
-extern MessageBox *message_box;
+extern volatile MessageBox *message_box;
 
 /* enforcement interface*/
 extern void init_disk_quota_enforcement(void);

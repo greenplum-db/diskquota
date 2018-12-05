@@ -175,7 +175,7 @@ disk_quota_shmem_startup(void)
 								sizeof(MessageBox),
 								&found);
 	if (!found)
-		memset(message_box, 0, sizeof(MessageBox));
+		memset((void*)message_box, 0, sizeof(MessageBox));
 
 	memset(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize = sizeof(BlackMapEntry);
