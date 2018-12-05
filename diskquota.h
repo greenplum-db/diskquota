@@ -9,10 +9,6 @@ typedef enum
 	ROLE_QUOTA
 } QuotaType;
 
-typedef struct
-{
-	LWLock	   *lock;		/* protects shared memory of blackMap */
-} disk_quota_shared_state;
 struct DiskQuotaLocks
 {
 	LWLock *active_table_lock;
@@ -20,19 +16,32 @@ struct DiskQuotaLocks
 	LWLock *message_box_lock;
 };
 typedef struct DiskQuotaLocks DiskQuotaLocks;
+
+/*
+ * MessageBox is used to store a message for communication between
+ * the diskquota launcher process and backends.
+ * When backend create an extension, it send a message to launcher
+ * to start the diskquota worker process and write the corresponding
+ * dbOid into diskquota database_list table in postgres database.
+ * When backend drop an extension, it will send a message to launcher
+ * to stop the diskquota worker process and remove the dbOid from diskquota
+ * database_list table as well.
+ */
 struct MessageBox
 {
 	int launcher_pid;
-	int req_pid;
-	int cmd;
-	int result;
-	int data[4];
+	int req_pid;		/* pid of the request process */
+	int cmd;			/* message command type, see MessageCommand */
+	int result;			/* message result writen by launcher, see MessageResult */
+	int data[4];		/* for create/drop extension diskquota, data[0] is dbid */
 };
+
 enum MessageCommand
 {
 	CMD_CREATE_EXTENSION = 1,
 	CMD_DROP_EXTENSION,
 };
+
 enum MessageResult
 {
 	ERR_PENDING = 0,
@@ -47,11 +56,11 @@ enum MessageResult
 	ERR_INVALID_DBID,
 	ERR_UNKNOWN,
 };
-#define mb_data_length  sizeof(((MessageBox*)0)->data)
+
 typedef struct MessageBox MessageBox;
 typedef enum MessageCommand MessageCommand;
 typedef enum MessageResult MessageResult;
-// FIXME: it's better to hide the name, not to expose it
+
 extern DiskQuotaLocks diskquota_locks;
 extern volatile MessageBox *message_box;
 
