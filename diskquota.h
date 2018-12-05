@@ -39,7 +39,7 @@ enum MessageResult
 	ERR_OK,
 	/* the number of database exceeds the maximum */
 	ERR_EXCEED,
-	/* add the dbid to diskquota_catalog.database_list failed */
+	/* add the dbid to diskquota_namespace.database_list failed */
 	ERR_ADD_TO_DB,
 	/* cann't start worker process */
 	ERR_START_WORKER,

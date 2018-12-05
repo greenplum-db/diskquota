@@ -289,8 +289,8 @@ static void
 create_monitor_db_table()
 {
 	const char *sql;
-	sql = "create schema if not exists diskquota_catalog;"
-		"create table if not exists diskquota_catalog.database_list(dbid oid not null unique);";
+	sql = "create schema if not exists diskquota_namespace;"
+		"create table if not exists diskquota_namespace.database_list(dbid oid not null unique);";
 	exec_simple_utility(sql);
 }
 static inline void
@@ -330,7 +330,7 @@ is_valid_dbid(Oid dbid)
 }
 /*
  * in early stage, start all worker processes of diskquota-enabled databases
- * from diskquota_catalog.database_list
+ * from diskquota_namespace.database_list
  */
 static void
 start_workers_from_dblist()
@@ -346,9 +346,9 @@ start_workers_from_dblist()
 	ret = SPI_connect();
 	if (ret != SPI_OK_CONNECT)
 		elog(ERROR, "connect error, code=%d", ret);
-	ret = SPI_execute("select dbid from diskquota_catalog.database_list;", false, 0);
+	ret = SPI_execute("select dbid from diskquota_namespace.database_list;", false, 0);
 	if (ret != SPI_OK_SELECT)
-		elog(ERROR, "select diskquota_catalog.database_list");
+		elog(ERROR, "select diskquota_namespace.database_list");
 	tupdesc = SPI_tuptable->tupdesc;
 	if (tupdesc->natts != 1 || tupdesc->attrs[0].atttypid != OIDOID)
 	{
@@ -393,7 +393,7 @@ add_db_to_config(Oid dbid)
 	StringInfoData str;
 
 	initStringInfo(&str);
-	appendStringInfo(&str, "insert into diskquota_catalog.database_list values(%d);", dbid);
+	appendStringInfo(&str, "insert into diskquota_namespace.database_list values(%d);", dbid);
 	exec_simple_spi(str.data, SPI_OK_INSERT);
 	return true;
 }
@@ -401,7 +401,7 @@ static void
 del_db_from_config(Oid dbid)
 {
 	char str[128];
-	snprintf(str, sizeof(str), "delete from diskquota_catalog.database_list where dbid=%d;", dbid);
+	snprintf(str, sizeof(str), "delete from diskquota_namespace.database_list where dbid=%d;", dbid);
 	exec_simple_spi(str, SPI_OK_DELETE);
 }
 static void
@@ -441,7 +441,7 @@ on_add_db(Oid dbid, MessageResult *code)
 	}
 
 	/*
-	 * add dbid to diskquota_catalog.database_list
+	 * add dbid to diskquota_namespace.database_list
 	 * set *code to ERR_ADD_TO_DB if any error occurs
 	 */
 	PG_TRY();
@@ -466,7 +466,7 @@ on_add_db(Oid dbid, MessageResult *code)
  * handle message: drop extension diskquota
  * do our best to:
  * 1. kill the associated worker process
- * 2. delete dbid from diskquota_catalog.database_list
+ * 2. delete dbid from diskquota_namespace.database_list
  * 3. invalidate black-map entries from shared memory
  */
 static void
@@ -999,7 +999,7 @@ dq_object_access_hook(ObjectAccessType access, Oid classId,
 	/*
 	 * invoke drop extension diskquota
 	 * 1. stop bgworker for MyDatabaseId
-	 * 2. remove dbid from diskquota_catalog.database_list in postgres
+	 * 2. remove dbid from diskquota_namespace.database_list in postgres
 	 */
 	LWLockAcquire(diskquota_locks.message_box_lock, LW_EXCLUSIVE);
 	message_box->req_pid = MyProcPid;
