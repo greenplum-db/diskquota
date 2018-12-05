@@ -24,5 +24,4 @@ extern void init_shm_worker_active_tables(void);
 extern void init_lock_active_tables(void);
 
 extern HTAB *active_tables_map;
-extern disk_quota_shared_state *active_table_shm_lock;
 #endif
