@@ -515,7 +515,7 @@ disk_quota_launcher_main(Datum main_arg)
 
 	message_box->launcher_pid = MyProcPid;
 	/* Connect to our database */
-	BackgroundWorkerInitializeConnection("postgres", NULL, 0);
+	BackgroundWorkerInitializeConnection("diskquota", NULL, 0);
 	create_monitor_db_table();
 
 	memset(&hash_ctl, 0, sizeof(hash_ctl));
