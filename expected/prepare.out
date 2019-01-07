@@ -1,3 +1,10 @@
+-- wait for restart
+select pg_sleep(9);
+ pg_sleep 
+----------
+ 
+(1 row)
+
 create extension diskquota;
 select pg_sleep(1);
  pg_sleep 

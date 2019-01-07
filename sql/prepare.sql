@@ -1,3 +1,5 @@
+-- wait for restart
+select pg_sleep(9);
 create extension diskquota;
 select pg_sleep(1);
 \! pg_ctl -D /tmp/pg_diskquota_test/data reload
