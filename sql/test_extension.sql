@@ -1,3 +1,6 @@
+-- NOTE: when test this script, you must make sure that there is no diskquota launcher
+-- process or diskquota worker process. i.e. `ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l`
+-- returns 0
 CREATE DATABASE dbx0 ;
 CREATE DATABASE dbx1 ;
 CREATE DATABASE dbx2 ;

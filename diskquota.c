@@ -49,6 +49,9 @@ PG_FUNCTION_INFO_V1(set_schema_quota);
 PG_FUNCTION_INFO_V1(set_role_quota);
 PG_FUNCTION_INFO_V1(diskquota_start_worker);
 
+/* timeout count to wait response from launcher process, in 1/10 sec */
+#define WAIT_TIME_COUNT  120
+
 /* flags set by signal handlers */
 static volatile sig_atomic_t got_sighup = false;
 static volatile sig_atomic_t got_sigterm = false;
@@ -64,7 +67,7 @@ typedef struct DiskQuotaWorkerEntry DiskQuotaWorkerEntry;
 struct DiskQuotaWorkerEntry
 {
 	Oid dbid;
-	int pid; /* worker pid */
+	pid_t pid; /* worker pid */
 	BackgroundWorkerHandle *handle;
 };
 
@@ -91,7 +94,7 @@ static inline void exec_simple_utility(const char *sql);
 static void exec_simple_spi(const char *sql, int expected_code);
 static bool add_db_to_config(Oid dbid);
 static void del_db_from_config(Oid dbid);
-static void process_message_box();
+static void process_message_box(void);
 static void process_message_box_internal(MessageResult *code);
 static void dq_object_access_hook(ObjectAccessType access, Oid classId,
 				Oid objectId, int subId, void *arg);
@@ -918,7 +921,7 @@ diskquota_start_worker(PG_FUNCTION_ARGS)
 	rc = kill(message_box->launcher_pid, SIGUSR1);
 	if (rc == 0)
 	{
-		int count = 120; /* wait time 12 secs */
+		int count = WAIT_TIME_COUNT;
 		while(count-- > 0)
 		{
 			rc = WaitLatch(&MyProc->procLatch,
@@ -1023,7 +1026,7 @@ dq_object_access_hook(ObjectAccessType access, Oid classId,
 	rc = kill(message_box->launcher_pid, SIGUSR1);
 	if (rc == 0)
 	{
-		int count = 120; /* wait time 12 secs*/
+		int count = WAIT_TIME_COUNT;
 		while(count-- >0)
 		{
 			rc = WaitLatch(&MyProc->procLatch,
@@ -1052,7 +1055,7 @@ static const char *err_code_to_err_message(MessageResult code)
 {
 	switch (code)
 	{
-		case ERR_PENDING: return "ERR_PENDING";
+		case ERR_PENDING: return "no response from launcher, or timeout";
 		case ERR_OK: return "NO ERROR";
 		case ERR_EXCEED: return "too many database to monitor";
 		case ERR_ADD_TO_DB: return "add dbid to database_list failed";

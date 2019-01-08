@@ -1,0 +1,31 @@
+create database db_insert_after_drop;
+\c db_insert_after_drop
+create extension diskquota;
+-- Test Drop Extension
+create schema sdrtbl;
+select diskquota.set_schema_quota('sdrtbl', '1 MB');
+ set_schema_quota 
+------------------
+ 
+(1 row)
+
+set search_path to sdrtbl;
+create table a(i int);
+insert into a select generate_series(1,100);
+-- expect insert fail
+insert into a select generate_series(1,100000000);
+ERROR:  schema's disk space quota exceeded with name:sdrtbl
+select pg_sleep(5);
+ pg_sleep 
+----------
+ 
+(1 row)
+
+insert into a select generate_series(1,100);
+ERROR:  schema's disk space quota exceeded with name:sdrtbl
+drop extension diskquota;
+-- no sleep, it will take effect immediately
+insert into a select generate_series(1,100);
+drop table a;
+\c postgres
+drop database db_insert_after_drop;
