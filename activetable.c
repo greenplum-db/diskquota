@@ -26,30 +26,30 @@
 
 #include "activetable.h"
 
-HTAB *active_tables_map = NULL;
+HTAB	   *active_tables_map = NULL;
 static smgrcreate_hook_type prev_smgrcreate_hook = NULL;
 static smgrextend_hook_type prev_smgrextend_hook = NULL;
 static smgrtruncate_hook_type prev_smgrtruncate_hook = NULL;
 static void active_table_hook_smgrcreate(SMgrRelation reln,
-							  ForkNumber forknum,
-							  bool isRedo);
+							 ForkNumber forknum,
+							 bool isRedo);
 static void active_table_hook_smgrextend(SMgrRelation reln,
-							  ForkNumber forknum,
-							  BlockNumber blocknum,
-							  char *buffer,
-							  bool skipFsync);
+							 ForkNumber forknum,
+							 BlockNumber blocknum,
+							 char *buffer,
+							 bool skipFsync);
 static void active_table_hook_smgrtruncate(SMgrRelation reln,
-							  ForkNumber forknum,
-							  BlockNumber blocknum);
+							   ForkNumber forknum,
+							   BlockNumber blocknum);
 
 static void report_active_table_SmgrStat(SMgrRelation reln);
-static HTAB* get_active_tables_stats(void);
-static HTAB* get_all_tables_stats(void);
+static HTAB *get_active_tables_stats(void);
+static HTAB *get_all_tables_stats(void);
 
-void init_active_table_hook(void);
-void init_shm_worker_active_tables(void);
-void init_lock_active_tables(void);
-HTAB* pg_fetch_active_tables(bool);
+void		init_active_table_hook(void);
+void		init_shm_worker_active_tables(void);
+void		init_lock_active_tables(void);
+HTAB	   *pg_fetch_active_tables(bool);
 
 /*
  * Register smgr hook to detect active table.
@@ -69,26 +69,26 @@ init_active_table_hook(void)
 
 static void
 active_table_hook_smgrcreate(SMgrRelation reln,
-							  pg_attribute_unused() ForkNumber forknum,
-							  pg_attribute_unused() bool isRedo)
+							 pg_attribute_unused() ForkNumber forknum,
+							 pg_attribute_unused() bool isRedo)
 {
 	report_active_table_SmgrStat(reln);
 }
 
 static void
 active_table_hook_smgrextend(SMgrRelation reln,
-							  pg_attribute_unused() ForkNumber forknum,
-							  pg_attribute_unused() BlockNumber blocknum,
-							  pg_attribute_unused() char *buffer,
-							  pg_attribute_unused() bool skipFsync)
+							 pg_attribute_unused() ForkNumber forknum,
+							 pg_attribute_unused() BlockNumber blocknum,
+							 pg_attribute_unused() char *buffer,
+							 pg_attribute_unused() bool skipFsync)
 {
 	report_active_table_SmgrStat(reln);
 }
 
 static void
 active_table_hook_smgrtruncate(SMgrRelation reln,
-							  pg_attribute_unused() ForkNumber forknum,
-							  pg_attribute_unused() BlockNumber blocknum)
+							   pg_attribute_unused() ForkNumber forknum,
+							   pg_attribute_unused() BlockNumber blocknum)
 {
 	report_active_table_SmgrStat(reln);
 }
@@ -99,25 +99,27 @@ active_table_hook_smgrtruncate(SMgrRelation reln,
 void
 init_shm_worker_active_tables(void)
 {
-	HASHCTL ctl;
+	HASHCTL		ctl;
+
 	memset(&ctl, 0, sizeof(ctl));
 
 	ctl.keysize = sizeof(DiskQuotaActiveTableEntry);
 	ctl.entrysize = sizeof(DiskQuotaActiveTableEntry);
 	ctl.hash = tag_hash;
 
-	active_tables_map = ShmemInitHash ("active_tables",
-										diskquota_max_active_tables,
-										diskquota_max_active_tables,
-										&ctl,
-										HASH_ELEM | HASH_FUNCTION);
+	active_tables_map = ShmemInitHash("active_tables",
+									  diskquota_max_active_tables,
+									  diskquota_max_active_tables,
+									  &ctl,
+									  HASH_ELEM | HASH_FUNCTION);
 }
 
 /*
  * Fetch active table file size statistics.
  * If force is true, then fetch all the tables.
  */
-HTAB* pg_fetch_active_tables(bool force)
+HTAB *
+pg_fetch_active_tables(bool force)
 {
 	if (force)
 	{
@@ -132,13 +134,13 @@ HTAB* pg_fetch_active_tables(bool force)
 /*
  * Get the table size statistics for all the tables
  */
-static HTAB* 
+static HTAB *
 get_all_tables_stats()
 {
-	HTAB *local_table_stats_map = NULL;
-	HASHCTL ctl;
-	HeapTuple tuple;
-	Relation classRel;
+	HTAB	   *local_table_stats_map = NULL;
+	HASHCTL		ctl;
+	HeapTuple	tuple;
+	Relation	classRel;
 	HeapScanDesc relScan;
 
 	memset(&ctl, 0, sizeof(ctl));
@@ -148,25 +150,26 @@ get_all_tables_stats()
 	ctl.hash = oid_hash;
 
 	local_table_stats_map = hash_create("local table map with table size info",
-								1024,
-								&ctl,
-								HASH_ELEM | HASH_CONTEXT | HASH_FUNCTION);
-	
+										1024,
+										&ctl,
+										HASH_ELEM | HASH_CONTEXT | HASH_FUNCTION);
+
 	classRel = heap_open(RelationRelationId, AccessShareLock);
-    relScan = heap_beginscan_catalog(classRel, 0, NULL);
+	relScan = heap_beginscan_catalog(classRel, 0, NULL);
 
 	while ((tuple = heap_getnext(relScan, ForwardScanDirection)) != NULL)
 	{
-		Oid relOid;
+		Oid			relOid;
 		DiskQuotaActiveTableEntry *entry;
 
 		Form_pg_class classForm = (Form_pg_class) GETSTRUCT(tuple);
+
 		if (classForm->relkind != RELKIND_RELATION &&
-				classForm->relkind != RELKIND_MATVIEW)
+			classForm->relkind != RELKIND_MATVIEW)
 			continue;
 		relOid = classForm->oid;
 
-		/* ignore system table*/
+		/* ignore system table */
 		if (relOid < FirstNormalObjectId)
 			continue;
 
@@ -174,33 +177,34 @@ get_all_tables_stats()
 
 		entry->tableoid = relOid;
 		entry->tablesize = (Size) DatumGetInt64(DirectFunctionCall1(pg_total_relation_size,
-					ObjectIdGetDatum(relOid)));
+																	ObjectIdGetDatum(relOid)));
 
 	}
 
 	heap_endscan(relScan);
 	heap_close(classRel, AccessShareLock);
 
-    return local_table_stats_map;	
+	return local_table_stats_map;
 }
+
 /*
  * Get local active table with table oid and table size info.
- * This function first copies active table map from shared memory 
+ * This function first copies active table map from shared memory
  * to local active table map with refilenode info. Then traverses
- * the local map and find corresponding table oid and table file 
+ * the local map and find corresponding table oid and table file
  * size. Finnaly stores them into local active table map and return.
  */
-static HTAB* 
+static HTAB *
 get_active_tables_stats()
 {
-	HASHCTL ctl;
-	HTAB *local_active_table_file_map = NULL;
-	HTAB *local_active_table_stats_map = NULL;
+	HASHCTL		ctl;
+	HTAB	   *local_active_table_file_map = NULL;
+	HTAB	   *local_active_table_stats_map = NULL;
 	HASH_SEQ_STATUS iter;
 	DiskQuotaActiveTableFileEntry *active_table_file_entry;
 	DiskQuotaActiveTableEntry *active_table_entry;
 
-	Oid relOid;
+	Oid			relOid;
 
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize = sizeof(DiskQuotaActiveTableFileEntry);
@@ -209,9 +213,9 @@ get_active_tables_stats()
 	ctl.hash = tag_hash;
 
 	local_active_table_file_map = hash_create("local active table map with relfilenode info",
-								1024,
-								&ctl,
-								HASH_ELEM | HASH_CONTEXT | HASH_FUNCTION);
+											  1024,
+											  &ctl,
+											  HASH_ELEM | HASH_CONTEXT | HASH_FUNCTION);
 
 	/* Move active table from shared memory to local active table map */
 	LWLockAcquire(diskquota_locks.active_table_lock, LW_EXCLUSIVE);
@@ -220,7 +224,7 @@ get_active_tables_stats()
 
 	while ((active_table_file_entry = (DiskQuotaActiveTableFileEntry *) hash_seq_search(&iter)) != NULL)
 	{
-		bool  found;
+		bool		found;
 		DiskQuotaActiveTableFileEntry *entry;
 
 		if (active_table_file_entry->dbid != MyDatabaseId)
@@ -228,7 +232,7 @@ get_active_tables_stats()
 			continue;
 		}
 
-		/* Add the active table entry into local hash table*/
+		/* Add the active table entry into local hash table */
 		entry = hash_search(local_active_table_file_map, active_table_file_entry, HASH_ENTER, &found);
 		if (entry)
 			*entry = *active_table_file_entry;
@@ -244,26 +248,37 @@ get_active_tables_stats()
 	ctl.hash = oid_hash;
 
 	local_active_table_stats_map = hash_create("local active table map with relfilenode info",
-								1024,
-								&ctl,
-								HASH_ELEM | HASH_CONTEXT | HASH_FUNCTION);
+											   1024,
+											   &ctl,
+											   HASH_ELEM | HASH_CONTEXT | HASH_FUNCTION);
 
 	/* traverse local active table map and calculate their file size. */
 	hash_seq_init(&iter, local_active_table_file_map);
-	/* scan whole local map, get the oid of each table and calculate the size of them */
+
+	/*
+	 * scan whole local map, get the oid of each table and calculate the size
+	 * of them
+	 */
 	while ((active_table_file_entry = (DiskQuotaActiveTableFileEntry *) hash_seq_search(&iter)) != NULL)
 	{
-		Size tablesize;
-		bool found;
-		
+		Size		tablesize;
+		bool		found;
+
 		relOid = RelidByRelfilenode(active_table_file_entry->tablespaceoid, active_table_file_entry->relfilenode);
 
-		//TODO replace DirectFunctionCall1 by a new total relation size function, which could handle Invalid relOid
-		/* avoid to generate ERROR if relOid is not existed (i.e. table has been droped) */
+		/*
+		 * TODO replace DirectFunctionCall1 by a new total relation size
+		 * function, which could handle Invalid relOid
+		 */
+
+		/*
+		 * avoid to generate ERROR if relOid is not existed (i.e. table has
+		 * been droped)
+		 */
 		PG_TRY();
 		{
 			tablesize = (Size) DatumGetInt64(DirectFunctionCall1(pg_total_relation_size,
-						ObjectIdGetDatum(relOid)));
+																 ObjectIdGetDatum(relOid)));
 		}
 		PG_CATCH();
 		{
@@ -291,7 +306,7 @@ report_active_table_SmgrStat(SMgrRelation reln)
 {
 	DiskQuotaActiveTableFileEntry *entry;
 	DiskQuotaActiveTableFileEntry item;
-	bool found = false;
+	bool		found = false;
 
 	MemSet(&item, 0, sizeof(DiskQuotaActiveTableFileEntry));
 	item.dbid = reln->smgr_rnode.node.dbNode;
@@ -304,8 +319,12 @@ report_active_table_SmgrStat(SMgrRelation reln)
 		*entry = item;
 	LWLockRelease(diskquota_locks.active_table_lock);
 
-	if (!found && entry == NULL) {
-		/* We may miss the file size change of this relation at current refresh interval.*/
+	if (!found && entry == NULL)
+	{
+		/*
+		 * We may miss the file size change of this relation at current
+		 * refresh interval.
+		 */
 		ereport(WARNING, (errmsg("Share memory is not enough for active tables.")));
 	}
 }

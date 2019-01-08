@@ -7,13 +7,13 @@ typedef enum
 {
 	NAMESPACE_QUOTA,
 	ROLE_QUOTA
-} QuotaType;
+}			QuotaType;
 
 struct DiskQuotaLocks
 {
-	LWLock *active_table_lock;
-	LWLock *black_map_lock;
-	LWLock *message_box_lock;
+	LWLock	   *active_table_lock;
+	LWLock	   *black_map_lock;
+	LWLock	   *message_box_lock;
 };
 typedef struct DiskQuotaLocks DiskQuotaLocks;
 
@@ -29,11 +29,13 @@ typedef struct DiskQuotaLocks DiskQuotaLocks;
  */
 struct MessageBox
 {
-	int launcher_pid;
-	int req_pid;		/* pid of the request process */
-	int cmd;			/* message command type, see MessageCommand */
-	int result;			/* message result writen by launcher, see MessageResult */
-	int data[4];		/* for create/drop extension diskquota, data[0] is dbid */
+	int			launcher_pid;
+	int			req_pid;		/* pid of the request process */
+	int			cmd;			/* message command type, see MessageCommand */
+	int			result;			/* message result writen by launcher, see
+								 * MessageResult */
+	int			data[4];		/* for create/drop extension diskquota,
+								 * data[0] is dbid */
 };
 
 enum MessageCommand
@@ -77,7 +79,7 @@ extern bool quota_check_common(Oid reloid);
 /* quotaspi interface */
 extern void init_disk_quota_hook(void);
 
-extern int   diskquota_naptime;
-extern int   diskquota_max_active_tables;
+extern int	diskquota_naptime;
+extern int	diskquota_max_active_tables;
 
 #endif
