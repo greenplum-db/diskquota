@@ -45,6 +45,7 @@
 #include "utils/formatting.h"
 #include "utils/memutils.h"
 #include "utils/numeric.h"
+#include "utils/ps_status.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 
@@ -271,6 +272,13 @@ disk_quota_worker_main(Datum main_arg)
 	refresh_disk_quota_model(true);
 
 	/*
+	 * Set ps display name of the worker process of diskquota,
+	 * so we can distinguish them quickly.
+	 * Note: never mind parameter name of the function `init_ps_display`,
+	 * we only want the ps name looks like 'bgworker: [diskquota] <dbname> ...'
+	 */
+	init_ps_display("bgworker:", "[diskquota]", dbname, "");
+	/*
 	 * Main loop: do this until the SIGTERM handler tells us to terminate
 	 */
 	while (!got_sigterm)
@@ -329,9 +337,11 @@ create_monitor_db_table()
 static inline void
 exec_simple_utility(const char *sql)
 {
+	debug_query_string = sql;
 	StartTransactionCommand();
 	exec_simple_spi(sql, SPI_OK_UTILITY);
 	CommitTransactionCommand();
+	debug_query_string = NULL;
 }
 
 static void
