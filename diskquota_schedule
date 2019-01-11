@@ -5,4 +5,4 @@ test: test_partition
 test: test_vacuum
 test: test_extension
 test: clean
-test: fini
+test: test_insert_after_drop
