@@ -91,6 +91,10 @@ insert into ts1.a select generate_series(1,100);
 insert into ts1.a select generate_series(1,100000000);
 ERROR:  schema's disk space quota exceeded with name:ts1
 END;
+-- will not cause error in work process and lead it to exit
+BEGIN;
+create table ts1.a3 (i int);
+ABORT;
 drop schema ts1 CASCADE;
 NOTICE:  drop cascades to 2 other objects
 DETAIL:  drop cascades to table ts1.a2

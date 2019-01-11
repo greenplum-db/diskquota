@@ -653,6 +653,11 @@ calculate_table_disk_usage(bool force)
 			ereport(DEBUG1, (errmsg("An active relfilenode %d:%d is deleted into local cache",
 			                     active_table_entry->node.relNode, active_table_entry->node.spcNode)));
 		}
+		else if (!found && active_table_entry->type == AT_UNLINK)
+		{
+			/* This case means the table has been created, the dropped out in one cycle of diskquota worker process */
+			continue;
+		}
 		else
 		{
 			ereport(ERROR, (errmsg("An active relfilenode %d:%d is under incorrect status",
