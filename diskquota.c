@@ -482,7 +482,7 @@ try_kill_db_worker(Oid dbid)
 static void
 on_add_db(Oid dbid, MessageResult *code)
 {
-	if (num_db >= 10)
+	if (num_db >= MAX_NUM_MONITORED_DB)
 	{
 		*code = ERR_EXCEED;
 		elog(ERROR, "[diskquota] too database to monitor");
