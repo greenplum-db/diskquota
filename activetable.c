@@ -191,7 +191,18 @@ get_all_tables_stats()
 		if (relOid < FirstNormalObjectId)
 			continue;
 
-		node.spcNode = MyDatabaseTableSpace;
+		if (classForm->reltablespace == 0)
+		{
+			/* 
+			 * reltablespace = 0 means it uses default table space, so assign it by MyDatabaseTableSpace
+			 * as the relfilenode spcNode is not zero when it is in default table space.
+			 */
+			node.spcNode = MyDatabaseTableSpace;
+		}
+		else
+		{
+			node.spcNode = classForm->reltablespace;
+		}
 		node.dbNode = MyDatabaseId;
 		node.relNode = classForm->relfilenode;
 

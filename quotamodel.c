@@ -545,7 +545,18 @@ calculate_table_disk_usage(bool force)
 			continue;
 
 		node.dbNode = MyDatabaseId;
-		node.spcNode = MyDatabaseTableSpace;
+		if (classForm->reltablespace == 0)
+		{
+			/* 
+			 * relfilenode table space could not be zero, so using MyDatabaseTableSpace to record the correct
+			 * default table space oid
+			 */
+			node.spcNode = MyDatabaseTableSpace;
+		}
+		else
+		{
+			node.spcNode = classForm->reltablespace;
+		}
 		node.relNode = classForm->relfilenode;
 
 		tsentry = (TableSizeEntry *)hash_search(table_size_map,
