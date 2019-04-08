@@ -101,6 +101,7 @@ static void process_extension_ddl_message(void);
 static void do_process_extension_ddl_message(MessageResult * code,
 								 ExtensionDDLMessage local_extension_ddl_message);
 static void try_kill_db_worker(Oid dbid);
+static void terminate_all_workers(void);
 static void on_add_db(Oid dbid, MessageResult * code);
 static void on_del_db(Oid dbid, MessageResult * code);
 static bool is_valid_dbid(Oid dbid);
@@ -467,6 +468,8 @@ disk_quota_launcher_main(Datum main_arg)
 		}
 	}
 
+	/* terminate all the diskquota worker processes before launcher exit */
+	terminate_all_workers();
 	proc_exit(0);
 }
 
@@ -853,12 +856,36 @@ try_kill_db_worker(Oid dbid)
 		BackgroundWorkerHandle *handle;
 
 		handle = hash_entry->handle;
-		TerminateBackgroundWorker(handle);
-		pfree(handle);
+		if (handle)
+		{
+			TerminateBackgroundWorker(handle);
+			pfree(handle);
+		}
 	}
 }
 
+/*
+ * When launcher exits, it should also terminate all the workers.
+ */
+static void
+terminate_all_workers(void)
+{
+	DiskQuotaWorkerEntry *hash_entry;
+	HASH_SEQ_STATUS iter;
 
+
+	hash_seq_init(&iter, disk_quota_worker_map);
+
+	/*
+	 * terminate the worker processes. since launcher will exit immediately,
+	 * we skip to clear the disk_quota_worker_map
+	 */
+	while ((hash_entry = hash_seq_search(&iter)) != NULL)
+	{
+		if (hash_entry->handle)
+			TerminateBackgroundWorker(hash_entry->handle);
+	}
+}
 
 /*
  * Dynamically launch an disk quota worker process.
