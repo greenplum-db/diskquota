@@ -348,7 +348,7 @@ check_diskquota_state_is_ready(void)
 		{
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("unable to connect to execute internal query")));
+					 errmsg("[diskquota] unable to connect to execute SPI query")));
 		}
 		connected = true;
 		PushActiveSnapshot(GetTransactionSnapshot());
@@ -400,15 +400,17 @@ do_check_diskquota_state_is_ready(void)
 	 */
 	ret = SPI_execute("select state from diskquota.state", true, 0);
 	if (ret != SPI_OK_SELECT)
-		elog(ERROR, "[diskquota] check diskquota state SPI_execute failed: error code %d", ret);
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+						errmsg("[diskquota] check diskquota state SPI_execute failed: error code %d", ret)));
 
 	tupdesc = SPI_tuptable->tupdesc;
 	if (tupdesc->natts != 1 ||
 		((tupdesc)->attrs[0])->atttypid != INT4OID)
 	{
-		elog(ERROR, "[diskquota] table \"state\" is corrupted in database \"%s\","
-			 " please recreate diskquota extension",
-			 get_database_name(MyDatabaseId));
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+						errmsg("[diskquota] table \"state\" is corrupted in database \"%s\","
+							   " please recreate diskquota extension",
+							   get_database_name(MyDatabaseId))));
 	}
 
 	for (i = 0; i < SPI_processed; i++)
@@ -441,12 +443,15 @@ do_check_diskquota_state_is_ready(void)
 void
 refresh_disk_quota_model(bool is_init)
 {
-	elog(DEBUG1, "[diskquota] start refresh_disk_quota_model");
+	if (is_init)
+		ereport(LOG, (errmsg("[diskquota] initialize quota model started")));
 	/* skip refresh model when load_quotas failed */
 	if (load_quotas())
 	{
 		refresh_disk_quota_usage(is_init);
 	}
+	if (is_init)
+		ereport(LOG, (errmsg("[diskquota] initialize quota model finished")));
 }
 
 /*
@@ -475,7 +480,7 @@ refresh_disk_quota_usage(bool is_init)
 		{
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("unable to connect to execute internal query")));
+					 errmsg("[diskquota] unable to connect to execute SPI query")));
 		}
 		connected = true;
 		PushActiveSnapshot(GetTransactionSnapshot());
@@ -758,13 +763,15 @@ flush_to_table_size(void)
 	{
 		ret = SPI_execute(delete_statement.data, false, 0);
 		if (ret != SPI_OK_DELETE)
-			elog(ERROR, "[diskquota] flush_to_table_size SPI_execute failed: error code %d", ret);
+			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+							errmsg("[diskquota] flush_to_table_size SPI_execute failed: error code %d", ret)));
 	}
 	if (insert_statement_flag)
 	{
 		ret = SPI_execute(insert_statement.data, false, 0);
 		if (ret != SPI_OK_INSERT)
-			elog(ERROR, "[diskquota] flush_to_table_size SPI_execute failed: error code %d", ret);
+			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+							errmsg("[diskquota] flush_to_table_size SPI_execute failed: error code %d", ret)));
 	}
 }
 
@@ -793,9 +800,9 @@ flush_local_black_map(void)
 													   HASH_ENTER_NULL, &found);
 			if (blackentry == NULL)
 			{
-				elog(WARNING, "[diskquota] Shared disk quota black map size limit reached."
-					 "Some out-of-limit schemas or roles will be lost"
-					 "in blacklist.");
+				ereport(WARNING, (errmsg("[diskquota] Shared disk quota black map size limit reached."
+										 "Some out-of-limit schemas or roles will be lost"
+										 "in blacklist.")));
 			}
 			else
 			{
@@ -865,8 +872,8 @@ check_disk_quota_by_oid(Oid targetOid, int64 current_usage, QuotaType type)
 		keyitem.targetoid = targetOid;
 		keyitem.databaseoid = MyDatabaseId;
 		keyitem.targettype = (uint32) type;
-		elog(DEBUG1, "Put object %u to blacklist with quota limit:%d, current usage:%d",
-			 targetOid, quota_limit_mb, current_usage_mb);
+		ereport(DEBUG1, (errmsg("[diskquota] Put object %u to blacklist with quota limit:%d, current usage:%d",
+								targetOid, quota_limit_mb, current_usage_mb)));
 		localblackentry = (LocalBlackMapEntry *) hash_search(local_disk_quota_black_map,
 															 &keyitem,
 															 HASH_ENTER, &found);
@@ -984,7 +991,7 @@ load_quotas(void)
 		{
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("unable to connect to execute internal query")));
+					 errmsg("[diskquota] unable to connect to execute SPI query")));
 		}
 		connected = true;
 		PushActiveSnapshot(GetTransactionSnapshot());
@@ -1054,7 +1061,8 @@ do_load_quotas(void)
 	 */
 	ret = SPI_execute("select targetoid, quotatype, quotalimitMB from diskquota.quota_config", true, 0);
 	if (ret != SPI_OK_SELECT)
-		elog(ERROR, "[diskquota] load_quotas SPI_execute failed: error code %d", ret);
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+						errmsg("[diskquota] load_quotas SPI_execute failed: error code %d", ret)));
 
 	tupdesc = SPI_tuptable->tupdesc;
 	if (tupdesc->natts != 3 ||
@@ -1062,9 +1070,10 @@ do_load_quotas(void)
 		((tupdesc)->attrs[1])->atttypid != INT4OID ||
 		((tupdesc)->attrs[2])->atttypid != INT8OID)
 	{
-		elog(ERROR, "[diskquota] configuration table \"quota_config\" is corrupted in database \"%s\","
-			 " please recreate diskquota extension",
-			 get_database_name(MyDatabaseId));
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+						errmsg("[diskquota] configuration table \"quota_config\" is corrupted in database \"%s\","
+							   " please recreate diskquota extension",
+							   get_database_name(MyDatabaseId))));
 	}
 
 	for (i = 0; i < SPI_processed; i++)
