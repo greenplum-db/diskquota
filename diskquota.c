@@ -434,8 +434,8 @@ disk_quota_launcher_main(Datum main_arg)
 	start_workers_from_dblist();
 
 	/* main loop: do this until the SIGTERM handler tells us to terminate. */
-    EnableClientWaitTimeoutInterrupt();
-    StartIdleResourceCleanupTimers();
+	EnableClientWaitTimeoutInterrupt();
+	StartIdleResourceCleanupTimers();
 	while (!got_sigterm)
 	{
 		int			rc;
@@ -461,18 +461,18 @@ disk_quota_launcher_main(Datum main_arg)
 		if (got_sigusr1)
 		{
 			got_sigusr1 = false;
-            CancelIdleResourceCleanupTimers();
+			CancelIdleResourceCleanupTimers();
 			process_extension_ddl_message();
-            StartIdleResourceCleanupTimers();
+			StartIdleResourceCleanupTimers();
 		}
 
 		/* in case of a SIGHUP, just reload the configuration. */
 		if (got_sighup)
 		{
 			got_sighup = false;
-            CancelIdleResourceCleanupTimers();
+			CancelIdleResourceCleanupTimers();
 			ProcessConfigFile(PGC_SIGHUP);
-            StartIdleResourceCleanupTimers();
+			StartIdleResourceCleanupTimers();
 		}
 	}
 
