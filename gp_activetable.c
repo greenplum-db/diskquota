@@ -577,16 +577,16 @@ load_table_size(HTAB *local_table_stats_map)
 
 	ret = SPI_execute("select tableid, size from diskquota.table_size", true, 0);
 	if (ret != SPI_OK_SELECT)
-		elog(ERROR, "[diskquota] load_table_size SPI_execute failed: error code %d", errno);
+		ereport(ERROR, (errmsg("[diskquota] load_table_size SPI_execute failed: error code %d", errno)));
 
 	tupdesc = SPI_tuptable->tupdesc;
 	if (tupdesc->natts != 2 ||
 		((tupdesc)->attrs[0])->atttypid != OIDOID ||
 		((tupdesc)->attrs[1])->atttypid != INT8OID)
 	{
-		elog(ERROR, "[diskquota] table \"table_size\" is corrupted in database \"%s\","
-			 " please recreate diskquota extension",
-			 get_database_name(MyDatabaseId));
+		ereport(ERROR, (errmsg("[diskquota] table \"table_size\" is corrupted in database \"%s\","
+							   " please recreate diskquota extension",
+							   get_database_name(MyDatabaseId))));
 	}
 
 	/* push the table oid and size into local_table_stats_map */
