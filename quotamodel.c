@@ -41,6 +41,7 @@
 #include "utils/syscache.h"
 
 #include <stdlib.h>
+#include <cdb/cdbvars.h>
 
 #include "gp_activetable.h"
 #include "diskquota.h"
@@ -746,6 +747,13 @@ calculate_table_disk_usage(bool is_init)
 		 */
 		if (active_tbl_found)
 		{
+
+			/* pretend process as entrydb */
+			GpRoleValue Gp_role_backup = Gp_role;
+
+			Gp_role = GP_ROLE_UTILITY;
+			active_table_entry->tablesize += (Size) DatumGetInt64(DirectFunctionCall1(pg_total_relation_size, ObjectIdGetDatum(relOid)));
+			Gp_role = Gp_role_backup;
 
 			/* namespace and owner may be changed since last check */
 			if (!found)
