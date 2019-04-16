@@ -128,8 +128,6 @@ init_table_size_table(PG_FUNCTION_ARGS)
 		oid = SPI_getbinval(tup,tupdesc, 1, &isnull);
 		sz = SPI_getbinval(tup,tupdesc, 2, &isnull);
 
-		elog(WARNING,"%u,%ld",oid,sz);
-
 		appendStringInfo(&buf, " ( %u, %ld)", oid, sz);
 		if(i + 1 < SPI_processed)
 			appendStringInfoChar(&buf, ',');
