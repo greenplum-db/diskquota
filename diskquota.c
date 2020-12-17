@@ -28,6 +28,8 @@
 #include "catalog/pg_extension.h"
 #include "catalog/pg_type.h"
 #include "cdb/cdbvars.h"
+#include "cdb/cdbdisp_query.h"
+#include "cdb/cdbdispatchresult.h"
 #include "commands/dbcommands.h"
 #include "commands/extension.h"
 #include "executor/spi.h"
@@ -538,7 +540,9 @@ create_monitor_db_table(void)
 	bool		ret = true;
 
 	sql = "create schema if not exists diskquota_namespace;"
-		"create table if not exists diskquota_namespace.database_list(dbid oid not null unique);";
+		"create table if not exists diskquota_namespace.database_list(dbid oid not null unique);"
+		"create or replace function diskquota.update_diskquota_db_list(oid, int4) returns void "
+		"strict as '$libdir/diskquota' language C;";
 
 	StartTransactionCommand();
 
@@ -602,6 +606,7 @@ start_workers_from_dblist(void)
 	int			num = 0;
 	int			ret;
 	int			i;
+	StringInfoData sql_command;
 
 	/*
 	 * Don't catch errors in start_workers_from_dblist. Since this is the
@@ -637,6 +642,7 @@ start_workers_from_dblist(void)
 			ereport(LOG, (errmsg("[diskquota launcher] database(oid:%u) in table database_list is not a valid database", dbid)));
 			continue;
 		}
+		elog(WARNING, "start workers");
 		if (!start_worker_by_dboid(dbid))
 			ereport(ERROR, (errmsg("[diskquota launcher] start worker process of database(oid:%u) failed", dbid)));
 		num++;
@@ -653,9 +659,13 @@ start_workers_from_dblist(void)
 
 		/* put the dbid to monitoring database cache to filter out table not under
 		 * monitoring. here is no need to consider alloc failure, checked before */
-		LWLockAcquire(diskquota_locks.monitoring_dbid_cache_lock, LW_EXCLUSIVE);
-		hash_search(monitoring_dbid_cache, &dbid, HASH_ENTER, NULL);
-		LWLockRelease(diskquota_locks.monitoring_dbid_cache_lock);
+		initStringInfo(&sql_command);
+		appendStringInfo(&sql_command, "select diskquota.update_diskquota_db_list(0, %u);",
+					 dbid);
+		/* any errors will be catch in upper level */
+		elog(WARNING, "add dbid %u into segments", dbid);
+		CdbDispatchCommand(sql_command.data, DF_NONE, NULL);
+		pfree(sql_command.data);
 
 	}
 	num_db = num;
@@ -780,8 +790,7 @@ do_process_extension_ddl_message(MessageResult * code, ExtensionDDLMessage local
 static void
 on_add_db(Oid dbid, MessageResult * code)
 {
-	bool found = false;
-	void *enrty = NULL;
+	StringInfoData sql_command;
 
 	if (num_db >= MAX_NUM_MONITORED_DB)
 	{
@@ -815,15 +824,14 @@ on_add_db(Oid dbid, MessageResult * code)
 		ereport(ERROR, (errmsg("[diskquota launcher] failed to start worker - dbid=%u", dbid)));
 	}
 
-	LWLockAcquire(diskquota_locks.monitoring_dbid_cache_lock, LW_EXCLUSIVE);
-	enrty = hash_search(monitoring_dbid_cache, &dbid, HASH_ENTER, &found);
-	if (!found && enrty == NULL)
-	{
-		*code = ERR_EXCEED;
-		ereport(WARNING,
-				(errmsg("can't alloc memory on dbid cache, there ary too many databases to monitor")));
-	}
-	LWLockRelease(diskquota_locks.monitoring_dbid_cache_lock);
+	/* put the dbid to monitoring database cache to filter out table not under
+	 * monitoring. here is no need to consider alloc failure, checked before */
+	initStringInfo(&sql_command);
+	appendStringInfo(&sql_command, "select diskquota.update_diskquota_db_list(0, %d)",
+				 dbid);
+	/* any errors will be catch in upper level */
+	CdbDispatchCommand(sql_command.data, DF_NONE, NULL);
+	pfree(sql_command.data);
 }
 
 /*
@@ -836,6 +844,8 @@ on_add_db(Oid dbid, MessageResult * code)
 static void
 on_del_db(Oid dbid, MessageResult * code)
 {
+	StringInfoData sql_command;
+
 	if (!is_valid_dbid(dbid))
 	{
 		*code = ERR_INVALID_DBID;
@@ -852,10 +862,14 @@ on_del_db(Oid dbid, MessageResult * code)
 	PG_TRY();
 	{
 		del_dbid_from_database_list(dbid);
-
-		LWLockAcquire(diskquota_locks.monitoring_dbid_cache_lock, LW_EXCLUSIVE);
-		hash_search(monitoring_dbid_cache, &dbid, HASH_REMOVE, NULL);
-		LWLockRelease(diskquota_locks.monitoring_dbid_cache_lock);
+		/* remove the dbid to monitoring database cache to filter out table not under
+	 	* monitoring. here is no need to consider alloc failure, checked before */
+		initStringInfo(&sql_command);
+		appendStringInfo(&sql_command, "select diskquota.update_diskquota_db_list(1, %d)",
+					 dbid);
+		/* any errors will be catch in upper level */
+		CdbDispatchCommand(sql_command.data, DF_NONE, NULL);
+		pfree(sql_command.data);
 	}
 	PG_CATCH();
 	{
