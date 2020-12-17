@@ -28,8 +28,6 @@
 #include "catalog/pg_extension.h"
 #include "catalog/pg_type.h"
 #include "cdb/cdbvars.h"
-#include "cdb/cdbdisp_query.h"
-#include "cdb/cdbdispatchresult.h"
 #include "commands/dbcommands.h"
 #include "commands/extension.h"
 #include "executor/spi.h"
@@ -606,7 +604,6 @@ start_workers_from_dblist(void)
 	int			num = 0;
 	int			ret;
 	int			i;
-	StringInfoData sql_command;
 
 	/*
 	 * Don't catch errors in start_workers_from_dblist. Since this is the
@@ -656,17 +653,6 @@ start_workers_from_dblist(void)
 			ereport(LOG, (errmsg("[diskquota launcher] diskquota monitored database limit is reached, database(oid:%u) will not enable diskquota", dbid)));
 			break;
 		}
-
-		/* put the dbid to monitoring database cache to filter out table not under
-		 * monitoring. here is no need to consider alloc failure, checked before */
-		initStringInfo(&sql_command);
-		appendStringInfo(&sql_command, "select diskquota.update_diskquota_db_list(0, %u);",
-					 dbid);
-		/* any errors will be catch in upper level */
-		elog(WARNING, "add dbid %u into segments", dbid);
-		CdbDispatchCommand(sql_command.data, DF_NONE, NULL);
-		pfree(sql_command.data);
-
 	}
 	num_db = num;
 	SPI_finish();
@@ -790,8 +776,6 @@ do_process_extension_ddl_message(MessageResult * code, ExtensionDDLMessage local
 static void
 on_add_db(Oid dbid, MessageResult * code)
 {
-	StringInfoData sql_command;
-
 	if (num_db >= MAX_NUM_MONITORED_DB)
 	{
 		*code = ERR_EXCEED;
@@ -824,14 +808,6 @@ on_add_db(Oid dbid, MessageResult * code)
 		ereport(ERROR, (errmsg("[diskquota launcher] failed to start worker - dbid=%u", dbid)));
 	}
 
-	/* put the dbid to monitoring database cache to filter out table not under
-	 * monitoring. here is no need to consider alloc failure, checked before */
-	initStringInfo(&sql_command);
-	appendStringInfo(&sql_command, "select diskquota.update_diskquota_db_list(0, %d)",
-				 dbid);
-	/* any errors will be catch in upper level */
-	CdbDispatchCommand(sql_command.data, DF_NONE, NULL);
-	pfree(sql_command.data);
 }
 
 /*
@@ -844,8 +820,6 @@ on_add_db(Oid dbid, MessageResult * code)
 static void
 on_del_db(Oid dbid, MessageResult * code)
 {
-	StringInfoData sql_command;
-
 	if (!is_valid_dbid(dbid))
 	{
 		*code = ERR_INVALID_DBID;
@@ -862,14 +836,6 @@ on_del_db(Oid dbid, MessageResult * code)
 	PG_TRY();
 	{
 		del_dbid_from_database_list(dbid);
-		/* remove the dbid to monitoring database cache to filter out table not under
-	 	* monitoring. here is no need to consider alloc failure, checked before */
-		initStringInfo(&sql_command);
-		appendStringInfo(&sql_command, "select diskquota.update_diskquota_db_list(1, %d)",
-					 dbid);
-		/* any errors will be catch in upper level */
-		CdbDispatchCommand(sql_command.data, DF_NONE, NULL);
-		pfree(sql_command.data);
 	}
 	PG_CATCH();
 	{
@@ -922,6 +888,16 @@ del_dbid_from_database_list(Oid dbid)
 	{
 		ereport(ERROR, (errmsg("[diskquota launcher] SPI_execute sql:'%s', errno:%d", str.data, errno)));
 	}
+	pfree(str.data);
+	
+	/* clean the dbid from shared memory*/
+	initStringInfo(&str);
+	appendStringInfo(&str, "select gp_segment_id, diskquota.update_diskquota_db_list(%u, 1)" 
+			" from gp_dist_random('gp_id');", dbid);
+	ret = SPI_execute(str.data, true, 0);
+	if (ret != SPI_OK_SELECT)
+		ereport(ERROR, (errmsg("[diskquota launcher] SPI_execute sql:'%s', errno:%d", str.data, errno)));
+	pfree(str.data);
 }
 
 /*

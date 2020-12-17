@@ -412,8 +412,9 @@ do_check_diskquota_state_is_ready(void)
 	int			i;
 	StringInfoData sql_command;
 
+	/* Add the dbid to watching list, so the hook can catch the table change*/
 	initStringInfo(&sql_command);
-	appendStringInfo(&sql_command, "select diskquota.update_diskquota_db_list(0, %u);",
+	appendStringInfo(&sql_command, "select gp_segment_id, diskquota.update_diskquota_db_list(%u, 0) from gp_dist_random('gp_id');",
 				MyDatabaseId);
 	ret = SPI_execute(sql_command.data, true, 0);
         if (ret != SPI_OK_SELECT)

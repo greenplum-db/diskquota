@@ -162,7 +162,7 @@ report_active_table_helper(const RelFileNodeBackend *relFileNode)
 	DiskQuotaActiveTableFileEntry *entry;
 	DiskQuotaActiveTableFileEntry item;
 	bool		found = false;
-	Oid dbid = 24067;
+	Oid dbid = relFileNode->node.dbNode;
 
 	
 	/* We do not collect the active table in either master or mirror segments  */
