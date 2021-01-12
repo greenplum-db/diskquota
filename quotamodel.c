@@ -42,7 +42,9 @@
 #include "utils/syscache.h"
 
 #include <stdlib.h>
-#include <cdb/cdbvars.h>
+#include "cdb/cdbvars.h"
+#include "cdb/cdbdisp_query.h"
+#include "cdb/cdbdispatchresult.h"
 
 #include "gp_activetable.h"
 #include "diskquota.h"
@@ -162,8 +164,8 @@ init_disk_quota_shmem(void)
 	 * resources in pgss_shmem_startup().
 	 */
 	RequestAddinShmemSpace(DiskQuotaShmemSize());
-	/* 4 locks for diskquota refer to init_lwlocks() for details */
-	RequestAddinLWLocks(4);
+	/* locks for diskquota refer to init_lwlocks() for details */
+	RequestAddinLWLocks(DiskQuotaLocksItemNumber);
 
 	/* Install startup hook to initialize our shared memory. */
 	prev_shmem_startup_hook = shmem_startup_hook;
@@ -212,6 +214,17 @@ disk_quota_shmem_startup(void)
 
 	init_shm_worker_active_tables();
 
+	memset(&hash_ctl, 0, sizeof(hash_ctl));
+	hash_ctl.keysize = sizeof(Oid);
+	hash_ctl.entrysize = sizeof(Oid);
+	hash_ctl.hash = oid_hash;
+
+	monitoring_dbid_cache = ShmemInitHash("table oid cache which shoud tracking",
+			MAX_NUM_MONITORED_DB,
+			MAX_NUM_MONITORED_DB,
+			&hash_ctl,
+			HASH_ELEM | HASH_FUNCTION);
+
 	LWLockRelease(AddinShmemInitLock);
 }
 
@@ -223,6 +236,7 @@ disk_quota_shmem_startup(void)
  * extension_ddl_message.
  * extension_ddl_lock is used to avoid concurrent diskquota
  * extension ddl(create/drop) command.
+ * monitoring_dbid_cache_lock is used to shared `monitoring_dbid_cache` on segment process.
  */
 static void
 init_lwlocks(void)
@@ -231,6 +245,7 @@ init_lwlocks(void)
 	diskquota_locks.black_map_lock = LWLockAssign();
 	diskquota_locks.extension_ddl_message_lock = LWLockAssign();
 	diskquota_locks.extension_ddl_lock = LWLockAssign();
+	diskquota_locks.monitoring_dbid_cache_lock = LWLockAssign();
 }
 
 /*
@@ -245,6 +260,7 @@ DiskQuotaShmemSize(void)
 	size = sizeof(ExtensionDDLMessage);
 	size = add_size(size, hash_estimate_size(MAX_DISK_QUOTA_BLACK_ENTRIES, sizeof(BlackMapEntry)));
 	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(DiskQuotaActiveTableEntry)));
+	size = add_size(size, hash_estimate_size(MAX_NUM_MONITORED_DB, sizeof(Oid)));
 	return size;
 }
 
@@ -394,7 +410,17 @@ do_check_diskquota_state_is_ready(void)
 	int			ret;
 	TupleDesc	tupdesc;
 	int			i;
+	StringInfoData sql_command;
 
+	/* Add the dbid to watching list, so the hook can catch the table change*/
+	initStringInfo(&sql_command);
+	appendStringInfo(&sql_command, "select gp_segment_id, diskquota.update_diskquota_db_list(%u, 0) from gp_dist_random('gp_id');",
+				MyDatabaseId);
+	ret = SPI_execute(sql_command.data, true, 0);
+        if (ret != SPI_OK_SELECT)
+                ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+                                                errmsg("[diskquota] check diskquota state SPI_execute failed: error code %d", ret)));
+	pfree(sql_command.data);
 	/*
 	 * check diskquota state from table diskquota.state errors will be catch
 	 * at upper level function.
@@ -433,6 +459,7 @@ do_check_diskquota_state_is_ready(void)
 	}
 	ereport(WARNING, (errmsg("Diskquota is not in ready state. "
 							 "please run UDF init_table_size_table()")));
+
 	return false;
 }
 

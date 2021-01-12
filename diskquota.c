@@ -54,9 +54,6 @@
 #include "diskquota.h"
 PG_MODULE_MAGIC;
 
-/* max number of monitored database with diskquota enabled */
-#define MAX_NUM_MONITORED_DB 10
-
 #define DISKQUOTA_DB	"diskquota"
 #define DISKQUOTA_APPLICATION_NAME  "gp_reserved_gpdiskquota"
 
@@ -541,7 +538,10 @@ create_monitor_db_table(void)
 	bool		ret = true;
 
 	sql = "create schema if not exists diskquota_namespace;"
-		"create table if not exists diskquota_namespace.database_list(dbid oid not null unique);";
+		"create table if not exists diskquota_namespace.database_list(dbid oid not null unique);"
+		"create schema if not exists diskquota;"
+		"create or replace function diskquota.update_diskquota_db_list(oid, int4) returns void "
+		"strict as '$libdir/diskquota' language C;";
 
 	StartTransactionCommand();
 
@@ -640,6 +640,7 @@ start_workers_from_dblist(void)
 			ereport(LOG, (errmsg("[diskquota launcher] database(oid:%u) in table database_list is not a valid database", dbid)));
 			continue;
 		}
+		elog(WARNING, "start workers");
 		if (!start_worker_by_dboid(dbid))
 			ereport(ERROR, (errmsg("[diskquota launcher] start worker process of database(oid:%u) failed", dbid)));
 		num++;
@@ -807,6 +808,7 @@ on_add_db(Oid dbid, MessageResult * code)
 		*code = ERR_START_WORKER;
 		ereport(ERROR, (errmsg("[diskquota launcher] failed to start worker - dbid=%u", dbid)));
 	}
+
 }
 
 /*
@@ -814,7 +816,7 @@ on_add_db(Oid dbid, MessageResult * code)
  * do our best to:
  * 1. kill the associated worker process
  * 2. delete dbid from diskquota_namespace.database_list
- * 3. invalidate black-map entries from shared memory
+ * 3. invalidate black-map entries and monitoring_dbid_cache from shared memory
  */
 static void
 on_del_db(Oid dbid, MessageResult * code)
@@ -887,6 +889,16 @@ del_dbid_from_database_list(Oid dbid)
 	{
 		ereport(ERROR, (errmsg("[diskquota launcher] SPI_execute sql:'%s', errno:%d", str.data, errno)));
 	}
+	pfree(str.data);
+
+	/* clean the dbid from shared memory*/
+	initStringInfo(&str);
+	appendStringInfo(&str, "select gp_segment_id, diskquota.update_diskquota_db_list(%u, 1)"
+			" from gp_dist_random('gp_id');", dbid);
+	ret = SPI_execute(str.data, true, 0);
+	if (ret != SPI_OK_SELECT)
+		ereport(ERROR, (errmsg("[diskquota launcher] SPI_execute sql:'%s', errno:%d", str.data, errno)));
+	pfree(str.data);
 }
 
 /*
@@ -929,7 +941,7 @@ terminate_all_workers(void)
 
 	/*
 	 * terminate the worker processes. since launcher will exit immediately,
-	 * we skip to clear the disk_quota_worker_map
+	 * we skip to clear the disk_quota_worker_map and monitoring_dbid_cache
 	 */
 	while ((hash_entry = hash_seq_search(&iter)) != NULL)
 	{
