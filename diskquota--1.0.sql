@@ -8,6 +8,12 @@ CREATE SCHEMA diskquota;
 -- Configuration table
 CREATE TABLE diskquota.quota_config (targetOid oid, quotatype int, quotalimitMB int8, PRIMARY KEY(targetOid, quotatype));
 
+CREATE TABLE diskquota.target (
+        rowId oid PRIMARY KEY REFERENCES diskquota.quota_config.targetOid,
+        targetOid oid,
+        tablespaceOid oid REFERENCES pg_tablespace.oid
+);
+
 SELECT pg_catalog.pg_extension_config_dump('diskquota.quota_config', '');
 SELECT gp_segment_id, pg_catalog.pg_extension_config_dump('diskquota.quota_config', '') from gp_dist_random('gp_id');
 

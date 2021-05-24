@@ -69,6 +69,7 @@ typedef struct LocalBlackMapEntry LocalBlackMapEntry;
 struct TableSizeEntry
 {
 	Oid			reloid;
+	Oid			tablespace_oid;
 	Oid			namespaceoid;
 	Oid			owneroid;
 	int64		totalsize;		/* table size including fsm, visibility map
@@ -137,6 +138,9 @@ static void flush_local_black_map(void);
 static void check_disk_quota_by_oid(Oid targetOid, int64 current_usage, QuotaType type);
 static void update_namespace_map(Oid namespaceoid, int64 updatesize);
 static void update_role_map(Oid owneroid, int64 updatesize);
+static void update_tablespace_map(Oid tablespace_oid, int64 updatesize);
+static void update_namespace_tablespace_map(Oid namespaceoid, Oid tablespace_oid, int64 updatesize);
+static void update_role_tablespace_map(Oid owneroid, Oid tablespace_oid, int64 updatesize);
 static void remove_namespace_map(Oid namespaceoid);
 static void remove_role_map(Oid owneroid);
 static bool load_quotas(void);
@@ -657,6 +661,10 @@ calculate_table_disk_usage(bool is_init)
 			/* update the disk usage of namespace and owner */
 			update_namespace_map(tsentry->namespaceoid, updated_total_size);
 			update_role_map(tsentry->owneroid, updated_total_size);
+			update_tablespace_map(tsentry->tablespace_oid, updated_total_size);
+			update_role_tablespace_map(tsentry->owneroid, tsentry->tablespace_oid, updated_total_size);
+			update_namespace_tablespace_map(tsentry->namespaceoid, tsentry->tablespace_oid, updated_total_size);
+
 		}
 
 		/* table size info doesn't need to flush at init quota model stage */
