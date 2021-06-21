@@ -8,10 +8,14 @@ CREATE SCHEMA diskquota;
 -- Configuration table
 CREATE TABLE diskquota.quota_config (targetOid oid, quotatype int, quotalimitMB int8, PRIMARY KEY(targetOid, quotatype));
 
+CREATE TABLE diskquota.quota_config_per_seg (targetOid oid, quotatype int, quotalimitMB int8, PRIMARY KEY(targetOid, quotatype));
+
 CREATE TABLE diskquota.target (
-        rowId oid PRIMARY KEY REFERENCES diskquota.quota_config.targetOid,
-        targetOid oid,
-        tablespaceOid oid REFERENCES pg_tablespace.oid
+        rowId serial REFERENCES diskquota.quota_config.targetOid,
+        quotatype int REFERENCES disquota.quota_config.quotatype,
+        tablespaceOid oid REFERENCES pg_tablespace.oid,
+        secondaryOid oid,
+        PRIMARY KEY (rowId, quotatype)
 );
 
 SELECT pg_catalog.pg_extension_config_dump('diskquota.quota_config', '');
