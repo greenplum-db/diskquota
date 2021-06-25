@@ -13,8 +13,8 @@ CREATE TABLE diskquota.quota_config_per_seg (targetOid oid, quotatype int, quota
 CREATE TABLE diskquota.target (
         rowId serial REFERENCES diskquota.quota_config.targetOid,
         quotatype int REFERENCES disquota.quota_config.quotatype,
+        primaryOid oid,
         tablespaceOid oid REFERENCES pg_tablespace.oid,
-        secondaryOid oid,
         PRIMARY KEY (rowId, quotatype)
 );
 

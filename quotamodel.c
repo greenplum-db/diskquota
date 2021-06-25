@@ -90,7 +90,7 @@ struct QuotaMapEntry {
 struct QuotaInfo {
 	char *map_name;
 	unsigned int num_keys;
-	Oid *cache_ids;
+	Oid *sys_cache;
 	HTAB *map;
 };
 
@@ -98,31 +98,31 @@ struct QuotaInfo quota_info[NUM_QUOTA_TYPES] = {
 	[NAMESPACE_QUOTA] = {
 		.map_name = "Namespace map",
 		.num_keys = 1,
-		.cache_ids = { NAMESPACEOID },
+		.sys_cache = { NAMESPACEOID },
 		.map = NULL
 	},
 	[ROLE_QUOTA] = {
 		.map_name = "Role map",
 		.num_keys = 1,
-		.cache_ids = { AUTHOID },
+		.sys_cache = { AUTHOID },
 		.map = NULL
 	},
 	[TABLESPACE_QUOTA] = {
 		.map_name = "Tablespace map",
 		.num_keys = 1,
-		.cache_ids = { TABLESPACEOID },
+		.sys_cache = { TABLESPACEOID },
 		.map = NULL
 	},
-	[TABLESPACE_NAMESPACE_QUOTA] = {
+	[NAMESPACE_TABLESPACE_QUOTA] = {
 		.map_name = "Tablespace-namespace map",
 		.num_keys = 2,
-		.cache_ids = {TABLESPACEOID, NAMESPACEOID},
+		.sys_cache = {NAMESPACEOID, TABLESPACEOID},
 		.map = NULL
 	},
-	[TABLESPACE_ROLE_QUOTA] = {
+	[ROLE_TABLESPACE_QUOTA] = {
 		.map_name = "Tablespace-role map",
 		.num_keys = 2,
-		.cache_ids = {TABLESPACEOID, AUTHOID},
+		.sys_cache = {AUTHOID, TABLESPACEOID},
 		.map = NULL
 	}
 };
@@ -167,13 +167,16 @@ static void check_quota_map(QuotaType type) {
 	while ((entry = hash_seq_search(&iter)) != NULL)
 	{
 		for (int i = 0; i < quota_info[type].num_keys; ++i) {
-			tuple = SearchSysCache1(quota_info[type].cache_ids[i], ObjectIdGetDatum(entry->keys[i]));
+			tuple = SearchSysCache1(quota_info[type].sys_cache[i], ObjectIdGetDatum(entry->keys[i]));
 			if (!HeapTupleIsValid(tuple)) {
 				remove_quota(type, entry->keys);
 			} else {
 				ReleaseSysCache(tuple);
 				if (entry->size >= entry->limit) {
-					move_quota_to_blacklist();
+					Oid targetOid = entry->keys[0];
+					Oid tablespace_oid =
+						(type == NAMESPACE_TABLESPACE_QUOTA) || (type == ROLE_TABLESPACE_QUOTA) ? entry->keys[1] : InvalidOid;
+					move_quota_to_blacklist(type, targetOid, tablespace_oid);
 				}
 			}
 		}
@@ -196,6 +199,7 @@ struct BlackMapEntry
 {
 	Oid			targetoid;
 	Oid			databaseoid;
+	Oid 		tablespace_oid;
 	uint32		targettype;
 };
 
@@ -662,8 +666,9 @@ calculate_table_disk_usage(bool is_init)
 		{
 			tsentry->reloid = relOid;
 			tsentry->totalsize = 0;
-			tsentry->owneroid = 0;
-			tsentry->namespaceoid = 0;
+			tsentry->owneroid = InvalidOid;
+			tsentry->namespaceoid = InvalidOid;
+			tsentry->tablespace_oid = InvalidOid;
 			tsentry->need_flush = true;
 		}
 
@@ -706,8 +711,8 @@ calculate_table_disk_usage(bool is_init)
 			update_table_size_for_quota(updated_total_size, NAMESPACE_QUOTA, (Oid[]){tsentry->namespaceoid});
 			update_table_size_for_quota(updated_total_size, ROLE_QUOTA, (Oid[]){tsentry->owneroid});
 			update_table_size_for_quota(updated_total_size, TABLESPACE_QUOTA, (Oid[]){tsentry->tablespace_oid});
-			update_table_size_for_quota(updated_total_size, TABLESPACE_ROLE_QUOTA, (Oid[]){tsentry->tablespace_oid, tsentry->owneroid});
-			update_table_size_for_quota(updated_total_size, TABLESPACE_NAMESPACE_QUOTA, (Oid[]){tsentry->tablespace_oid, tsentry->namespaceoid});
+			update_table_size_for_quota(updated_total_size, ROLE_TABLESPACE_QUOTA, (Oid[]){tsentry->owneroid, tsentry->tablespace_oid});
+			update_table_size_for_quota(updated_total_size, NAMESPACE_TABLESPACE_QUOTA, (Oid[]){tsentry->namespaceoid, tsentry->tablespace_oid});
 		}
 
 		/* table size info doesn't need to flush at init quota model stage */
@@ -719,16 +724,57 @@ calculate_table_disk_usage(bool is_init)
 		/* if schema change, transfer the file size */
 		if (tsentry->namespaceoid != classForm->relnamespace)
 		{
-			update_namespace_map(tsentry->namespaceoid, -1 * tsentry->totalsize);
+			transfer_table_for_quota(
+				tsentry->totalsize, 
+				NAMESPACE_QUOTA, 
+				(Oid[]){tsentry->namespaceoid}, 
+				(Oid[]){classForm->relnamespace});
+			transfer_table_for_quota(
+				tsentry->totalsize, 
+				NAMESPACE_TABLESPACE_QUOTA, 
+				(Oid[]){tsentry->namespaceoid, tsentry->tablespace_oid}, 
+				(Oid[]){classForm->relnamespace, tsentry->tablespace_oid});
 			tsentry->namespaceoid = classForm->relnamespace;
-			update_namespace_map(tsentry->namespaceoid, tsentry->totalsize);
 		}
 		/* if owner change, transfer the file size */
 		if (tsentry->owneroid != classForm->relowner)
 		{
-			update_role_map(tsentry->owneroid, -1 * tsentry->totalsize);
+			transfer_table_for_quota(
+				tsentry->totalsize,
+				ROLE_QUOTA,
+				(Oid[]){tsentry->owneroid},
+				(Oid[]){classForm->relowner}
+			);
+			transfer_table_for_quota(
+				tsentry->totalsize,
+				ROLE_TABLESPACE_QUOTA,
+				(Oid[]){tsentry->owneroid, tsentry->tablespace_oid},
+				(Oid[]){classForm->relowner, tsentry->tablespace_oid}
+			);
 			tsentry->owneroid = classForm->relowner;
-			update_role_map(tsentry->owneroid, tsentry->totalsize);
+		}
+
+		if (tsentry->tablespace_oid != classForm->reltablespace)
+		{
+			transfer_table_for_quota(
+				tsentry->totalsize, 
+				TABLESPACE_QUOTA,
+				(Oid[]){tsentry->tablespace_oid},
+				(Oid[]){classForm->reltablespace}
+			);
+			transfer_table_for_quota(
+				tsentry->totalsize,
+				NAMESPACE_TABLESPACE_QUOTA,
+				(Oid[]){tsentry->namespaceoid, tsentry->tablespace_oid},
+				(Oid[]){tsentry->namespaceoid, classForm->reltablespace}
+			);
+			transfer_table_for_quota(
+				tsentry->totalsize,
+				ROLE_TABLESPACE_QUOTA,
+				(Oid[]){tsentry->owneroid, tsentry->tablespace_oid},
+				(Oid[]){tsentry->owneroid, classForm->reltablespace}
+			);
+			tsentry->tablespace_oid = classForm->reltablespace;
 		}
 	}
 
@@ -745,8 +791,11 @@ calculate_table_disk_usage(bool is_init)
 	{
 		if (tsentry->is_exist == false)
 		{
-			update_role_map(tsentry->owneroid, -1 * tsentry->totalsize);
-			update_namespace_map(tsentry->namespaceoid, -1 * tsentry->totalsize);
+			update_table_size_for_quota(-tsentry->totalsize, NAMESPACE_QUOTA, (Oid[]){tsentry->namespaceoid});
+			update_table_size_for_quota(-tsentry->totalsize, ROLE_QUOTA, (Oid[]){tsentry->owneroid});
+			update_table_size_for_quota(-tsentry->totalsize, TABLESPACE_QUOTA, (Oid[]){tsentry->tablespace_oid});
+			update_table_size_for_quota(-tsentry->totalsize, ROLE_TABLESPACE_QUOTA, (Oid[]){tsentry->owneroid, tsentry->tablespace_oid});
+			update_table_size_for_quota(-tsentry->totalsize, NAMESPACE_TABLESPACE_QUOTA, (Oid[]){tsentry->namespaceoid, tsentry->tablespace_oid});
 		}
 	}
 }
@@ -879,14 +928,15 @@ flush_local_black_map(void)
  * Put them into local blacklist if quota limit is exceeded.
  */
 static void
-check_disk_quota_by_oid(Oid targetOid, int64 current_usage, QuotaType type)
+move_quota_to_blacklist(QuotaType type, Oid targetOid, Oid tablespace_oid)
 {
 	LocalBlackMapEntry *localblackentry;
 	BlackMapEntry keyitem;
 
 	memset(&keyitem, 0, sizeof(BlackMapEntry));
 	keyitem.targetoid = targetOid;
-	keyitem.databaseoid = MyDatabaseId; 
+	keyitem.databaseoid = MyDatabaseId;
+	keyitem.tablespace_oid = tablespace_oid; 
 	keyitem.targettype = (uint32) type;
 	ereport(DEBUG1, (errmsg("[diskquota] Put object %u to blacklist", targetOid)));
 	localblackentry = (LocalBlackMapEntry *) hash_search(local_disk_quota_black_map,
@@ -990,7 +1040,7 @@ do_load_quotas(void)
 	 * read quotas from diskquota.quota_config
 	 */
 	ret = SPI_execute(
-		"SELECT targetOid, quotaType, quotalimitMB, tablespaceOid, secondaryOid"
+		"SELECT targetOid, quotaType, quotalimitMB, primaryOid, tablespaceOid"
 		"FROM diskquota.quota_config c LEFT OUTER JOIN diskquota.target t "
 		"ON c.targetOid = t.rowId and c.quotatype = t.quotatype", true, 0);
 	if (ret != SPI_OK_SELECT)
@@ -1039,21 +1089,23 @@ do_load_quotas(void)
 /*
  * Given table oid, search for namespace and owner.
  */
-static void
-get_rel_owner_schema(Oid relid, Oid *ownerOid, Oid *nsOid)
+static bool
+get_rel_owner_schema_tablespace(Oid relid, Oid *ownerOid, Oid *nsOid, Oid *tablespace_oid)
 {
 	HeapTuple	tp;
 
 	tp = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
+	bool found = HeapTupleIsValid(tp);
 	if (HeapTupleIsValid(tp))
 	{
 		Form_pg_class reltup = (Form_pg_class) GETSTRUCT(tp);
 
 		*ownerOid = reltup->relowner;
 		*nsOid = reltup->relnamespace;
+		*tablespace_oid = reltup->reltablespace;
 		ReleaseSysCache(tp);
 	}
-	return;
+	return found;
 }
 
 /*
@@ -1066,6 +1118,7 @@ quota_check_common(Oid reloid)
 {
 	Oid			ownerOid = InvalidOid;
 	Oid			nsOid = InvalidOid;
+	Oid 		tablespace_oid = InvalidOid;
 	bool		found;
 	BlackMapEntry keyitem;
 
@@ -1073,36 +1126,28 @@ quota_check_common(Oid reloid)
 	{
 		return true;
 	}
-	memset(&keyitem, 0, sizeof(BlackMapEntry));
-	get_rel_owner_schema(reloid, &ownerOid, &nsOid);
-	LWLockAcquire(diskquota_locks.black_map_lock, LW_SHARED);
-
-	/* check schema quota */
-	if (nsOid != InvalidOid)
+	
+	bool found_rel = get_rel_owner_schema(reloid, &ownerOid, &nsOid, &tablespace_oid);
+	if (!found_rel)
 	{
-		keyitem.targetoid = nsOid;
-		keyitem.databaseoid = MyDatabaseId;
-		keyitem.targettype = NAMESPACE_QUOTA;
-		hash_search(disk_quota_black_map,
-					&keyitem,
-					HASH_FIND, &found);
-		if (found)
-		{
-			LWLockRelease(diskquota_locks.black_map_lock);
-			ereport(ERROR,
-					(errcode(ERRCODE_DISK_FULL),
-					 errmsg("schema's disk space quota exceeded with name:%s", get_namespace_name(nsOid))));
-			return false;
-		}
-
+		return true;
 	}
-
-	/* check role quota */
-	if (ownerOid != InvalidOid)
-	{
-		keyitem.targetoid = ownerOid;
+	LWLockAcquire(diskquota_locks.black_map_lock, LW_SHARED);
+	for (QuotaType type = 0; type < NUM_QUOTA_TYPES; ++type) {
+		if (type == ROLE_QUOTA || type == ROLE_TABLESPACE_QUOTA) {
+			keyitem.targetoid = ownerOid;
+		} else if (type == NAMESPACE_QUOTA || type == NAMESPACE_TABLESPACE_QUOTA) {
+			keyitem.targetoid = nsOid;
+		} else {
+			keyitem.targetoid = TABLESPACEOID;
+		}
+		if (type == ROLE_TABLESPACE_QUOTA || type == NAMESPACE_TABLESPACE_QUOTA) {
+			keyitem.tablespace_oid = tablespace_oid;
+		} else {
+			keyitem.tablespace_oid = InvalidOid;
+		}
 		keyitem.databaseoid = MyDatabaseId;
-		keyitem.targettype = ROLE_QUOTA;
+		keyitem.targettype = type;
 		hash_search(disk_quota_black_map,
 					&keyitem,
 					HASH_FIND, &found);
@@ -1111,7 +1156,7 @@ quota_check_common(Oid reloid)
 			LWLockRelease(diskquota_locks.black_map_lock);
 			ereport(ERROR,
 					(errcode(ERRCODE_DISK_FULL),
-					 errmsg("role's disk space quota exceeded with name:%s", GetUserNameFromId(ownerOid))));
+					 errmsg("schema's disk space quota exceeded")));
 			return false;
 		}
 	}
