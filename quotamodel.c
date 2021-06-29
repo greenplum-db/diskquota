@@ -98,34 +98,74 @@ struct QuotaInfo quota_info[NUM_QUOTA_TYPES] = {
 	[NAMESPACE_QUOTA] = {
 		.map_name = "Namespace map",
 		.num_keys = 1,
-		.sys_cache = { NAMESPACEOID },
+		.sys_cache = (Oid[]){ NAMESPACEOID },
 		.map = NULL
 	},
 	[ROLE_QUOTA] = {
 		.map_name = "Role map",
 		.num_keys = 1,
-		.sys_cache = { AUTHOID },
+		.sys_cache = (Oid[]){ AUTHOID },
 		.map = NULL
 	},
 	[TABLESPACE_QUOTA] = {
 		.map_name = "Tablespace map",
 		.num_keys = 1,
-		.sys_cache = { TABLESPACEOID },
+		.sys_cache = (Oid[]){ TABLESPACEOID },
 		.map = NULL
 	},
 	[NAMESPACE_TABLESPACE_QUOTA] = {
 		.map_name = "Tablespace-namespace map",
 		.num_keys = 2,
-		.sys_cache = {NAMESPACEOID, TABLESPACEOID},
+		.sys_cache = (Oid[]){ NAMESPACEOID, TABLESPACEOID },
 		.map = NULL
 	},
 	[ROLE_TABLESPACE_QUOTA] = {
 		.map_name = "Tablespace-role map",
 		.num_keys = 2,
-		.sys_cache = {AUTHOID, TABLESPACEOID},
+		.sys_cache = (Oid[]){ AUTHOID, TABLESPACEOID },
 		.map = NULL
 	}
 };
+
+/* global blacklist for which exceed their quota limit */
+struct BlackMapEntry
+{
+	Oid			targetoid;
+	Oid			databaseoid;
+	Oid 		tablespace_oid;
+	uint32		targettype;
+};
+
+/* local blacklist for which exceed their quota limit */
+struct LocalBlackMapEntry
+{
+	BlackMapEntry keyitem;
+	bool		isexceeded;
+};
+
+/* using hash table to support incremental update the table size entry.*/
+static HTAB *table_size_map = NULL;
+
+/* black list for database objects which exceed their quota limit */
+static HTAB *disk_quota_black_map = NULL;
+static HTAB *local_disk_quota_black_map = NULL;
+
+static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
+
+/* functions to refresh disk quota model*/
+static void refresh_disk_quota_usage(bool is_init);
+static void calculate_table_disk_usage(bool is_init);
+static void flush_to_table_size(void);
+static void flush_local_black_map(void);
+static bool load_quotas(void);
+static void do_load_quotas(void);
+static bool do_check_diskquota_state_is_ready(void);
+
+static Size DiskQuotaShmemSize(void);
+static void disk_quota_shmem_startup(void);
+static void init_lwlocks(void);
+
+static void truncateStringInfo(StringInfo str, int nchars);
 
 static void init_quota_maps() {
 	HASHCTL hash_ctl;
@@ -155,6 +195,29 @@ static void update_table_size_for_quota(int64 size, QuotaType type, Oid* keys) {
 
 static void remove_quota(QuotaType type, Oid* keys) {
 	hash_search(quota_info[type].map, keys, HASH_REMOVE, NULL);
+}
+
+/*
+ * Compare the disk quota limit and current usage of a database object.
+ * Put them into local blacklist if quota limit is exceeded.
+ */
+static void
+move_quota_to_blacklist(QuotaType type, Oid targetOid, Oid tablespace_oid)
+{
+	LocalBlackMapEntry *localblackentry;
+	BlackMapEntry keyitem;
+
+	memset(&keyitem, 0, sizeof(BlackMapEntry));
+	keyitem.targetoid = targetOid;
+	keyitem.databaseoid = MyDatabaseId;
+	keyitem.tablespace_oid = tablespace_oid; 
+	keyitem.targettype = (uint32) type;
+	ereport(DEBUG1, (errmsg("[diskquota] Put object %u to blacklist", targetOid)));
+	localblackentry = (LocalBlackMapEntry *) hash_search(local_disk_quota_black_map,
+															&keyitem,
+															HASH_ENTER, NULL);
+	localblackentry->isexceeded = true;
+
 }
 
 static void check_quota_map(QuotaType type) {
@@ -194,48 +257,10 @@ static void set_limit_for_quota(int64 limit, QuotaType type, Oid* keys) {
 	}
 }
 
-/* global blacklist for which exceed their quota limit */
-struct BlackMapEntry
-{
-	Oid			targetoid;
-	Oid			databaseoid;
-	Oid 		tablespace_oid;
-	uint32		targettype;
-};
-
-/* local blacklist for which exceed their quota limit */
-struct LocalBlackMapEntry
-{
-	BlackMapEntry keyitem;
-	bool		isexceeded;
-};
-
-/* using hash table to support incremental update the table size entry.*/
-static HTAB *table_size_map = NULL;
-
-/* black list for database objects which exceed their quota limit */
-static HTAB *disk_quota_black_map = NULL;
-static HTAB *local_disk_quota_black_map = NULL;
-
-static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
-
-/* functions to refresh disk quota model*/
-static void refresh_disk_quota_usage(bool is_init);
-static void calculate_table_disk_usage(bool is_init);
-static void calculate_schema_disk_usage(void);
-static void calculate_role_disk_usage(void);
-static void flush_to_table_size(void);
-static void flush_local_black_map(void);
-static void check_disk_quota_by_oid(Oid targetOid, int64 current_usage, QuotaType type);
-static bool load_quotas(void);
-static void do_load_quotas(void);
-static bool do_check_diskquota_state_is_ready(void);
-
-static Size DiskQuotaShmemSize(void);
-static void disk_quota_shmem_startup(void);
-static void init_lwlocks(void);
-
-static void truncateStringInfo(StringInfo str, int nchars);
+static void transfer_table_for_quota(int64 totalsize, QuotaType type, Oid* old_keys, Oid* new_keys) {
+	update_table_size_for_quota(-totalsize, type, old_keys);
+	update_table_size_for_quota(totalsize, type, new_keys);
+}
 
 /* ---- Functions for disk quota shared memory ---- */
 /*
@@ -924,29 +949,6 @@ flush_local_black_map(void)
 }
 
 /*
- * Compare the disk quota limit and current usage of a database object.
- * Put them into local blacklist if quota limit is exceeded.
- */
-static void
-move_quota_to_blacklist(QuotaType type, Oid targetOid, Oid tablespace_oid)
-{
-	LocalBlackMapEntry *localblackentry;
-	BlackMapEntry keyitem;
-
-	memset(&keyitem, 0, sizeof(BlackMapEntry));
-	keyitem.targetoid = targetOid;
-	keyitem.databaseoid = MyDatabaseId;
-	keyitem.tablespace_oid = tablespace_oid; 
-	keyitem.targettype = (uint32) type;
-	ereport(DEBUG1, (errmsg("[diskquota] Put object %u to blacklist", targetOid)));
-	localblackentry = (LocalBlackMapEntry *) hash_search(local_disk_quota_black_map,
-															&keyitem,
-															HASH_ENTER, NULL);
-	localblackentry->isexceeded = true;
-
-}
-
-/*
  * Make sure a StringInfo's string is no longer than 'nchars' characters.
  */
 static void
@@ -1024,9 +1026,6 @@ do_load_quotas(void)
 	int			ret;
 	TupleDesc	tupdesc;
 	int			i;
-	bool		found;
-	QuotaLimitEntry *quota_entry;
-	HASH_SEQ_STATUS iter;
 
 	/*
 	 * TODO: we should skip to reload quota config when there is no change in
@@ -1127,7 +1126,7 @@ quota_check_common(Oid reloid)
 		return true;
 	}
 	
-	bool found_rel = get_rel_owner_schema(reloid, &ownerOid, &nsOid, &tablespace_oid);
+	bool found_rel = get_rel_owner_schema_tablespace(reloid, &ownerOid, &nsOid, &tablespace_oid);
 	if (!found_rel)
 	{
 		return true;
