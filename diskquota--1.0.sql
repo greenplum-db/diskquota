@@ -9,10 +9,10 @@ CREATE SCHEMA diskquota;
 CREATE TABLE diskquota.quota_config (targetOid oid, quotatype int, quotalimitMB int8, PRIMARY KEY(targetOid, quotatype));
 
 CREATE TABLE diskquota.target (
-        rowId serial REFERENCES diskquota.quota_config.targetOid,
-        quotatype int REFERENCES disquota.quota_config.quotatype,
+        rowId serial, --REFERENCES diskquota.quota_config.targetOid,
+        quotatype int, --REFERENCES disquota.quota_config.quotatype,
         primaryOid oid,
-        tablespaceOid oid REFERENCES pg_tablespace.oid,
+        tablespaceOid oid, --REFERENCES pg_tablespace.oid,
         PRIMARY KEY (rowId, quotatype)
 );
 
