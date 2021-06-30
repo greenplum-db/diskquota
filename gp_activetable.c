@@ -800,11 +800,13 @@ pull_active_table_size_from_seg(HTAB *local_table_stats_map, char *active_oid_ar
 				/* receive table size info from the first segment */
 				entry->tableoid = tableOid;
 				entry->tablesize = tableSize;
+				entry->max_seg_tablesize = tableSize;
 			}
 			else
 			{
 				/* sum table size from all the segments */
 				entry->tablesize = entry->tablesize + tableSize;
+				entry->max_seg_tablesize = entry->max_seg_tablesize < tableSize ? tableSize : entry->max_seg_tablesize;
 			}
 
 		}

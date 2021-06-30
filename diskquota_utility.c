@@ -39,8 +39,10 @@
 #include "utils/formatting.h"
 #include "utils/memutils.h"
 #include "utils/numeric.h"
+#include "utils/snapmgr.h"
 
 #include <cdb/cdbvars.h>
+#include <cdb/cdbutil.h>
 
 #include "diskquota.h"
 #include "gp_activetable.h"
@@ -54,6 +56,7 @@ PG_FUNCTION_INFO_V1(set_role_quota);
 PG_FUNCTION_INFO_V1(set_schema_tablespace_quota);
 PG_FUNCTION_INFO_V1(set_role_tablespace_quota);
 PG_FUNCTION_INFO_V1(update_diskquota_db_list);
+PG_FUNCTION_INFO_V1(set_per_segment_quota);
 
 /* timeout count to wait response from launcher process, in 1/10 sec */
 #define WAIT_TIME_COUNT  1200
@@ -826,4 +829,65 @@ update_diskquota_db_list(PG_FUNCTION_ARGS)
 
 	PG_RETURN_VOID();
 
+}
+
+/*
+ * Function to set disk quota ratio for per-segment
+ */
+Datum
+set_per_segment_quota(PG_FUNCTION_ARGS)
+{
+	int		ret;
+	Oid		spcoid;
+	char	   	*spcname;
+	float4		ratio;
+	if (!superuser())
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("must be superuser to set disk quota limit")));
+	}
+
+	spcname = text_to_cstring(PG_GETARG_TEXT_PP(0));
+	spcname = str_tolower(spcname, strlen(spcname), DEFAULT_COLLATION_OID);
+	spcoid = get_tablespace_oid(spcname, false);
+
+	ratio = PG_GETARG_FLOAT4(1);
+
+	StringInfoData buf;
+
+	if (SPI_OK_CONNECT != SPI_connect())
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("unable to connect to execute internal query")));
+	}
+
+	/* Get all targetOid which are related to this tablespace, and saved into rowIds */
+	initStringInfo(&buf);
+	appendStringInfo(&buf,
+			"SELECT true FROM diskquota.target as t, diskquota.quota_config as q WHERE tablespaceOid = %u AND (t.quotaType = %d OR t.quotaType = %d) AND t.primaryOid = q.targetOid AND t.quotaType = q.quotaType", spcoid, NAMESPACE_TABLESPACE_QUOTA, ROLE_TABLESPACE_QUOTA);
+
+	ret = SPI_execute(buf.data, true, 0);
+	if (ret != SPI_OK_SELECT)
+		elog(ERROR, "cannot select target and quota setting table: error code %d", ret);
+	if (SPI_processed <= 0)
+	{
+		ereport(ERROR,
+				(errmsg("there are no roles or schema quota configed for this tablespace: %s, can't config per segment ratio for it", spcname)));
+	}
+	resetStringInfo(&buf);
+	appendStringInfo(&buf,
+			"UPDATE diskquota.quota_config AS q set segratio = %f FROM diskquota.target AS t WHERE q.targetOid = t.primaryOid AND (t.quotaType = %d OR t.quotaType = %d) AND t.quotaType = q.quotaType And t.tablespaceOid = %d", ratio, NAMESPACE_TABLESPACE_QUOTA, ROLE_TABLESPACE_QUOTA, spcoid);
+	/*
+	 * UPDATEA NAMESPACE_TABLESPACE_PERSEG_QUOTA AND ROLE_TABLESPACE_PERSEG_QUOTA config for this tablespace
+	 */
+	ret = SPI_execute(buf.data, false, 0);
+	if (ret != SPI_OK_UPDATE)
+		elog(ERROR, "cannot update item from quota setting table, error code %d", ret);
+	/*
+	 * And finish our transaction.
+	 */
+	SPI_finish();
+	PG_RETURN_VOID();
 }

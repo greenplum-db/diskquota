@@ -1,3 +1,5 @@
+ALTER TABLE diskquota.quota_config ADD COLUMN segratio float4 DEFAULT -1;
+
 CREATE TABLE diskquota.target (
         quotatype int, --REFERENCES disquota.quota_config.quotatype,
         primaryOid oid,
@@ -11,6 +13,11 @@ AS 'MODULE_PATHNAME'
 LANGUAGE C;
 
 CREATE OR REPLACE FUNCTION diskquota.set_role_tablespace_quota(text, text, text)
+RETURNS void STRICT
+AS 'MODULE_PATHNAME'
+LANGUAGE C;
+
+CREATE OR REPLACE FUNCTION diskquota.set_per_segment_quota(text, float4)
 RETURNS void STRICT
 AS 'MODULE_PATHNAME'
 LANGUAGE C;

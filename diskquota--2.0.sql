@@ -6,7 +6,7 @@
 CREATE SCHEMA diskquota;
 
 -- Configuration table
-CREATE TABLE diskquota.quota_config (targetOid oid, quotatype int, quotalimitMB int8, PRIMARY KEY(targetOid, quotatype));
+CREATE TABLE diskquota.quota_config (targetOid oid, quotatype int, quotalimitMB int8, segratio float4 DEFAULT -1, PRIMARY KEY(targetOid, quotatype));
 
 CREATE TABLE diskquota.target (
         quotatype int, --REFERENCES disquota.quota_config.quotatype,
@@ -38,6 +38,10 @@ RETURNS void STRICT
 AS 'MODULE_PATHNAME'
 LANGUAGE C;
 
+CREATE OR REPLACE FUNCTION diskquota.set_per_segment_quota(text, float4)
+RETURNS void STRICT
+AS 'MODULE_PATHNAME'
+LANGUAGE C;
 
 CREATE FUNCTION diskquota.update_diskquota_db_list(oid, int4)
 RETURNS void STRICT

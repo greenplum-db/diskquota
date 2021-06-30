@@ -14,8 +14,9 @@ typedef struct DiskQuotaActiveTableFileEntry
 
 typedef struct DiskQuotaActiveTableEntry
 {
-	Oid			tableoid;
+	Oid		tableoid;
 	Size		tablesize;
+	Size            max_seg_tablesize;
 }			DiskQuotaActiveTableEntry;
 
 extern HTAB *gp_fetch_active_tables(bool force);
