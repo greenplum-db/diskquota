@@ -82,9 +82,9 @@ struct TableSizeEntry
 #define MAX_NUM_KEYS_QUOTA_MAP 8
 
 struct QuotaMapEntry {
+	Oid keys[MAX_NUM_KEYS_QUOTA_MAP];
 	int64 size;
 	int64 limit;
-	Oid keys[MAX_NUM_KEYS_QUOTA_MAP];
 };
 
 struct QuotaInfo {
@@ -168,16 +168,26 @@ static void init_lwlocks(void);
 static void truncateStringInfo(StringInfo str, int nchars);
 
 static void init_quota_maps() {
-	HASHCTL hash_ctl;
+	HASHCTL hash_ctl = {0};
 	hash_ctl.entrysize = sizeof(struct QuotaMapEntry);
-	hash_ctl.hcxt = CurrentMemoryContext;
+	// TODO: Figure out why using CurrentMemoryContext would cause seg fault.
+	hash_ctl.hcxt = TopMemoryContext;
 	for (QuotaType type = 0; type < NUM_QUOTA_TYPES; ++type) {
+		elog(WARNING, "quota map num_keys = %d", quota_info[type].num_keys);
 		hash_ctl.keysize = quota_info[type].num_keys * sizeof(Oid);
-		if (quota_info[type].map != NULL) {
-			hash_destroy(quota_info[type].map);
+		if (quota_info[type].num_keys == 1) {
+			hash_ctl.hash = oid_hash;
+		} else {
+			hash_ctl.hash = tag_hash;
 		}
+		// if (quota_info[type].map != NULL) {
+		// 	elog(WARNING, "quota maps destroyed.");
+		// 	hash_destroy(quota_info[type].map);
+		// }
 		quota_info[type].map = hash_create(
 			quota_info[type].map_name, 1024L, &hash_ctl, HASH_ELEM | HASH_CONTEXT | HASH_FUNCTION);
+		elog(WARNING, "hash_ctl hash = %p", hash_ctl.hash);
+		elog(WARNING, "quota maps created.");
 	}
 }
 
@@ -1039,7 +1049,7 @@ do_load_quotas(void)
 	 * read quotas from diskquota.quota_config
 	 */
 	ret = SPI_execute(
-		"SELECT targetOid, quotaType, quotalimitMB, primaryOid, tablespaceOid"
+		"SELECT targetOid, c.quotaType, quotalimitMB, primaryOid, tablespaceOid "
 		"FROM diskquota.quota_config c LEFT OUTER JOIN diskquota.target t "
 		"ON c.targetOid = t.rowId and c.quotatype = t.quotatype", true, 0);
 	if (ret != SPI_OK_SELECT)
