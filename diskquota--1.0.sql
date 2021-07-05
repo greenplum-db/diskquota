@@ -16,6 +16,29 @@ CREATE TABLE diskquota.target (
         PRIMARY KEY (rowId, quotatype)
 );
 
+CREATE OR REPLACE FUNCTION diskquota.set_tablespace_quota(ts oid, quota int8)
+RETURNS void AS $$
+        INSERT INTO diskquota.quota_config VALUES (ts, 3, quota);
+$$ LANGUAGE SQL;
+
+CREATE OR REPLACE FUNCTION diskquota.set_namespace_tablespace_quota(ns oid, ts oid, quota int8)
+RETURNS void AS $$
+    WITH target_id AS (
+        INSERT INTO diskquota.target (quotatype, primaryOid, tablespaceOid) VALUES (4, ns, ts)
+        RETURNING rowId;
+    }
+    INSERT INTO quota_config SELECT * FROM target_id, VALUES (4, quota);
+$$ LANGUAGE SQL;
+
+CREATE OR REPLACE FUNCTION diskquota.set_role_tablespace_quota(user oid, ts oid, quota int8)
+RETURNS void AS $$
+    WITH target_id AS (
+        INSERT INTO diskquota.target (quotatype, primaryOid, tablespaceOid) VALUES (5, user, ts)
+        RETURNING rowId;
+    }
+    INSERT INTO quota_config SELECT * FROM target_id, VALUES (5, quota);
+$$ LANGUAGE SQL;
+
 SELECT pg_catalog.pg_extension_config_dump('diskquota.quota_config', '');
 SELECT gp_segment_id, pg_catalog.pg_extension_config_dump('diskquota.quota_config', '') from gp_dist_random('gp_id');
 
