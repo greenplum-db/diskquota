@@ -581,6 +581,7 @@ refresh_disk_quota_usage(bool is_init)
 	bool		pushed_active_snap = false;
 	bool		ret = true;
 
+	elog(WARNING, "refresh diskquota usage...");
 	StartTransactionCommand();
 
 	/*
@@ -1051,13 +1052,14 @@ do_load_quotas(void)
 	ret = SPI_execute(
 		"SELECT targetOid, c.quotaType, quotalimitMB, primaryOid, tablespaceOid "
 		"FROM diskquota.quota_config c LEFT OUTER JOIN diskquota.target t "
-		"ON c.targetOid = t.rowId and c.quotatype = t.quotatype", true, 0);
+		"ON c.targetOid = t.id and c.quotatype = t.quotatype", true, 0);
+	const unsigned int NUM_ATTRIBUTES = 5;
 	if (ret != SPI_OK_SELECT)
 		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 						errmsg("[diskquota] load_quotas SPI_execute failed: error code %d", ret)));
 
 	tupdesc = SPI_tuptable->tupdesc;
-	if (tupdesc->natts != 5 ||
+	if (tupdesc->natts != NUM_ATTRIBUTES ||
 		((tupdesc)->attrs[0])->atttypid != OIDOID ||
 		((tupdesc)->attrs[1])->atttypid != INT4OID ||
 		((tupdesc)->attrs[2])->atttypid != INT8OID)
@@ -1071,13 +1073,12 @@ do_load_quotas(void)
 	for (i = 0; i < SPI_processed; i++)
 	{
 		HeapTuple	tup = SPI_tuptable->vals[i];
-		const unsigned int NUM_ATTRIBUTES = 5;
 		Datum		vals[NUM_ATTRIBUTES];
 		bool		isnull[NUM_ATTRIBUTES];
 
-		for (int i = 0; i < NUM_ATTRIBUTES; ++i) {
+		for (int i = 1; i <= NUM_ATTRIBUTES; ++i) {
 			vals[i] = SPI_getbinval(tup, tupdesc, i, &(isnull[i]));
-			if (i < 3 && isnull[i]) {
+			if (i <= 3 && isnull[i]) {
 				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 						errmsg("[diskquota] attibutes in configuration table MUST NOT be NULL")));
 			}
@@ -1131,6 +1132,8 @@ quota_check_common(Oid reloid)
 	bool		found;
 	BlackMapEntry keyitem;
 
+	// for (bool wait = true; wait; );
+
 	if (!IsTransactionState())
 	{
 		return true;
@@ -1165,7 +1168,7 @@ quota_check_common(Oid reloid)
 			LWLockRelease(diskquota_locks.black_map_lock);
 			ereport(ERROR,
 					(errcode(ERRCODE_DISK_FULL),
-					 errmsg("schema's disk space quota exceeded")));
+					 errmsg("diskquota exceeded")));
 			return false;
 		}
 	}

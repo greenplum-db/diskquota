@@ -9,35 +9,37 @@ CREATE SCHEMA diskquota;
 CREATE TABLE diskquota.quota_config (targetOid oid, quotatype int, quotalimitMB int8, PRIMARY KEY(targetOid, quotatype));
 
 CREATE TABLE diskquota.target (
-        rowId serial, --REFERENCES diskquota.quota_config.targetOid,
+        id serial, --REFERENCES diskquota.quota_config.targetOid,
         quotatype int, --REFERENCES disquota.quota_config.quotatype,
         primaryOid oid,
         tablespaceOid oid, --REFERENCES pg_tablespace.oid,
-        PRIMARY KEY (rowId, quotatype)
+        PRIMARY KEY (id, quotatype)
 );
 
 CREATE OR REPLACE FUNCTION diskquota.set_tablespace_quota(ts oid, quota int8)
 RETURNS void AS $$
-        INSERT INTO diskquota.quota_config VALUES (ts, 3, quota);
+        INSERT INTO diskquota.quota_config VALUES (ts, 2, quota);
 $$ LANGUAGE SQL;
 
 CREATE OR REPLACE FUNCTION diskquota.set_namespace_tablespace_quota(ns oid, ts oid, quota int8)
 RETURNS void AS $$
-    WITH target_id AS (
-        INSERT INTO diskquota.target (quotatype, primaryOid, tablespaceOid) VALUES (4, ns, ts)
-        RETURNING rowId;
-    }
-    INSERT INTO quota_config SELECT * FROM target_id, VALUES (4, quota);
-$$ LANGUAGE SQL;
+DECLARE 
+    target_id diskquota.target.id%TYPE;
+BEGIN
+    INSERT INTO diskquota.target (quotatype, primaryOid, tablespaceOid) VALUES (3, ns, ts) RETURNING id INTO target_id;
+    INSERT INTO diskquota.quota_config VALUES (target_id, 3, quota);
+END
+$$ LANGUAGE PLpgSQL;
 
-CREATE OR REPLACE FUNCTION diskquota.set_role_tablespace_quota(user oid, ts oid, quota int8)
+CREATE OR REPLACE FUNCTION diskquota.set_role_tablespace_quota(r oid, ts oid, quota int8)
 RETURNS void AS $$
-    WITH target_id AS (
-        INSERT INTO diskquota.target (quotatype, primaryOid, tablespaceOid) VALUES (5, user, ts)
-        RETURNING rowId;
-    }
-    INSERT INTO quota_config SELECT * FROM target_id, VALUES (5, quota);
-$$ LANGUAGE SQL;
+DECLARE 
+    target_id diskquota.target.id%TYPE;
+BEGIN
+    INSERT INTO diskquota.target (quotatype, primaryOid, tablespaceOid) VALUES (4, r, ts) RETURNING id INTO target_id;
+    INSERT INTO diskquota.quota_config VALUES (target_id, 4, quota);
+END
+$$ LANGUAGE PLpgSQL;
 
 SELECT pg_catalog.pg_extension_config_dump('diskquota.quota_config', '');
 SELECT gp_segment_id, pg_catalog.pg_extension_config_dump('diskquota.quota_config', '') from gp_dist_random('gp_id');
