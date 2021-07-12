@@ -170,10 +170,8 @@ static void truncateStringInfo(StringInfo str, int nchars);
 static void init_quota_maps() {
 	HASHCTL hash_ctl = {0};
 	hash_ctl.entrysize = sizeof(struct QuotaMapEntry);
-	// TODO: Figure out why using CurrentMemoryContext would cause seg fault.
-	hash_ctl.hcxt = CurrentMemoryContext;
+	hash_ctl.hcxt = TopMemoryContext;
 	for (QuotaType type = 0; type < NUM_QUOTA_TYPES; ++type) {
-		elog(WARNING, "quota map num_keys = %d", quota_info[type].num_keys);
 		hash_ctl.keysize = quota_info[type].num_keys * sizeof(Oid);
 		if (quota_info[type].num_keys == 1) {
 			hash_ctl.hash = oid_hash;
@@ -181,13 +179,10 @@ static void init_quota_maps() {
 			hash_ctl.hash = tag_hash;
 		}
 		if (quota_info[type].map != NULL) {
-			elog(WARNING, "quota maps destroyed.");
 			hash_destroy(quota_info[type].map);
 		}
 		quota_info[type].map = hash_create(
 			quota_info[type].map_name, 1024L, &hash_ctl, HASH_ELEM | HASH_CONTEXT | HASH_FUNCTION);
-		elog(WARNING, "hash_ctl hash = %p", hash_ctl.hash);
-		elog(WARNING, "quota maps created.");
 	}
 }
 
@@ -197,6 +192,7 @@ static void update_table_size_for_quota(int64 size, QuotaType type, Oid* keys) {
 		quota_info[type].map, keys, HASH_ENTER, &found);
 	if (!found) {
 		entry->size = size;
+		entry->limit = -1;
 		memcpy(entry->keys, keys, quota_info[type].num_keys * sizeof(Oid));
 	} else {
 		entry->size += size;
@@ -215,9 +211,8 @@ static void
 move_quota_to_blacklist(QuotaType type, Oid targetOid, Oid tablespace_oid)
 {
 	LocalBlackMapEntry *localblackentry;
-	BlackMapEntry keyitem;
+	BlackMapEntry keyitem = {0};
 
-	memset(&keyitem, 0, sizeof(BlackMapEntry));
 	keyitem.targetoid = targetOid;
 	keyitem.databaseoid = MyDatabaseId;
 	keyitem.tablespace_oid = tablespace_oid; 
@@ -245,7 +240,7 @@ static void check_quota_map(QuotaType type) {
 				remove_quota(type, entry->keys);
 			} else {
 				ReleaseSysCache(tuple);
-				if (entry->size >= entry->limit) {
+				if (entry->limit >= 0 && entry->size >= entry->limit) {
 					Oid targetOid = entry->keys[0];
 					Oid tablespace_oid =
 						(type == NAMESPACE_TABLESPACE_QUOTA) || (type == ROLE_TABLESPACE_QUOTA) ? entry->keys[1] : InvalidOid;
@@ -261,10 +256,10 @@ static void set_limit_for_quota(int64 limit, QuotaType type, Oid* keys) {
 	struct QuotaMapEntry *entry = hash_search(
 		quota_info[type].map, keys, HASH_ENTER, &found);
 	if (!found) {
-		entry->limit = limit;
 		entry->size = 0;
 		memcpy(entry->keys, keys, quota_info[type].num_keys * sizeof(Oid));
 	}
+	entry->limit = limit;
 }
 
 static void transfer_table_for_quota(int64 totalsize, QuotaType type, Oid* old_keys, Oid* new_keys) {
@@ -907,7 +902,7 @@ flush_to_table_size(void)
 /*
  * Generate the new shared blacklist from the local_black_list which
  * exceed the quota limit.
- * local_black_list is used to reduce the lock race.
+ * local_black_list is used to reduce the lock contention.
  */
 static void
 flush_local_black_map(void)
@@ -986,7 +981,7 @@ load_quotas(void)
 	bool		ret = true;
 
 	/* clear entries in quota limit map */
-	init_quota_maps();
+	// init_quota_maps();
 
 	StartTransactionCommand();
 
@@ -1077,8 +1072,8 @@ do_load_quotas(void)
 		Datum		vals[NUM_ATTRIBUTES];
 		bool		isnull[NUM_ATTRIBUTES];
 
-		for (int i = 1; i <= NUM_ATTRIBUTES; ++i) {
-			vals[i] = SPI_getbinval(tup, tupdesc, i, &(isnull[i]));
+		for (int i = 0; i < NUM_ATTRIBUTES; ++i) {
+			vals[i] = SPI_getbinval(tup, tupdesc, i + 1, &(isnull[i]));
 			if (i <= 3 && isnull[i]) {
 				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 						errmsg("[diskquota] attibutes in configuration table MUST NOT be NULL")));
@@ -1089,9 +1084,9 @@ do_load_quotas(void)
 		int64 quota_limit_mb = DatumGetInt64(vals[2]);
 		if (isnull[4]) {
 			Oid targetOid = DatumGetObjectId(vals[0]);
-			set_limit_for_quota(quota_limit_mb, quotatype, (Oid[]){targetOid});
+			set_limit_for_quota(quota_limit_mb * (1 << 20), quotatype, (Oid[]){targetOid});
 		} else {
-			set_limit_for_quota(quota_limit_mb, quotatype, (Oid[]){vals[3], vals[4]});
+			set_limit_for_quota(quota_limit_mb * (1 << 20), quotatype, (Oid[]){vals[3], vals[4]});
 		}
 	}
 	return;

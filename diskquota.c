@@ -345,6 +345,7 @@ disk_quota_worker_main(Datum main_arg)
 		invalidate_database_blackmap(MyDatabaseId);
 		proc_exit(0);
 	}
+	// for (bool wait = true; wait; );
 
 	/* Refresh quota model with init mode */
 	refresh_disk_quota_model(true);
