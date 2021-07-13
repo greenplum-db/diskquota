@@ -167,7 +167,7 @@ static void init_lwlocks(void);
 
 static void truncateStringInfo(StringInfo str, int nchars);
 
-static void init_quota_maps() {
+static void init_all_quota_maps(void) {
 	HASHCTL hash_ctl = {0};
 	hash_ctl.entrysize = sizeof(struct QuotaMapEntry);
 	hash_ctl.hcxt = TopMemoryContext;
@@ -265,6 +265,17 @@ static void set_limit_for_quota(int64 limit, QuotaType type, Oid* keys) {
 static void transfer_table_for_quota(int64 totalsize, QuotaType type, Oid* old_keys, Oid* new_keys) {
 	update_table_size_for_quota(-totalsize, type, old_keys);
 	update_table_size_for_quota(totalsize, type, new_keys);
+}
+
+static void clear_all_quota_maps(void) {
+	for (QuotaType type = 0; type < NUM_QUOTA_TYPES; ++type) {
+		HASH_SEQ_STATUS iter = {0};
+		hash_seq_init(&iter, quota_info[type].map);
+		struct QuotaMapEntry *entry = NULL;
+		while ((entry = hash_seq_search(&iter)) != NULL) {
+			entry->limit = -1;
+		}
+	}
 }
 
 /* ---- Functions for disk quota shared memory ---- */
@@ -404,7 +415,7 @@ init_disk_quota_model(void)
 								 &hash_ctl,
 								 HASH_ELEM | HASH_CONTEXT | HASH_FUNCTION);
 
-	init_quota_maps();
+	init_all_quota_maps();
 
 	/*
 	 * local diskquota black map is used to reduce the lock hold time of
@@ -1041,6 +1052,7 @@ do_load_quotas(void)
 	 * quota.config. A flag in shared memory could be used to detect the quota
 	 * config change.
 	 */
+	clear_all_quota_maps();
 
 	/*
 	 * read quotas from diskquota.quota_config
