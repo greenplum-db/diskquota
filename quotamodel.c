@@ -278,6 +278,19 @@ static void clear_all_quota_maps(void) {
 	}
 }
 
+static void vacuum_all_quota_maps(void) {
+	for (QuotaType type = 0; type < NUM_QUOTA_TYPES; ++type) {
+		HASH_SEQ_STATUS iter = {0};
+		hash_seq_init(&iter, quota_info[type].map);
+		struct QuotaMapEntry *entry = NULL;
+		while ((entry = hash_seq_search(&iter)) != NULL) {
+			if (entry->limit == -1) {
+				remove_quota(type, entry->keys);
+			}
+		}
+	}
+}
+
 /* ---- Functions for disk quota shared memory ---- */
 /*
  * DiskQuotaShmemInit
@@ -1101,6 +1114,8 @@ do_load_quotas(void)
 			set_limit_for_quota(quota_limit_mb * (1 << 20), quotatype, (Oid[]){vals[3], vals[4]});
 		}
 	}
+
+	vacuum_all_quota_maps();
 	return;
 }
 
