@@ -1099,7 +1099,7 @@ do_load_quotas(void)
 
 		for (int i = 0; i < NUM_ATTRIBUTES; ++i) {
 			vals[i] = SPI_getbinval(tup, tupdesc, i + 1, &(isnull[i]));
-			if (i <= 3 && isnull[i]) {
+			if (i <= 2 && isnull[i]) {
 				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 						errmsg("[diskquota] attibutes in configuration table MUST NOT be NULL")));
 			}

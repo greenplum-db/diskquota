@@ -461,7 +461,7 @@ set_quota_internal(Oid targetoid, int64 quota_limit_mb, QuotaType type)
 		elog(ERROR, "cannot select quota setting table: error code %d", ret);
 
 	/* if the schema or role's quota has been set before */
-	if (SPI_processed == 0 && quota_limit_mb > 0)
+	if (SPI_processed == 0 && quota_limit_mb >= 0)
 	{
 		resetStringInfo(&buf);
 		appendStringInfo(&buf,
@@ -471,7 +471,7 @@ set_quota_internal(Oid targetoid, int64 quota_limit_mb, QuotaType type)
 		if (ret != SPI_OK_INSERT)
 			elog(ERROR, "cannot insert into quota setting table, error code %d", ret);
 	}
-	else if (SPI_processed > 0 && quota_limit_mb <= 0)
+	else if (SPI_processed > 0 && quota_limit_mb < 0)
 	{
 		resetStringInfo(&buf);
 		appendStringInfo(&buf,
@@ -482,7 +482,7 @@ set_quota_internal(Oid targetoid, int64 quota_limit_mb, QuotaType type)
 		if (ret != SPI_OK_DELETE)
 			elog(ERROR, "cannot delete item from quota setting table, error code %d", ret);
 	}
-	else if (SPI_processed > 0 && quota_limit_mb > 0)
+	else if (SPI_processed > 0 && quota_limit_mb >= 0)
 	{
 		resetStringInfo(&buf);
 		appendStringInfo(&buf,
