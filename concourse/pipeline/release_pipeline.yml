@@ -11,6 +11,7 @@ groups:
     - diskquota_centos6_test_release
     - diskquota_centos7_test_release
     - diskquota_ubuntu18_test_release
+    - diskquota_centos7_extension_upgrade_1.0_2.0
 
 resource_types:
 - name: gcs
@@ -106,6 +107,12 @@ resources:
     json_key: {{concourse-gcs-resources-service-account-key}}
     regexp: diskquota/released/gpdb6/diskquota-(.*).tar.gz
 
+- name: bin_diskquota_centos7_1.0
+  type: gcs
+  source:
+    bucket: {{gcs-bucket}}
+    json_key: {{concourse-gcs-resources-service-account-key}}
+    regexp: diskquota/released/gpdb6/diskquota-(1.*)-rhel7_x86_64.tar.gz
 ## jobs
 ## ======================================================================
 
@@ -240,3 +247,27 @@ jobs:
   - task: test_diskquota
     file: diskquota_src/concourse/tasks/test_diskquota.yml
     image: ubuntu18-image-test
+
+- name: diskquota_centos7_extension_upgrade_1.0_2.0
+  max_in_flight: 3
+  plan:
+  - aggregate:
+    - get: centos-gpdb-dev-7
+    - get: bin_diskquota_old
+      resource: bin_diskquota_centos7_1.0
+    - get: bin_diskquota_new
+      passed:
+      - release_centos7
+      resource: bin_diskquota_centos7
+      trigger: true
+    - get: bin_gpdb
+      resource: bin_gpdb_centos7
+    - get: gpdb_src
+    - get: diskquota_src
+  - task: upgrade_extension
+    file: diskquota_src/concourse/tasks/upgrade_extension.yml
+    image: centos-gpdb-dev-7
+    params:
+      DISKQUOTA_OS: rhel7
+      OLD_VERSION: "1.0"
+      NEW_VERSION: "2.0"
