@@ -11,7 +11,7 @@ groups:
 
 resource_types:
 - name: gcs
-  type: docker-image
+  type: registry-image
   source:
     repository: frodenas/gcs-resource
 
@@ -20,25 +20,25 @@ resources:
 # Image Resources
 
 - name: centos-gpdb-dev-6
-  type: docker-image
+  type: registry-image
   source:
     repository: gcr.io/data-gpdb-public-images/gpdb5-centos6-build-test
     tag: latest
 
 - name: centos-gpdb-dev-7
-  type: docker-image
+  type: registry-image
   source:
     repository: gcr.io/data-gpdb-public-images/gpdb5-centos7-build-test
     tag: latest
 
 - name: ubuntu18-image-build
-  type: docker-image
+  type: registry-image
   source:
     repository: gcr.io/data-gpdb-public-images/gpdb6-ubuntu18.04-build
     tag: latest
 
 - name: ubuntu18-image-test
-  type: docker-image
+  type: registry-image
   source:
     repository: gcr.io/data-gpdb-public-images/gpdb6-ubuntu18.04-test
     tag: latest
