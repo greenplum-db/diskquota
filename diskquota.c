@@ -147,7 +147,7 @@ _PG_init(void)
 		BGWORKER_BACKEND_DATABASE_CONNECTION;
 	worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
 	/* launcher process should be restarted after pm reset. */
-	worker.bgw_restart_time = BGW_NEVER_RESTART;
+	worker.bgw_restart_time = BGW_DEFAULT_RESTART_INTERVAL;
 	snprintf(worker.bgw_library_name, BGW_MAXLEN, "diskquota");
 	snprintf(worker.bgw_function_name, BGW_MAXLEN, "disk_quota_launcher_main");
 	worker.bgw_notify_pid = 0;
@@ -345,7 +345,6 @@ disk_quota_worker_main(Datum main_arg)
 		invalidate_database_blackmap(MyDatabaseId);
 		proc_exit(0);
 	}
-	// for (bool wait = true; wait; );
 
 	/* Refresh quota model with init mode */
 	refresh_disk_quota_model(true);
