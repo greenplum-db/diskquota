@@ -1,5 +1,9 @@
 -- Test role quota
+-- start_ignore
 \! mkdir /tmp/rolespc
+-- end_ignore
+DROP TABLESPACE  IF EXISTS rolespc;
+NOTICE:  tablespace "rolespc" does not exist, skipping
 CREATE TABLESPACE rolespc LOCATION '/tmp/rolespc';
 CREATE SCHEMA rolespcrole;
 SET search_path TO rolespcrole;
@@ -41,7 +45,7 @@ ERROR:  tablespace: rolespc role: rolespcu1 diskquota exceeded
 INSERT INTO b2 SELECT generate_series(1,100);
 ERROR:  tablespace: rolespc role: rolespcu1 diskquota exceeded
 -- Test show_fast_schema_tablespace_quota_view
-SELECT role_name, tablespace_name, quota_in_mb, rolsize_tablespace_in_bytes FROM diskquota.show_fast_role_tablespace_quota_view;
+SELECT role_name, tablespace_name, quota_in_mb, rolsize_tablespace_in_bytes FROM diskquota.show_fast_role_tablespace_quota_view WHERE role_name = 'rolespcu1' and tablespace_name = 'rolespc';
  role_name | tablespace_name | quota_in_mb | rolsize_tablespace_in_bytes 
 -----------+-----------------+-------------+-----------------------------
  rolespcu1 | rolespc         |           1 |                     4194304
@@ -70,7 +74,11 @@ SELECT pg_sleep(20);
 INSERT INTO b SELECT generate_series(1,100);
 ERROR:  tablespace: rolespc role: rolespcu1 diskquota exceeded
 -- Test alter tablespace
+-- start_ignore
 \! mkdir /tmp/rolespc2
+-- end_ignore
+DROP TABLESPACE  IF EXISTS rolespc2;
+NOTICE:  tablespace "rolespc2" does not exist, skipping
 CREATE TABLESPACE rolespc2 LOCATION '/tmp/rolespc2';
 ALTER TABLE b SET TABLESPACE rolespc2;
 SELECT pg_sleep(20);

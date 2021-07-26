@@ -182,7 +182,7 @@ init_all_quota_maps(void)
 	for (QuotaType type = 0; type < NUM_QUOTA_TYPES; ++type)
 	{
 		hash_ctl.keysize = quota_info[type].num_keys * sizeof(Oid);
-		if (quota_info[type].num_keys == 1) 
+		if (quota_info[type].num_keys == 1)
 		{
 			hash_ctl.hash = oid_hash;
 		}
@@ -719,7 +719,7 @@ refresh_disk_quota_usage(bool is_init)
  */
 
 /* FIXME: we should only care about the tables whose role, schema, or tablespace
- * has quota, this may improve the performance especially when too many tables 
+ * has quota, this may improve the performance especially when too many tables
  * in the database
  */
 static void
@@ -1169,7 +1169,6 @@ do_load_quotas(void)
 							errmsg("[diskquota] tablespace Oid MUST NOT be NULL for quota type: %d", quotaType)));
 			}
 			update_limit_for_quota(quota_limit_mb * (1 << 20), quotaType, (Oid[]){targetOid});
-			
 		}
 		else
 		{

@@ -1,5 +1,8 @@
 -- Test role quota
+-- start_ignore
 \! mkdir /tmp/rolespc
+-- end_ignore
+DROP TABLESPACE  IF EXISTS rolespc;
 CREATE TABLESPACE rolespc LOCATION '/tmp/rolespc';
 CREATE SCHEMA rolespcrole;
 SET search_path TO rolespcrole;
@@ -25,7 +28,7 @@ INSERT INTO b SELECT generate_series(1,100);
 INSERT INTO b2 SELECT generate_series(1,100);
 
 -- Test show_fast_schema_tablespace_quota_view
-SELECT role_name, tablespace_name, quota_in_mb, rolsize_tablespace_in_bytes FROM diskquota.show_fast_role_tablespace_quota_view;
+SELECT role_name, tablespace_name, quota_in_mb, rolsize_tablespace_in_bytes FROM diskquota.show_fast_role_tablespace_quota_view WHERE role_name = 'rolespcu1' and tablespace_name = 'rolespc';
 
 -- Test alter owner
 ALTER TABLE b OWNER TO rolespcu2;
@@ -40,7 +43,10 @@ SELECT pg_sleep(20);
 INSERT INTO b SELECT generate_series(1,100);
 
 -- Test alter tablespace
+-- start_ignore
 \! mkdir /tmp/rolespc2
+-- end_ignore
+DROP TABLESPACE  IF EXISTS rolespc2;
 CREATE TABLESPACE rolespc2 LOCATION '/tmp/rolespc2';
 ALTER TABLE b SET TABLESPACE rolespc2;
 SELECT pg_sleep(20);

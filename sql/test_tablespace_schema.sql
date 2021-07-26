@@ -1,6 +1,9 @@
 -- Test schema
+-- start_ignore
 \! mkdir /tmp/schemaspc
+-- end_ignore
 CREATE SCHEMA spcs1;
+DROP TABLESPACE  IF EXISTS schemaspc;
 CREATE TABLESPACE schemaspc LOCATION '/tmp/schemaspc';
 SELECT diskquota.set_schema_tablespace_quota('spcs1', 'schemaspc','1 MB');
 SET search_path TO spcs1;
@@ -28,10 +31,13 @@ ALTER TABLE spcs2.a SET SCHEMA spcs1;
 SELECT pg_sleep(10);
 -- expect insert fail
 INSERT INTO a SELECT generate_series(1,200);
-SELECT schema_name, tablespace_name, quota_in_mb, nspsize_tablespcae_in_bytes FROM diskquota.show_fast_schema_tablespace_quota_view;
+SELECT schema_name, tablespace_name, quota_in_mb, nspsize_tablespcae_in_bytes FROM diskquota.show_fast_schema_tablespace_quota_view WHERE schema_name = 'spcs1' and tablespace_name ='schemaspc'; 
 
 -- Test alter tablespace
+-- start_ignore
 \! mkdir /tmp/schemaspc2
+-- end_ignore
+DROP TABLESPACE  IF EXISTS schemaspc2;
 CREATE TABLESPACE schemaspc2 LOCATION '/tmp/schemaspc2';
 ALTER TABLE a SET TABLESPACE schemaspc2;
 SELECT pg_sleep(20);
