@@ -31,7 +31,7 @@ ALTER TABLE spcs2.a SET SCHEMA spcs1;
 SELECT pg_sleep(10);
 -- expect insert fail
 INSERT INTO a SELECT generate_series(1,200);
-SELECT schema_name, tablespace_name, quota_in_mb, nspsize_tablespcae_in_bytes FROM diskquota.show_fast_schema_tablespace_quota_view WHERE schema_name = 'spcs1' and tablespace_name ='schemaspc'; 
+SELECT schema_name, tablespace_name, quota_in_mb, nspsize_tablespcae_in_bytes FROM diskquota.show_fast_schema_tablespace_quota_view WHERE schema_name = 'spcs1' and tablespace_name ='schemaspc';
 
 -- Test alter tablespace
 -- start_ignore

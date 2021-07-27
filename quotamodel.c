@@ -1116,29 +1116,58 @@ do_load_quotas(void)
 	 * config change.
 	 */
 	clear_all_quota_maps();
+	const unsigned int NUM_ATTRIBUTES = 4;
 
 	/*
-	 * read quotas from diskquota.quota_config
+	 * read quotas from diskquota.quota_config and target table
 	 */
-	ret = SPI_execute(
-		"SELECT targetOid, c.quotaType, quotalimitMB, COALESCE(tablespaceoid, 0)"
-		"FROM diskquota.quota_config c LEFT OUTER JOIN diskquota.target t "
-		"ON c.targetOid = t.primaryOid and c.quotatype = t.quotatype", true, 0);
-	const unsigned int NUM_ATTRIBUTES = 4;
+
+	Oid nsoid = get_namespace_oid("diskquota", false);
+	if (nsoid == InvalidOid)
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("[diskquota] diskquota schema doesn't exist in database \"%s\","
+					" please recreate diskquota extension",
+					get_database_name(MyDatabaseId))));
+	Oid targetTableOid = get_relname_relid("target", nsoid);
+	/* 
+	 * For diskquota 1.0, there is no target table in diskquota schema. 
+	 * Why do we need this?
+	 * As when we upgrade diskquota extension from 1.0 to another version,
+	 * we need firstly reload the new diskquota.so and then execute the
+	 * upgrade SQL. However, between the 2 steps, the new diskquota.so
+	 * needs to work with the old version diskquota sql file, otherwise,
+	 * the init work will fail and diskquota can not work correctly.
+	 * Maybe this is not the best sulotion, only a work arround. Optimizing
+	 * the init procedure is a better solution.
+	 */ 
+	if (targetTableOid == InvalidOid)
+	{
+		ret = SPI_execute("select targetoid, quotatype, quotalimitMB, 0 as tablespaceoid from diskquota.quota_config", true, 0);
+	}
+	else
+	{
+		ret = SPI_execute(
+				"SELECT targetOid, c.quotaType, quotalimitMB, COALESCE(tablespaceoid, 0)"
+				"FROM diskquota.quota_config c LEFT OUTER JOIN diskquota.target t "
+				"ON c.targetOid = t.primaryOid and c.quotatype = t.quotatype", true, 0);
+	}
 	if (ret != SPI_OK_SELECT)
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-						errmsg("[diskquota] load_quotas SPI_execute failed: error code %d", ret)));
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("[diskquota] load_quotas SPI_execute failed: error code %d", ret)));
 
 	tupdesc = SPI_tuptable->tupdesc;
 	if (tupdesc->natts != NUM_ATTRIBUTES ||
-		((tupdesc)->attrs[0])->atttypid != OIDOID ||
-		((tupdesc)->attrs[1])->atttypid != INT4OID ||
-		((tupdesc)->attrs[2])->atttypid != INT8OID)
+			((tupdesc)->attrs[0])->atttypid != OIDOID ||
+			((tupdesc)->attrs[1])->atttypid != INT4OID ||
+			((tupdesc)->attrs[2])->atttypid != INT8OID)
 	{
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-						errmsg("[diskquota] configuration table is corrupted in database \"%s\","
-							   " please recreate diskquota extension",
-							   get_database_name(MyDatabaseId))));
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("[diskquota] configuration table is corrupted in database \"%s\","
+						" please recreate diskquota extension",
+						get_database_name(MyDatabaseId))));
 	}
 
 	for (i = 0; i < SPI_processed; i++)
@@ -1152,7 +1181,8 @@ do_load_quotas(void)
 			vals[i] = SPI_getbinval(tup, tupdesc, i + 1, &(isnull[i]));
 			if (i <= 2 && isnull[i])
 			{
-				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+				ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
 						errmsg("[diskquota] attibutes in configuration table MUST NOT be NULL")));
 			}
 		}
