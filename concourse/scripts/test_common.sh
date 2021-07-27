@@ -18,7 +18,7 @@ function test(){
 		trap "[ -s regression.diffs ] && grep -v GP_IGNORE regression.diffs" EXIT
 		make installcheck
 		[ -s regression.diffs ] && grep -v GP_IGNORE regression.diffs && exit 1
-		if [ $2 ]; then
+		if $2 ; then
 			ps -ef | grep postgres| grep qddir| cut -d ' ' -f ${CUT_NUMBER} | xargs kill -9
 			export PGPORT=6001
 			echo "export PGPROT=\$PGPORT" >> /usr/local/greenplum-db-devel/greenplum_path.sh
