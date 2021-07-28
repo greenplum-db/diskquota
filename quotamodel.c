@@ -656,7 +656,7 @@ refresh_disk_quota_usage(bool is_init)
 	bool		pushed_active_snap = false;
 	bool		ret = true;
 
-	elog(WARNING, "refresh diskquota usage...");
+	elog(LOG, "refresh diskquota usage...");
 	StartTransactionCommand();
 
 	/*
