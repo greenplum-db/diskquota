@@ -165,7 +165,7 @@ static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 /* functions to maintain the quota maps */
 static void init_all_quota_maps(void);
 static void update_size_for_quota(int64 size, int64 maxsegsize, QuotaType type, Oid* keys);
-static void update_limit_for_quota(int64 limit, float4 segratio, QuotaType type, Oid* keys);
+static void update_limit_for_quota(int64 limit, float segratio, QuotaType type, Oid* keys);
 static void remove_quota(QuotaType type, Oid* keys);
 static void add_quota_to_blacklist(QuotaType type, Oid targetOid, Oid tablespaceoid, bool segexceeded);
 static void check_quota_map(QuotaType type);
@@ -240,7 +240,7 @@ update_size_for_quota(int64 size, int64 maxsegsize, QuotaType type, Oid* keys)
 
 /* add a new entry quota or update the old entry limit */
 static void
-update_limit_for_quota(int64 limit, float4 segratio, QuotaType type, Oid* keys)
+update_limit_for_quota(int64 limit, float segratio, QuotaType type, Oid* keys)
 {
 	bool found;
 	struct QuotaMapEntry *entry = hash_search(
@@ -1249,7 +1249,7 @@ do_load_quotas(void)
 		Oid 	targetOid = DatumGetObjectId(vals[0]);
 		int	quotaType = (QuotaType) DatumGetInt32(vals[1]);
 		int64	quota_limit_mb = DatumGetInt64(vals[2]);
-		float4	segratio = DatumGetFloat4(vals[3]);
+		float	segratio = DatumGetFloat4(vals[3]);
 		Oid	spcOid = DatumGetObjectId(vals[4]);
 
 		if (spcOid == InvalidOid)
