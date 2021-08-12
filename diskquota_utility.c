@@ -69,6 +69,10 @@ static const char *ddl_err_code_to_err_message(MessageResult code);
 static int64 get_size_in_mb(char *str);
 static void set_quota_config_internal(Oid targetoid, int64 quota_limit_mb, QuotaType type);
 static void set_target_internal(Oid primaryoid, Oid spcoid, int64 quota_limit_mb, QuotaType type);
+static bool generate_insert_table_size_sql(StringInfoData *buf, char *extversion);
+
+char* get_extversion(void);
+
 
 /* ---- Help Functions to set quota limit. ---- */
 /*
@@ -80,12 +84,14 @@ static void set_target_internal(Oid primaryoid, Oid spcoid, int64 quota_limit_mb
 Datum
 init_table_size_table(PG_FUNCTION_ARGS)
 {
-	int			ret;
-	StringInfoData buf;
+	int		ret;
+	StringInfoData	buf;
+	StringInfoData	insert_buf;
 
-	RangeVar   *rv;
+	RangeVar   	*rv;
 	Relation	rel;
-
+	char		*extversion;
+	bool		insert_flag;
 	/*
 	 * If error happens in init_table_size_table, just return error messages
 	 * to the client side. So there is no need to catch the error.
@@ -104,18 +110,20 @@ init_table_size_table(PG_FUNCTION_ARGS)
 	heap_close(rel, NoLock);
 
 	SPI_connect();
+	extversion = get_extversion();
 
 	/* delete all the table size info in table_size if exist. */
 	initStringInfo(&buf);
+	initStringInfo(&insert_buf);
 	appendStringInfo(&buf, "delete from diskquota.table_size;");
 	ret = SPI_execute(buf.data, false, 0);
 	if (ret != SPI_OK_DELETE)
 		elog(ERROR, "cannot delete table_size table: error code %d", ret);
 
-	/* fetch table size */
+	/* fetch table size for master*/
 	resetStringInfo(&buf);
 	appendStringInfo(&buf,
-					 "select oid, pg_total_relation_size(oid)"
+					 "select oid, pg_total_relation_size(oid), -1"
 					 " from pg_class"
 					 " where oid >= %u and (relkind='r' or relkind='m')",
 					 FirstNormalObjectId);
@@ -123,31 +131,31 @@ init_table_size_table(PG_FUNCTION_ARGS)
 	if (ret != SPI_OK_SELECT)
 		elog(ERROR, "cannot fetch in pg_total_relation_size. error code %d", ret);
 
-	/* fill table_size table with table oid and size info. */
+	/* fill table_size table with table oid and size info for master. */
+	appendStringInfo(&insert_buf,
+	                 "insert into diskquota.table_size values");
+	insert_flag = generate_insert_table_size_sql(&insert_buf, extversion);
+	/* fetch table size on segments*/
 	resetStringInfo(&buf);
 	appendStringInfo(&buf,
-	                 "insert into diskquota.table_size values");
-	TupleDesc tupdesc = SPI_tuptable->tupdesc;
-	for(int i = 0; i < SPI_processed; i++)
-	{
-		HeapTuple   tup;
-		bool        isnull;
-		Oid         oid;
-		int64       sz;
-
-		tup = SPI_tuptable->vals[i];
-		oid = SPI_getbinval(tup,tupdesc, 1, &isnull);
-		sz = SPI_getbinval(tup,tupdesc, 2, &isnull);
-
-		appendStringInfo(&buf, " ( %u, %ld)", oid, sz);
-		if(i + 1 < SPI_processed)
-			appendStringInfoChar(&buf, ',');
-	}
-	appendStringInfo(&buf, ";");
-
+			"select oid, pg_total_relation_size(oid), gp_segment_id"
+			" from gp_dist_random('pg_class')"
+			" where oid >= %u and (relkind='r' or relkind='m')",
+			FirstNormalObjectId);
 	ret = SPI_execute(buf.data, false, 0);
-	if (ret != SPI_OK_INSERT)
-		elog(ERROR, "cannot insert table_size table: error code %d", ret);
+	if (ret != SPI_OK_SELECT)
+		elog(ERROR, "cannot fetch in pg_total_relation_size. error code %d", ret);
+
+	/* fill table_size table with table oid and size info for segments. */
+	insert_flag = insert_flag | generate_insert_table_size_sql(&insert_buf, extversion);
+	if (insert_flag)
+	{
+		truncateStringInfo(&insert_buf, insert_buf.len - strlen(","));
+		appendStringInfo(&insert_buf, ";");
+		ret = SPI_execute(insert_buf.data, false, 0);
+		if (ret != SPI_OK_INSERT)
+			elog(ERROR, "cannot insert table_size_per_segment table: error code %d", ret);
+	}
 
 	/* set diskquota state to ready. */
 	resetStringInfo(&buf);
@@ -162,6 +170,46 @@ init_table_size_table(PG_FUNCTION_ARGS)
 	PG_RETURN_VOID();
 }
 
+/* last_part is true means there is no other set of values to be inserted to table_size */
+static bool
+generate_insert_table_size_sql(StringInfoData *insert_buf, char *extversion)
+{
+	TupleDesc tupdesc = SPI_tuptable->tupdesc;
+	bool insert_flag = false;
+	for(int i = 0; i < SPI_processed; i++)
+	{
+		HeapTuple	tup;
+		bool        	isnull;
+		Oid         	oid;
+		int64       	sz;
+		int16		segid;
+
+		tup = SPI_tuptable->vals[i];
+		oid = SPI_getbinval(tup,tupdesc, 1, &isnull);
+		sz = SPI_getbinval(tup,tupdesc, 2, &isnull);
+		segid = SPI_getbinval(tup,tupdesc, 3, &isnull);
+
+		if (strcmp(extversion, "1.0") == 0)
+		{
+			/* for version 1.0, only insert the values from master */
+			if (segid == -1)
+			{
+				appendStringInfo(insert_buf, " ( %u, %ld),", oid, sz);
+				insert_flag = true;
+			}
+		}
+		else if (strcmp(extversion,"2.0") == 0)
+		{
+			appendStringInfo(insert_buf, " ( %u, %ld, %d),", oid, sz, segid);
+			insert_flag = true;
+		}
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("[diskquota] unknown diskquota extension version: %s", extversion)));
+	}
+	return insert_flag;
+}
 /*
  * Trigger to start diskquota worker when create extension diskquota.
  * This function is called at backend side, and will send message to
@@ -890,4 +938,37 @@ set_per_segment_quota(PG_FUNCTION_ARGS)
 	 */
 	SPI_finish();
 	PG_RETURN_VOID();
+}
+
+char*
+get_extversion(void)
+{
+	int		ret;
+	TupleDesc	tupdesc;
+	HeapTuple	tup;
+	Datum		dat;
+	bool		isnull;
+
+	ret = SPI_execute("select COALESCE(extversion,'') from pg_extension where extname = 'diskquota'", true, 0);
+	if (ret != SPI_OK_SELECT)
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("[diskquota] check diskquota state SPI_execute failed: error code %d", ret)));
+
+	tupdesc = SPI_tuptable->tupdesc;
+	if (tupdesc->natts != 1 ||
+		((tupdesc)->attrs[0])->atttypid != TEXTOID || SPI_processed != 1)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("[diskquota] can not get diskquota extesion version")));
+	}
+
+	tup = SPI_tuptable->vals[0];
+	dat = SPI_getbinval(tup, tupdesc, 1, &isnull);
+	if (isnull)
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("[diskquota] can not get diskquota extesion version")));
+	return TextDatumGetCString(dat);
 }

@@ -12,11 +12,17 @@ typedef struct DiskQuotaActiveTableFileEntry
 	Oid			tablespaceoid;
 }			DiskQuotaActiveTableFileEntry;
 
+typedef struct TableEntryKey
+{
+	Oid		reloid;
+	int		segid;
+}			TableEntryKey;
+
 typedef struct DiskQuotaActiveTableEntry
 {
-	Oid		tableoid;
+	Oid		reloid;
+	int		segid;
 	Size		tablesize;
-	Size            max_seg_tablesize;
 }			DiskQuotaActiveTableEntry;
 
 extern HTAB *gp_fetch_active_tables(bool force);

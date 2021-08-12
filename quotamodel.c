@@ -68,14 +68,15 @@ typedef struct BlackMapEntry BlackMapEntry;
 typedef struct GlobalBlackMapEntry GlobalBlackMapEntry;
 typedef struct LocalBlackMapEntry LocalBlackMapEntry;
 
-static int SEGCOUNT = 0;
 
+int 	SEGCOUNT = 0;
 /*
  * local cache of table disk size and corresponding schema and owner
  */
 struct TableSizeEntry
 {
-	Oid		reloid;
+	Oid 		reloid;
+	int16 		segid;
 	Oid		tablespaceoid;
 	Oid		namespaceoid;
 	Oid		owneroid;
@@ -84,16 +85,18 @@ struct TableSizeEntry
 	bool		is_exist;		/* flag used to check whether table is already
 								 * dropped */
 	bool		need_flush;		/* whether need to flush to table table_size */
-	int64           max_seg_tablesize;      /* the max tablesize on segments */
+};
+
+struct QuotaMapEntryKey {
+	Oid keys[MAX_NUM_KEYS_QUOTA_MAP];
+	int16 segid;
 };
 
 struct QuotaMapEntry {
 	Oid keys[MAX_NUM_KEYS_QUOTA_MAP];
+	int16 segid;
 	int64 size;
 	int64 limit;
-	/* quota limit for persegment */
-	int64 seglimit;
-	int64 maxsegsize;
 };
 
 struct QuotaInfo {
@@ -164,14 +167,14 @@ static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 
 /* functions to maintain the quota maps */
 static void init_all_quota_maps(void);
-static void update_size_for_quota(int64 size, int64 maxsegsize, QuotaType type, Oid* keys);
+static void update_size_for_quota(int64 size, QuotaType type, Oid* keys, int16 segid);
 static void update_limit_for_quota(int64 limit, float segratio, QuotaType type, Oid* keys);
-static void remove_quota(QuotaType type, Oid* keys);
+static void remove_quota(QuotaType type, Oid* keys, int16 segid);
 static void add_quota_to_blacklist(QuotaType type, Oid targetOid, Oid tablespaceoid, bool segexceeded);
 static void check_quota_map(QuotaType type);
 static void clear_all_quota_maps(void);
 static void vacuum_all_quota_maps(void);
-static void transfer_table_for_quota(int64 totalsize, int64 max_seg_tablesize, QuotaType type, Oid* old_keys, Oid* new_keys);
+static void transfer_table_for_quota(int64 totalsize, QuotaType type, Oid* old_keys, Oid* new_keys, int16 segid);
 
 /* functions to refresh disk quota model*/
 static void refresh_disk_quota_usage(bool is_init);
@@ -186,9 +189,8 @@ static Size DiskQuotaShmemSize(void);
 static void disk_quota_shmem_startup(void);
 static void init_lwlocks(void);
 
-static void truncateStringInfo(StringInfo str, int nchars);
 static void export_exceeded_error(GlobalBlackMapEntry *entry);
-static char* get_extversion();
+void truncateStringInfo(StringInfo str, int nchars);
 
 static void
 init_all_quota_maps(void)
@@ -198,15 +200,8 @@ init_all_quota_maps(void)
 	hash_ctl.hcxt = TopMemoryContext;
 	for (QuotaType type = 0; type < NUM_QUOTA_TYPES; ++type)
 	{
-		hash_ctl.keysize = quota_info[type].num_keys * sizeof(Oid);
-		if (quota_info[type].num_keys == 1)
-		{
-			hash_ctl.hash = oid_hash;
-		}
-		else
-		{
-			hash_ctl.hash = tag_hash;
-		}
+		hash_ctl.keysize = sizeof(struct QuotaMapEntryKey);
+		hash_ctl.hash = tag_hash;
 		if (quota_info[type].map != NULL)
 		{
 			hash_destroy(quota_info[type].map);
@@ -218,23 +213,24 @@ init_all_quota_maps(void)
 
 /* add a new entry quota or update the old entry quota */
 static void
-update_size_for_quota(int64 size, int64 maxsegsize, QuotaType type, Oid* keys)
+update_size_for_quota(int64 size, QuotaType type, Oid* keys, int16 segid)
 {
 	bool found;
+	struct QuotaMapEntryKey key = {0};
+	memcpy(key.keys, keys, quota_info[type].num_keys * sizeof(Oid));
+	key.segid = segid;
 	struct QuotaMapEntry *entry = hash_search(
-		quota_info[type].map, keys, HASH_ENTER, &found);
+		quota_info[type].map, &key, HASH_ENTER, &found);
 	if (!found)
 	{
 		entry->size = size;
-		entry->maxsegsize = maxsegsize;
 		entry->limit = -1;
-		entry->seglimit = -1;
 		memcpy(entry->keys, keys, quota_info[type].num_keys * sizeof(Oid));
+		entry->segid = key.segid;
 	}
 	else
 	{
 		entry->size += size;
-		entry->maxsegsize += maxsegsize;
 	}
 }
 
@@ -243,23 +239,38 @@ static void
 update_limit_for_quota(int64 limit, float segratio, QuotaType type, Oid* keys)
 {
 	bool found;
-	struct QuotaMapEntry *entry = hash_search(
-		quota_info[type].map, keys, HASH_ENTER, &found);
-	if (!found)
+	for ( int i = -1; i < SEGCOUNT ; i++)
 	{
-		entry->size = 0;
-		entry->maxsegsize = 0;
-		memcpy(entry->keys, keys, quota_info[type].num_keys * sizeof(Oid));
+		struct QuotaMapEntryKey key = {0};
+		memcpy(key.keys, keys, quota_info[type].num_keys * sizeof(Oid));
+		key.segid = i;
+		struct QuotaMapEntry *entry = hash_search(
+				quota_info[type].map, &key, HASH_ENTER, &found);
+		if (!found)
+		{
+			entry->size = 0;
+			memcpy(entry->keys, keys, quota_info[type].num_keys * sizeof(Oid));
+			entry->segid = key.segid;
+		}
+		if (key.segid == -1)
+		{
+			entry->limit = limit;
+		}
+		else
+		{
+			entry->limit = round((limit / SEGCOUNT) * segratio);
+		}
 	}
-	entry->limit = limit;
-	entry->seglimit = round((limit / SEGCOUNT) * segratio);
 }
 
 /* remove a entry quota from the map */
 static void
-remove_quota(QuotaType type, Oid* keys)
+remove_quota(QuotaType type, Oid* keys, int16 segid)
 {
-	hash_search(quota_info[type].map, keys, HASH_REMOVE, NULL);
+	struct QuotaMapEntryKey key = {0};
+	memcpy(key.keys, keys, quota_info[type].num_keys * sizeof(Oid));
+	key.segid = segid;
+	hash_search(quota_info[type].map, &key, HASH_REMOVE, NULL);
 }
 
 /*
@@ -279,8 +290,8 @@ add_quota_to_blacklist(QuotaType type, Oid targetOid, Oid tablespaceoid, bool se
 	keyitem.targettype = (uint32) type;
 	ereport(DEBUG1, (errmsg("[diskquota] Put object %u to blacklist", targetOid)));
 	localblackentry = (LocalBlackMapEntry *) hash_search(local_disk_quota_black_map,
-															&keyitem,
-															HASH_ENTER, NULL);
+			&keyitem,
+			HASH_ENTER, NULL);
 	localblackentry->isexceeded = true;
 	localblackentry->segexceeded = segexceeded;
 
@@ -308,7 +319,7 @@ check_quota_map(QuotaType type)
 			tuple = SearchSysCache1(quota_info[type].sys_cache[i], ObjectIdGetDatum(entry->keys[i]));
 			if (!HeapTupleIsValid(tuple))
 			{
-				remove_quota(type, entry->keys);
+				remove_quota(type, entry->keys, entry->segid);
 				removed = true;
 				break;
 			}
@@ -324,14 +335,8 @@ check_quota_map(QuotaType type)
 				/* when quota type is not NAMESPACE_TABLESPACE_QUOTA or ROLE_TABLESPACE_QUOTA, the tablespaceoid
 				 * is set to be InvalidOid, so when we get it from map, also set it to be InvalidOid
 				 */
-				add_quota_to_blacklist(type, targetOid, tablespaceoid, false);
-			}
-			else if (entry->seglimit > 0 && entry->maxsegsize >= entry->seglimit)
-			{
-				Oid targetOid = entry->keys[0];
-				Oid tablespaceoid =
-					(type == NAMESPACE_TABLESPACE_QUOTA) || (type == ROLE_TABLESPACE_QUOTA) ? entry->keys[1] : InvalidOid;
-				add_quota_to_blacklist(type, targetOid, tablespaceoid, true);
+				bool segmentExceeded = entry->segid == -1 ? false : true;
+				add_quota_to_blacklist(type, targetOid, tablespaceoid, segmentExceeded);
 			}
 		}
 	}
@@ -339,10 +344,10 @@ check_quota_map(QuotaType type)
 
 /* transfer one table's size from one quota to another quota */
 static void
-transfer_table_for_quota(int64 totalsize, int64 max_seg_tablesize, QuotaType type, Oid* old_keys, Oid* new_keys)
+transfer_table_for_quota(int64 totalsize, QuotaType type, Oid* old_keys, Oid* new_keys, int16 segid)
 {
-	update_size_for_quota(-totalsize, -max_seg_tablesize, type, old_keys);
-	update_size_for_quota(totalsize, max_seg_tablesize, type, new_keys);
+	update_size_for_quota(-totalsize, type, old_keys, segid);
+	update_size_for_quota(totalsize, type, new_keys, segid);
 }
 
 static void
@@ -356,7 +361,6 @@ clear_all_quota_maps(void)
 		while ((entry = hash_seq_search(&iter)) != NULL)
 		{
 			 entry->limit = -1;
-			 entry->seglimit = -1;
 		}
 	}
 }
@@ -372,7 +376,7 @@ vacuum_all_quota_maps(void) {
 		{
 			if (entry->limit == -1)
 			{
-				remove_quota(type, entry->keys);
+				remove_quota(type, entry->keys, entry->segid);
 			}
 		}
 
@@ -506,10 +510,10 @@ init_disk_quota_model(void)
 
 	/* initialize hash table for table/schema/role etc. */
 	memset(&hash_ctl, 0, sizeof(hash_ctl));
-	hash_ctl.keysize = sizeof(Oid);
+	hash_ctl.keysize = sizeof(TableEntryKey);
 	hash_ctl.entrysize = sizeof(TableSizeEntry);
 	hash_ctl.hcxt = CurrentMemoryContext;
-	hash_ctl.hash = oid_hash;
+	hash_ctl.hash = tag_hash;
 
 	table_size_map = hash_create("TableSizeEntry map",
 								 1024 * 8,
@@ -532,13 +536,6 @@ init_disk_quota_model(void)
 											 MAX_LOCAL_DISK_QUOTA_BLACK_ENTRIES,
 											 &hash_ctl,
 											 HASH_ELEM | HASH_CONTEXT | HASH_FUNCTION);
-	/* init segcount */
-	SEGCOUNT = getgpsegmentCount();
-	if (SEGCOUNT <= 0 )
-	{
-		ereport(ERROR,
-				(errmsg("[diskquota] there are no segments to assign tablespace segment ratio")));
-	}
 }
 
 /*
@@ -757,17 +754,12 @@ refresh_disk_quota_usage(bool is_init)
  *  size from table table_size
  */
 
-/* FIXME: we should only care about the tables whose role, schema, or tablespace
- * has quota, this may improve the performance especially when too many tables
- * in the database
- */
 static void
 calculate_table_disk_usage(bool is_init)
 {
 	bool		table_size_map_found;
 	bool		active_tbl_found;
 	int64		updated_total_size;
-	int64		updated_max_seg_tablesize;
 	Relation	classRel;
 	HeapTuple	tuple;
 	HeapScanDesc relScan;
@@ -776,6 +768,7 @@ calculate_table_disk_usage(bool is_init)
 	HASH_SEQ_STATUS iter;
 	HTAB	   *local_active_table_stat_map;
 	DiskQuotaActiveTableEntry *active_table_entry;
+	TableEntryKey	key;
 
 	classRel = heap_open(RelationRelationId, AccessShareLock);
 	relScan = heap_beginscan_catalog(classRel, 0, NULL);
@@ -814,124 +807,135 @@ calculate_table_disk_usage(bool is_init)
 		if (relOid < FirstNormalObjectId)
 			continue;
 
-		tsentry = (TableSizeEntry *) hash_search(table_size_map,
-												 &relOid,
-												 HASH_ENTER, &table_size_map_found);
-
-		if (!table_size_map_found)
+		/*
+		 * The segid is the same as the content id in gp_segment_configuration
+		 * and the content id is continuous, so it's safe to use SEGCOUNT
+		 * to get segid.
+		 */
+		for (int i = -1; i < SEGCOUNT; i++)
 		{
-			tsentry->reloid = relOid;
-			tsentry->totalsize = 0;
-			tsentry->owneroid = InvalidOid;
-			tsentry->namespaceoid = InvalidOid;
-			tsentry->tablespaceoid = InvalidOid;
-			tsentry->need_flush = true;
-		}
+			key.segid = i;
+			key.reloid = relOid;
+			tsentry = (TableSizeEntry *) hash_search(table_size_map,
+					&key,
+					HASH_ENTER, &table_size_map_found);
 
-		/* mark tsentry is_exist */
-		if (tsentry)
-			tsentry->is_exist = true;
-
-		active_table_entry = (DiskQuotaActiveTableEntry *) hash_search(local_active_table_stat_map, &relOid, HASH_FIND, &active_tbl_found);
-
-		/* skip to recalculate the tables which are not in active list */
-		if (active_tbl_found)
-		{
-			/* pretend process as utility mode, and append the table size on master */
-			Gp_role = GP_ROLE_UTILITY;
-
-			/* DirectFunctionCall1 may fail, since table maybe dropped by other backend */
-			PG_TRY();
+			if (!table_size_map_found)
 			{
-				/* call pg_total_relation_size to get the active table size */
-				active_table_entry->tablesize += (Size) DatumGetInt64(DirectFunctionCall1(pg_total_relation_size, ObjectIdGetDatum(relOid)));
+				tsentry->reloid = relOid;
+				tsentry->segid = key.segid;
+				tsentry->totalsize = 0;
+				tsentry->owneroid = InvalidOid;
+				tsentry->namespaceoid = InvalidOid;
+				tsentry->tablespaceoid = InvalidOid;
+				tsentry->need_flush = true;
 			}
-			PG_CATCH();
+
+			/* mark tsentry is_exist */
+			if (tsentry)
+				tsentry->is_exist = true;
+			active_table_entry = (DiskQuotaActiveTableEntry *) hash_search(local_active_table_stat_map, &key, HASH_FIND, &active_tbl_found);
+
+			/* skip to recalculate the tables which are not in active list */
+			if (active_tbl_found)
 			{
-				HOLD_INTERRUPTS();
-				FlushErrorState();
-				RESUME_INTERRUPTS();
+				if (key.segid == -1)
+				{
+					/* pretend process as utility mode, and append the table size on master */
+					Gp_role = GP_ROLE_UTILITY;
+
+					/* DirectFunctionCall1 may fail, since table maybe dropped by other backend */
+					PG_TRY();
+					{
+						/* call pg_total_relation_size to get the active table size */
+						active_table_entry->tablesize += (Size) DatumGetInt64(DirectFunctionCall1(pg_total_relation_size, ObjectIdGetDatum(relOid)));
+					}
+					PG_CATCH();
+					{
+						HOLD_INTERRUPTS();
+						FlushErrorState();
+						RESUME_INTERRUPTS();
+					}
+					PG_END_TRY();
+
+					Gp_role = GP_ROLE_DISPATCH;
+
+				}
+				/* firstly calculate the updated total size of a table */
+				updated_total_size = active_table_entry->tablesize - tsentry->totalsize;
+
+				/* update the table_size entry */
+				tsentry->totalsize = (int64) active_table_entry->tablesize;
+				tsentry->need_flush = true;
+
+				/* update the disk usage, there may be entries in the map whose keys are InvlidOid as the tsentry does not exist in the table_size_map */
+				update_size_for_quota(updated_total_size, NAMESPACE_QUOTA, (Oid[]){tsentry->namespaceoid}, key.segid);
+				update_size_for_quota(updated_total_size, ROLE_QUOTA, (Oid[]){tsentry->owneroid}, key.segid);
+				update_size_for_quota(updated_total_size, ROLE_TABLESPACE_QUOTA, (Oid[]){tsentry->owneroid, tsentry->tablespaceoid}, key.segid);
+				update_size_for_quota(updated_total_size, NAMESPACE_TABLESPACE_QUOTA, (Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid}, key.segid);
+
 			}
-			PG_END_TRY();
+			/* table size info doesn't need to flush at init quota model stage */
+			if (is_init)
+			{
+				tsentry->need_flush = false;
+			}
 
-			Gp_role = GP_ROLE_DISPATCH;
+			/* if schema change, transfer the file size */
+			if (tsentry->namespaceoid != classForm->relnamespace)
+			{
+				transfer_table_for_quota(
+						tsentry->totalsize,
+						NAMESPACE_QUOTA,
+						(Oid[]){tsentry->namespaceoid},
+						(Oid[]){classForm->relnamespace},
+						key.segid);
+				transfer_table_for_quota(
+						tsentry->totalsize,
+						NAMESPACE_TABLESPACE_QUOTA,
+						(Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid},
+						(Oid[]){classForm->relnamespace, tsentry->tablespaceoid},
+						key.segid);
+				tsentry->namespaceoid = classForm->relnamespace;
+			}
+			/* if owner change, transfer the file size */
+			if (tsentry->owneroid != classForm->relowner)
+			{
+				transfer_table_for_quota(
+						tsentry->totalsize,
+						ROLE_QUOTA,
+						(Oid[]){tsentry->owneroid},
+						(Oid[]){classForm->relowner},
+						key.segid
+						);
+				transfer_table_for_quota(
+						tsentry->totalsize,
+						ROLE_TABLESPACE_QUOTA,
+						(Oid[]){tsentry->owneroid, tsentry->tablespaceoid},
+						(Oid[]){classForm->relowner, tsentry->tablespaceoid},
+						key.segid
+						);
+				tsentry->owneroid = classForm->relowner;
+			}
 
-			/* firstly calculate the updated total size of a table */
-			updated_total_size = active_table_entry->tablesize - tsentry->totalsize;
-			updated_max_seg_tablesize = active_table_entry->max_seg_tablesize - tsentry->max_seg_tablesize;
-
-			/* update the table_size entry */
-			tsentry->totalsize = (int64) active_table_entry->tablesize;
-			tsentry->max_seg_tablesize = (int64) active_table_entry->max_seg_tablesize;
-			tsentry->need_flush = true;
-
-			/* update the disk usage, there may be entries in the map whose keys are InvlidOid as the tsentry does not exist in the table_size_map */
-			update_size_for_quota(updated_total_size, updated_max_seg_tablesize, NAMESPACE_QUOTA, (Oid[]){tsentry->namespaceoid});
-			update_size_for_quota(updated_total_size, updated_max_seg_tablesize, ROLE_QUOTA, (Oid[]){tsentry->owneroid});
-			update_size_for_quota(updated_total_size, updated_max_seg_tablesize, ROLE_TABLESPACE_QUOTA, (Oid[]){tsentry->owneroid, tsentry->tablespaceoid});
-			update_size_for_quota(updated_total_size, updated_max_seg_tablesize, NAMESPACE_TABLESPACE_QUOTA, (Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid});
-		}
-
-		/* table size info doesn't need to flush at init quota model stage */
-		if (is_init)
-		{
-			tsentry->need_flush = false;
-		}
-
-		/* if schema change, transfer the file size */
-		if (tsentry->namespaceoid != classForm->relnamespace)
-		{
-			transfer_table_for_quota(
-				tsentry->totalsize,
-				tsentry->max_seg_tablesize,
-				NAMESPACE_QUOTA,
-				(Oid[]){tsentry->namespaceoid},
-				(Oid[]){classForm->relnamespace});
-			transfer_table_for_quota(
-				tsentry->totalsize,
-				tsentry->max_seg_tablesize,
-				NAMESPACE_TABLESPACE_QUOTA,
-				(Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid},
-				(Oid[]){classForm->relnamespace, tsentry->tablespaceoid});
-			tsentry->namespaceoid = classForm->relnamespace;
-		}
-		/* if owner change, transfer the file size */
-		if (tsentry->owneroid != classForm->relowner)
-		{
-			transfer_table_for_quota(
-				tsentry->totalsize,
-				tsentry->max_seg_tablesize,
-				ROLE_QUOTA,
-				(Oid[]){tsentry->owneroid},
-				(Oid[]){classForm->relowner}
-			);
-			transfer_table_for_quota(
-				tsentry->totalsize,
-				tsentry->max_seg_tablesize,
-				ROLE_TABLESPACE_QUOTA,
-				(Oid[]){tsentry->owneroid, tsentry->tablespaceoid},
-				(Oid[]){classForm->relowner, tsentry->tablespaceoid}
-			);
-			tsentry->owneroid = classForm->relowner;
-		}
-
-		if (tsentry->tablespaceoid != classForm->reltablespace)
-		{
-			transfer_table_for_quota(
-				tsentry->totalsize,
-				tsentry->max_seg_tablesize,
-				NAMESPACE_TABLESPACE_QUOTA,
-				(Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid},
-				(Oid[]){tsentry->namespaceoid, classForm->reltablespace}
-			);
-			transfer_table_for_quota(
-				tsentry->totalsize,
-				tsentry->max_seg_tablesize,
-				ROLE_TABLESPACE_QUOTA,
-				(Oid[]){tsentry->owneroid, tsentry->tablespaceoid},
-				(Oid[]){tsentry->owneroid, classForm->reltablespace}
-			);
-			tsentry->tablespaceoid = classForm->reltablespace;
+			if (tsentry->tablespaceoid != classForm->reltablespace)
+			{
+				transfer_table_for_quota(
+						tsentry->totalsize,
+						NAMESPACE_TABLESPACE_QUOTA,
+						(Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid},
+						(Oid[]){tsentry->namespaceoid, classForm->reltablespace},
+						key.segid
+						);
+				transfer_table_for_quota(
+						tsentry->totalsize,
+						ROLE_TABLESPACE_QUOTA,
+						(Oid[]){tsentry->owneroid, tsentry->tablespaceoid},
+						(Oid[]){tsentry->owneroid, classForm->reltablespace},
+						key.segid
+						);
+				tsentry->tablespaceoid = classForm->reltablespace;
+			}
 		}
 	}
 
@@ -948,10 +952,10 @@ calculate_table_disk_usage(bool is_init)
 	{
 		if (tsentry->is_exist == false)
 		{
-			update_size_for_quota(-tsentry->totalsize, -tsentry->max_seg_tablesize, NAMESPACE_QUOTA, (Oid[]){tsentry->namespaceoid});
-			update_size_for_quota(-tsentry->totalsize, -tsentry->max_seg_tablesize, ROLE_QUOTA, (Oid[]){tsentry->owneroid});
-			update_size_for_quota(-tsentry->totalsize, -tsentry->max_seg_tablesize, ROLE_TABLESPACE_QUOTA, (Oid[]){tsentry->owneroid, tsentry->tablespaceoid});
-			update_size_for_quota(-tsentry->totalsize, -tsentry->max_seg_tablesize, NAMESPACE_TABLESPACE_QUOTA, (Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid});
+			update_size_for_quota(-tsentry->totalsize, NAMESPACE_QUOTA, (Oid[]){tsentry->namespaceoid}, tsentry->segid);
+			update_size_for_quota(-tsentry->totalsize, ROLE_QUOTA, (Oid[]){tsentry->owneroid}, tsentry->segid);
+			update_size_for_quota(-tsentry->totalsize, ROLE_TABLESPACE_QUOTA, (Oid[]){tsentry->owneroid, tsentry->tablespaceoid}, tsentry->segid);
+			update_size_for_quota(-tsentry->totalsize, NAMESPACE_TABLESPACE_QUOTA, (Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid}, tsentry->segid);
 		}
 	}
 }
@@ -971,13 +975,21 @@ flush_to_table_size(void)
 	StringInfoData insert_statement;
 	bool		delete_statement_flag = false;
 	bool		insert_statement_flag = false;
-	int			ret;
+	int		ret;
+	char		*extversion = get_extversion();
 
 	/* TODO: Add flush_size_interval to avoid flushing size info in every loop */
 
 	/* concatenate all the need_to_flush table to SQL string */
 	initStringInfo(&delete_statement);
-	appendStringInfo(&delete_statement, "delete from diskquota.table_size where tableid in (");
+	if (strcmp(extversion, "1.0") == 0)
+		appendStringInfo(&delete_statement, "delete from diskquota.table_size where tableid in ( ");
+	else if (strcmp(extversion, "2.0") == 0)
+		appendStringInfo(&delete_statement, "delete from diskquota.table_size where (tableid, segid) in ( ");
+	else
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("[diskquota] unknown diskquota extension version: %s", extversion)));
 	initStringInfo(&insert_statement);
 	appendStringInfo(&insert_statement, "insert into diskquota.table_size values ");
 	hash_seq_init(&iter, table_size_map);
@@ -986,7 +998,14 @@ flush_to_table_size(void)
 		/* delete dropped table from both table_size_map and table table_size */
 		if (tsentry->is_exist == false)
 		{
-			appendStringInfo(&delete_statement, "%u, ", tsentry->reloid);
+			if (strcmp(extversion, "1.0") == 0)
+				appendStringInfo(&delete_statement, "%u, ", tsentry->reloid);
+			else if (strcmp(extversion, "2.0") == 0)
+				appendStringInfo(&delete_statement, "(%u,%d), ", tsentry->reloid, tsentry->segid);
+			else
+				ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+						 errmsg("[diskquota] unknown diskquota extension version: %s", extversion)));
 			delete_statement_flag = true;
 
 			hash_search(table_size_map,
@@ -997,10 +1016,27 @@ flush_to_table_size(void)
 		else if (tsentry->need_flush == true)
 		{
 			tsentry->need_flush = false;
-			appendStringInfo(&delete_statement, "%u, ", tsentry->reloid);
-			appendStringInfo(&insert_statement, "(%u,%ld), ", tsentry->reloid, tsentry->totalsize);
-			delete_statement_flag = true;
-			insert_statement_flag = true;
+			if (strcmp(extversion, "1.0") == 0)
+			{
+				if (tsentry->segid == -1)
+				{
+					appendStringInfo(&delete_statement, "%u, ", tsentry->reloid);
+					appendStringInfo(&insert_statement, "(%u,%ld), ", tsentry->reloid, tsentry->totalsize);
+					delete_statement_flag = true;
+					insert_statement_flag = true;
+				}
+			}
+			else if (strcmp(extversion, "2.0") == 0)
+			{
+				appendStringInfo(&delete_statement, "(%u,%d), ", tsentry->reloid, tsentry->segid);
+				appendStringInfo(&insert_statement, "(%u,%ld,%d), ", tsentry->reloid, tsentry->totalsize, tsentry->segid);
+				delete_statement_flag = true;
+				insert_statement_flag = true;
+			}
+			else
+				ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+						 errmsg("[diskquota] unknown diskquota extension version: %s", extversion)));
 		}
 	}
 	truncateStringInfo(&delete_statement, delete_statement.len - strlen(", "));
@@ -1086,7 +1122,7 @@ flush_local_black_map(void)
 /*
  * Make sure a StringInfo's string is no longer than 'nchars' characters.
  */
-static void
+void
 truncateStringInfo(StringInfo str, int nchars)
 {
 	if (str &&
@@ -1187,12 +1223,12 @@ do_load_quotas(void)
 	 * Maybe this is not the best sulotion, only a work arround. Optimizing
 	 * the init procedure is a better solution.
 	 */ 
-	if (strcmp(extversion, "1.0", 3) == 0)
+	if (strcmp(extversion, "1.0") == 0)
 	{
 
 		ret = SPI_execute("select targetoid, quotatype, quotalimitMB, 0 as segratio, 0 as tablespaceoid from diskquota.quota_config", true, 0);
 	}
-	else if (strcmp(extversion,"2.0", 3) == 0)
+	else if (strcmp(extversion,"2.0") == 0)
 	{
 		ret = SPI_execute(
 				"SELECT c.targetOid, c.quotaType, c.quotalimitMB, COALESCE(c.segratio, 0) AS segratio, COALESCE(t.tablespaceoid, 0) AS tablespaceoid "
@@ -1418,37 +1454,4 @@ export_exceeded_error(GlobalBlackMapEntry *entry)
 					 errmsg("diskquota exceeded, unknown quota type")));
 	}
 
-}
-
-static char*
-get_extversion()
-{
-	int		ret;
-	TupleDesc	tupdesc;
-	HeapTuple	tup;
-	Datum		dat;
-	bool		isnull;
-
-	ret = SPI_execute("select COALESCE(extversion,'') from pg_extension where extname = 'diskquota'", true, 0);
-	if (ret != SPI_OK_SELECT)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("[diskquota] check diskquota state SPI_execute failed: error code %d", ret)));
-
-	tupdesc = SPI_tuptable->tupdesc;
-	if (tupdesc->natts != 1 ||
-		((tupdesc)->attrs[0])->atttypid != TEXTOID || SPI_processed != 1)
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("[diskquota] can not get diskquota extesion version")));
-	}
-
-	tup = SPI_tuptable->vals[0];
-	dat = SPI_getbinval(tup, tupdesc, 1, &isnull);
-	if (isnull)
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("[diskquota] can not get diskquota extesion version")));
-	return TextDatumGetCString(dat);
 }
