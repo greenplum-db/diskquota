@@ -1187,18 +1187,12 @@ do_load_quotas(void)
 	 * Maybe this is not the best sulotion, only a work arround. Optimizing
 	 * the init procedure is a better solution.
 	 */ 
-	if (strlen(extversion) < 3)
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("[diskquota] invalid diskquota extesion version: %s", extversion)));
-	}
-	if (memcmp(extversion, "1.0", 3) == 0)
+	if (strcmp(extversion, "1.0", 3) == 0)
 	{
 
 		ret = SPI_execute("select targetoid, quotatype, quotalimitMB, 0 as segratio, 0 as tablespaceoid from diskquota.quota_config", true, 0);
 	}
-	else if (memcmp(extversion,"2.0", 3) == 0)
+	else if (strcmp(extversion,"2.0", 3) == 0)
 	{
 		ret = SPI_execute(
 				"SELECT c.targetOid, c.quotaType, c.quotalimitMB, COALESCE(c.segratio, 0) AS segratio, COALESCE(t.tablespaceoid, 0) AS tablespaceoid "
