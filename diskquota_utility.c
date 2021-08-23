@@ -455,6 +455,12 @@ set_role_quota(PG_FUNCTION_ARGS)
 	sizestr = str_tolower(sizestr, strlen(sizestr), DEFAULT_COLLATION_OID);
 	quota_limit_mb = get_size_in_mb(sizestr);
 
+	if (quota_limit_mb == 0)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("disk quota can not be set to 0 MB")));
+	}
 	set_quota_config_internal(roleoid, quota_limit_mb, ROLE_QUOTA);
 	PG_RETURN_VOID();
 }
@@ -485,6 +491,12 @@ set_schema_quota(PG_FUNCTION_ARGS)
 	sizestr = str_tolower(sizestr, strlen(sizestr), DEFAULT_COLLATION_OID);
 	quota_limit_mb = get_size_in_mb(sizestr);
 
+	if (quota_limit_mb == 0)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("disk quota can not be set to 0 MB")));
+	}
 	set_quota_config_internal(namespaceoid, quota_limit_mb, NAMESPACE_QUOTA);
 	PG_RETURN_VOID();
 }
@@ -525,6 +537,12 @@ set_role_tablespace_quota(PG_FUNCTION_ARGS)
 	sizestr = text_to_cstring(PG_GETARG_TEXT_PP(2));
 	sizestr = str_tolower(sizestr, strlen(sizestr), DEFAULT_COLLATION_OID);
 	quota_limit_mb = get_size_in_mb(sizestr);
+	if (quota_limit_mb == 0)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("disk quota can not be set to 0 MB")));
+	}
 
 	set_target_internal(roleoid, spcoid, quota_limit_mb, ROLE_TABLESPACE_QUOTA);
 	set_quota_config_internal(roleoid, quota_limit_mb, ROLE_TABLESPACE_QUOTA);
@@ -567,6 +585,12 @@ set_schema_tablespace_quota(PG_FUNCTION_ARGS)
 	sizestr = text_to_cstring(PG_GETARG_TEXT_PP(2));
 	sizestr = str_tolower(sizestr, strlen(sizestr), DEFAULT_COLLATION_OID);
 	quota_limit_mb = get_size_in_mb(sizestr);
+	if (quota_limit_mb == 0)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("disk quota can not be set to 0 MB")));
+	}
 
 	set_target_internal(namespaceoid, spcoid, quota_limit_mb, NAMESPACE_TABLESPACE_QUOTA);
 	set_quota_config_internal(namespaceoid, quota_limit_mb, NAMESPACE_TABLESPACE_QUOTA);
@@ -606,7 +630,7 @@ set_quota_config_internal(Oid targetoid, int64 quota_limit_mb, QuotaType type)
 		if (ret != SPI_OK_INSERT)
 			elog(ERROR, "cannot insert into quota setting table, error code %d", ret);
 	}
-	else if (SPI_processed > 0 && quota_limit_mb <= 0)
+	else if (SPI_processed > 0 && quota_limit_mb < 0)
 	{
 		resetStringInfo(&buf);
 		appendStringInfo(&buf,
@@ -673,7 +697,7 @@ set_target_internal(Oid primaryoid, Oid spcoid, int64 quota_limit_mb, QuotaType 
 		if (ret != SPI_OK_INSERT)
 			elog(ERROR, "cannot insert into quota setting table, error code %d", ret);
 	}
-	else if (SPI_processed > 0 && quota_limit_mb <= 0)
+	else if (SPI_processed > 0 && quota_limit_mb < 0)
 	{
 		resetStringInfo(&buf);
 		appendStringInfo(&buf,
@@ -902,6 +926,12 @@ set_per_segment_quota(PG_FUNCTION_ARGS)
 
 	ratio = PG_GETARG_FLOAT4(1);
 
+	if (ratio == 0)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("per segment quota ratio can not be set to 0")));
+	}
 	StringInfoData buf;
 
 	if (SPI_OK_CONNECT != SPI_connect())
