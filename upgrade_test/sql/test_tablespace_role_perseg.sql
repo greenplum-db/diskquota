@@ -74,13 +74,13 @@ SELECT pg_sleep(5);
 INSERT INTO b SELECT generate_series(1,100);
 
 -- Test delete per segment ratio
-SELECT diskquota.set_per_segment_quota('rolespc_perseg', 0);
+SELECT diskquota.set_per_segment_quota('rolespc_perseg', -1);
 SELECT pg_sleep(5);
 -- expect insert success
 INSERT INTO b SELECT generate_series(1,100);
 
 -- Test delete quota config
-SELECT diskquota.set_role_tablespace_quota('rolespc_persegu1', 'rolespc_perseg', '0 MB');
+SELECT diskquota.set_role_tablespace_quota('rolespc_persegu1', 'rolespc_perseg', '-1 MB');
 SELECT pg_sleep(5);
 -- expect insert success
 INSERT INTO b SELECT generate_series(1,100);

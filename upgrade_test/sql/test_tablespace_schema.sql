@@ -60,7 +60,7 @@ SELECT pg_sleep(5);
 INSERT INTO a SELECT generate_series(1,100);
 
 -- Test delete quota config
-SELECT diskquota.set_schema_tablespace_quota('spcs1', 'schemaspc', '0 MB');
+SELECT diskquota.set_schema_tablespace_quota('spcs1', 'schemaspc', '-1 MB');
 SELECT pg_sleep(5);
 -- expect insert success
 INSERT INTO a SELECT generate_series(1,100);

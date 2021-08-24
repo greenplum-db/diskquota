@@ -70,7 +70,7 @@ SELECT pg_sleep(5);
 INSERT INTO b SELECT generate_series(1,100);
 
 -- Test delete quota config
-SELECT diskquota.set_role_tablespace_quota('rolespcu1', 'rolespc', '0 MB');
+SELECT diskquota.set_role_tablespace_quota('rolespcu1', 'rolespc', '-1 MB');
 SELECT pg_sleep(5);
 -- expect insert success
 INSERT INTO b SELECT generate_series(1,100);
