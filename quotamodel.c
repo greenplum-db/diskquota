@@ -173,8 +173,8 @@ static void remove_quota(QuotaType type, Oid* keys, int16 segid);
 static void add_quota_to_blacklist(QuotaType type, Oid targetOid, Oid tablespaceoid, bool segexceeded);
 static void check_quota_map(QuotaType type);
 static void clear_all_quota_maps(void);
-static void vacuum_all_quota_maps(void);
 static void transfer_table_for_quota(int64 totalsize, QuotaType type, Oid* old_keys, Oid* new_keys, int16 segid);
+static int64 get_initial_quota_entry_size(QuotaType, Oid* keys, int16 segid);
 
 /* functions to refresh disk quota model*/
 static void refresh_disk_quota_usage(bool is_init);
@@ -223,15 +223,12 @@ update_size_for_quota(int64 size, QuotaType type, Oid* keys, int16 segid)
 		quota_info[type].map, &key, HASH_ENTER, &found);
 	if (!found)
 	{
-		entry->size = size;
+		entry->size = get_initial_quota_entry_size(type, keys, segid);
 		entry->limit = -1;
 		memcpy(entry->keys, keys, quota_info[type].num_keys * sizeof(Oid));
 		entry->segid = key.segid;
 	}
-	else
-	{
-		entry->size += size;
-	}
+	entry->size += size;
 }
 
 /* add a new entry quota or update the old entry limit */
@@ -248,7 +245,7 @@ update_limit_for_quota(int64 limit, float segratio, QuotaType type, Oid* keys)
 				quota_info[type].map, &key, HASH_ENTER, &found);
 		if (!found)
 		{
-			entry->size = 0;
+			entry->size = get_initial_quota_entry_size(type, keys, key.segid);
 			memcpy(entry->keys, keys, quota_info[type].num_keys * sizeof(Oid));
 			entry->segid = key.segid;
 		}
@@ -365,24 +362,50 @@ clear_all_quota_maps(void)
 	}
 }
 
-static void
-vacuum_all_quota_maps(void) {
-	for (QuotaType type = 0; type < NUM_QUOTA_TYPES; ++type)
+static int64
+get_initial_quota_entry_size(QuotaType type, Oid* keys, int16 segid)
+{
+	Oid 	namespaceoid = InvalidOid;
+	Oid 	owneroid = InvalidOid;
+	Oid 	tablespaceoid = InvalidOid;
+	TableSizeEntry *tsentry = NULL;
+	int64	size = 0;
+	switch (type)
 	{
-		HASH_SEQ_STATUS iter = {0};
-		hash_seq_init(&iter, quota_info[type].map);
-		struct QuotaMapEntry *entry = NULL;
-		while ((entry = hash_seq_search(&iter)) != NULL)
-		{
-			if (entry->limit == -1)
-			{
-				remove_quota(type, entry->keys, entry->segid);
-			}
-		}
+		case NAMESPACE_QUOTA:
+			namespaceoid = keys[0];
+			break;
+		case ROLE_QUOTA:
+			owneroid = keys[0];
+			break;
+		case NAMESPACE_TABLESPACE_QUOTA:
+			namespaceoid = keys[0];
+			tablespaceoid = keys[1];
+			break;
+		case ROLE_TABLESPACE_QUOTA:
+			owneroid = keys[0];
+			tablespaceoid = keys[1];
+			break;
+		default:
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("[diskquota] unknown quota type: %d", type)));
 
 	}
 
+
+	HASH_SEQ_STATUS iter = {0};
+	hash_seq_init(&iter, table_size_map);
+	while ((tsentry = hash_seq_search(&iter)) != NULL)
+	{
+		if (tsentry->owneroid == owneroid && tsentry->namespaceoid == namespaceoid && tsentry->tablespaceoid == tablespaceoid && tsentry->segid == segid && tsentry->is_exist)
+		{
+			size += tsentry->totalsize;
+		}
+	}
+	return size;
 }
+
 /* ---- Functions for disk quota shared memory ---- */
 /*
  * DiskQuotaShmemInit
@@ -1296,7 +1319,6 @@ do_load_quotas(void)
 		}
 	}
 
-	vacuum_all_quota_maps();
 	return;
 }
 
