@@ -69,10 +69,9 @@ static const char *ddl_err_code_to_err_message(MessageResult code);
 static int64 get_size_in_mb(char *str);
 static void set_quota_config_internal(Oid targetoid, int64 quota_limit_mb, QuotaType type);
 static void set_target_internal(Oid primaryoid, Oid spcoid, int64 quota_limit_mb, QuotaType type);
-static bool generate_insert_table_size_sql(StringInfoData *buf, char *extversion);
+static bool generate_insert_table_size_sql(StringInfoData *buf, int extMajorVersion);
 
-char* get_extversion(void);
-
+int get_ext_major_version(void);
 
 /* ---- Help Functions to set quota limit. ---- */
 /*
@@ -90,7 +89,7 @@ init_table_size_table(PG_FUNCTION_ARGS)
 
 	RangeVar   	*rv;
 	Relation	rel;
-	char		*extversion;
+	int 		extMajorVersion;
 	bool		insert_flag;
 	/*
 	 * If error happens in init_table_size_table, just return error messages
@@ -109,8 +108,20 @@ init_table_size_table(PG_FUNCTION_ARGS)
 	}
 	heap_close(rel, NoLock);
 
+	/*
+	 * Why don't use insert into diskquota.table_size select from pg_total_relation_size here?
+	 *
+	 * insert into foo select oid, pg_total_relation_size(oid), -1 from pg_class where
+	 * oid >= 16384 and (relkind='r' or relkind='m');
+	 * ERROR:  This query is not currently supported by GPDB.  (entry db 127.0.0.1:6000 pid=61114)
+	 *
+	 * Some functions are peculiar in that they do their own dispatching.
+	 * Such as pg_total_relation_size.
+	 * They do not work on entry db since we do not support dispatching
+	 * from entry-db currently.
+	 */
 	SPI_connect();
-	extversion = get_extversion();
+	extMajorVersion = get_ext_major_version();
 
 	/* delete all the table size info in table_size if exist. */
 	initStringInfo(&buf);
@@ -134,7 +145,7 @@ init_table_size_table(PG_FUNCTION_ARGS)
 	/* fill table_size table with table oid and size info for master. */
 	appendStringInfo(&insert_buf,
 	                 "insert into diskquota.table_size values");
-	insert_flag = generate_insert_table_size_sql(&insert_buf, extversion);
+	insert_flag = generate_insert_table_size_sql(&insert_buf, extMajorVersion);
 	/* fetch table size on segments*/
 	resetStringInfo(&buf);
 	appendStringInfo(&buf,
@@ -147,7 +158,7 @@ init_table_size_table(PG_FUNCTION_ARGS)
 		elog(ERROR, "cannot fetch in pg_total_relation_size. error code %d", ret);
 
 	/* fill table_size table with table oid and size info for segments. */
-	insert_flag = insert_flag | generate_insert_table_size_sql(&insert_buf, extversion);
+	insert_flag = insert_flag | generate_insert_table_size_sql(&insert_buf, extMajorVersion);
 	if (insert_flag)
 	{
 		truncateStringInfo(&insert_buf, insert_buf.len - strlen(","));
@@ -172,7 +183,7 @@ init_table_size_table(PG_FUNCTION_ARGS)
 
 /* last_part is true means there is no other set of values to be inserted to table_size */
 static bool
-generate_insert_table_size_sql(StringInfoData *insert_buf, char *extversion)
+generate_insert_table_size_sql(StringInfoData *insert_buf, int extMajorVersion)
 {
 	TupleDesc tupdesc = SPI_tuptable->tupdesc;
 	bool insert_flag = false;
@@ -188,25 +199,26 @@ generate_insert_table_size_sql(StringInfoData *insert_buf, char *extversion)
 		oid = SPI_getbinval(tup,tupdesc, 1, &isnull);
 		sz = SPI_getbinval(tup,tupdesc, 2, &isnull);
 		segid = SPI_getbinval(tup,tupdesc, 3, &isnull);
-
-		if (strcmp(extversion, "1.0") == 0)
+		switch (extMajorVersion)
 		{
-			/* for version 1.0, only insert the values from master */
-			if (segid == -1)
-			{
-				appendStringInfo(insert_buf, " ( %u, %ld),", oid, sz);
+			case 1:
+				/* for version 1.0, only insert the values from master */
+				if (segid == -1)
+				{
+					appendStringInfo(insert_buf, " ( %u, %ld),", oid, sz);
+					insert_flag = true;
+				}
+				break;
+			case 2:
+				appendStringInfo(insert_buf, " ( %u, %ld, %d),", oid, sz, segid);
 				insert_flag = true;
-			}
+				break;
+			default:
+				ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+						 errmsg("[diskquota] unknown diskquota extension version: %d", extMajorVersion)));
+
 		}
-		else if (strcmp(extversion,"2.0") == 0)
-		{
-			appendStringInfo(insert_buf, " ( %u, %ld, %d),", oid, sz, segid);
-			insert_flag = true;
-		}
-		else
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("[diskquota] unknown diskquota extension version: %s", extversion)));
 	}
 	return insert_flag;
 }
@@ -970,14 +982,19 @@ set_per_segment_quota(PG_FUNCTION_ARGS)
 	PG_RETURN_VOID();
 }
 
-char*
-get_extversion(void)
+/*
+ * Get major version from extversion, and convert it to int
+ * 0 means an invalid major version.
+ */
+int
+get_ext_major_version(void)
 {
 	int		ret;
 	TupleDesc	tupdesc;
 	HeapTuple	tup;
 	Datum		dat;
 	bool		isnull;
+	char		*extversion;
 
 	ret = SPI_execute("select COALESCE(extversion,'') from pg_extension where extname = 'diskquota'", true, 0);
 	if (ret != SPI_OK_SELECT)
@@ -1000,5 +1017,10 @@ get_extversion(void)
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				errmsg("[diskquota] can not get diskquota extesion version")));
-	return TextDatumGetCString(dat);
+	extversion =  TextDatumGetCString(dat);
+	if (extversion)
+	{
+		return (int)strtol(extversion, (char **) NULL, 10);
+	}
+	return 0;
 }

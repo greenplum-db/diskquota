@@ -276,32 +276,14 @@ diskquota_fetch_table_stat(PG_FUNCTION_ARGS)
 	{
 		MemoryContext oldcontext;
 		TupleDesc	tupdesc;
-		char		*extversion;
-		char		*tmp_extversion;
-		/*
-		 * SPI_connect creates a new memory context and makes it current.
-		 * SPI_finish restores the previous current memory context and
-		 * destroys the context created by SPI_connect
-		 *
-		 * However, if your C function needs to return an object in
-		 * allocated memory (such as a value of a pass-by-reference data
-		 * type), you cannot allocate that memory using palloc, at least
-		 * not while you are connected to SPI. If you try, the object
-		 * will be deallocated by SPI_finish, and your C function will
-		 * not work reliably.
-		 * To solve this problem, use SPI_palloc to allocate memory for
-		 * your return object. SPI_palloc allocates memory in the "upper
-		 * executor context"
-		 */
+		int		extMajorVersion;
 		if (SPI_OK_CONNECT != SPI_connect())
 		{
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
 					 errmsg("unable to connect to execute internal query")));
 		}
-		tmp_extversion = get_extversion();
-		extversion = (char *)SPI_palloc(strlen(tmp_extversion));
-		strcpy(extversion, tmp_extversion);
+		extMajorVersion = get_ext_major_version();
 		SPI_finish();
 
 		/* create a function context for cross-call persistence */
@@ -338,22 +320,20 @@ diskquota_fetch_table_stat(PG_FUNCTION_ARGS)
 		/*
 		 * prepare attribute metadata for next calls that generate the tuple
 		 */
-		if (strcmp(extversion, "1.0") == 0)
+		switch (extMajorVersion)
 		{
-			tupdesc = CreateTemplateTupleDesc(2, false);
-		}
-		else if (strcmp(extversion, "2.0") == 0)
-		{
-			tupdesc = CreateTemplateTupleDesc(3, false);
-			TupleDescInitEntry(tupdesc, (AttrNumber) 3, "GP_SEGMENT_ID",
-						   INT2OID, -1, 0);
-		}
-		else
-		{
-
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("[diskquota] unknown diskquota extension version: %s", extversion)));
+			case 1:
+				tupdesc = CreateTemplateTupleDesc(2, false);
+				break;
+			case 2:
+				tupdesc = CreateTemplateTupleDesc(3, false);
+				TupleDescInitEntry(tupdesc, (AttrNumber) 3, "GP_SEGMENT_ID",
+						INT2OID, -1, 0);
+				break;
+			default:
+				ereport(ERROR,
+						(errcode(ERRCODE_INTERNAL_ERROR),
+						 errmsg("[diskquota] unknown diskquota extension version: %d", extMajorVersion)));
 		}
 		TupleDescInitEntry(tupdesc, (AttrNumber) 1, "TABLE_OID",
 						   OIDOID, -1, 0);
@@ -369,7 +349,6 @@ diskquota_fetch_table_stat(PG_FUNCTION_ARGS)
 		hash_seq_init(&(cache->pos), localCacheTable);
 
 		MemoryContextSwitchTo(oldcontext);
-		pfree(extversion);
 	}
 	else
 	{
@@ -648,22 +627,19 @@ load_table_size(HTAB *local_table_stats_map)
 	bool		found;
 	TableEntryKey 	key;
 	DiskQuotaActiveTableEntry *quota_entry;
-	char		*extversion = get_extversion();
-
-	if (strcmp(extversion, "1.0") == 0)
+	int		extMajorVersion = get_ext_major_version();
+	switch (extMajorVersion)
 	{
-		ret = SPI_execute("select tableid, size, CAST(-1 AS smallint) from diskquota.table_size", true, 0);
-
-	}
-	else if (strcmp(extversion,"2.0") == 0)
-	{
-		ret = SPI_execute("select tableid, size, segid from diskquota.table_size", true, 0);
-	}
-	else
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("[diskquota] unknown diskquota extension version: %s", extversion)));
+		case 1:
+			ret = SPI_execute("select tableid, size, CAST(-1 AS smallint) from diskquota.table_size", true, 0);
+			break;
+		case 2:
+			ret = SPI_execute("select tableid, size, segid from diskquota.table_size", true, 0);
+			break;
+		default:
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("[diskquota] unknown diskquota extension version: %d", extMajorVersion)));
 	}
 
 	if (ret != SPI_OK_SELECT)
