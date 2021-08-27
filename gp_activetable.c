@@ -845,14 +845,8 @@ pull_active_table_size_from_seg(HTAB *local_table_stats_map, char *active_oid_ar
 	appendStringInfo(&sql_command, "select * from diskquota.diskquota_fetch_table_stat(1, '%s'::oid[])",
 					 active_oid_array);
 	CdbDispatchCommand(sql_command.data, DF_NONE, &cdb_pgresults);
-	pfree(sql_command.data);
 
-	SEGCOUNT = cdb_pgresults.numResults;
-	if (SEGCOUNT <= 0 )
-	{
-		ereport(ERROR,
-				(errmsg("[diskquota] there is no active segment, SEGCOUNT is %d", SEGCOUNT)));
-	}
+	pfree(sql_command.data);
 
 	/* sum table size from each segment into local_table_stats_map */
 	for (i = 0; i < cdb_pgresults.numResults; i++)

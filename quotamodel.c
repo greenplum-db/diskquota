@@ -174,7 +174,6 @@ static void add_quota_to_blacklist(QuotaType type, Oid targetOid, Oid tablespace
 static void check_quota_map(QuotaType type);
 static void clear_all_quota_maps(void);
 static void transfer_table_for_quota(int64 totalsize, QuotaType type, Oid* old_keys, Oid* new_keys, int16 segid);
-static int64 get_initial_quota_entry_size(QuotaType, Oid* keys, int16 segid);
 
 /* functions to refresh disk quota model*/
 static void refresh_disk_quota_usage(bool is_init);
@@ -223,7 +222,7 @@ update_size_for_quota(int64 size, QuotaType type, Oid* keys, int16 segid)
 		quota_info[type].map, &key, HASH_ENTER, &found);
 	if (!found)
 	{
-		entry->size = get_initial_quota_entry_size(type, keys, segid);
+		entry->size = 0;
 		entry->limit = -1;
 		memcpy(entry->keys, keys, quota_info[type].num_keys * sizeof(Oid));
 		entry->segid = key.segid;
@@ -245,7 +244,7 @@ update_limit_for_quota(int64 limit, float segratio, QuotaType type, Oid* keys)
 				quota_info[type].map, &key, HASH_ENTER, &found);
 		if (!found)
 		{
-			entry->size = get_initial_quota_entry_size(type, keys, key.segid);
+			entry->size = 0;
 			memcpy(entry->keys, keys, quota_info[type].num_keys * sizeof(Oid));
 			entry->segid = key.segid;
 		}
@@ -360,50 +359,6 @@ clear_all_quota_maps(void)
 			 entry->limit = -1;
 		}
 	}
-}
-
-static int64
-get_initial_quota_entry_size(QuotaType type, Oid* keys, int16 segid)
-{
-	Oid 	namespaceoid = InvalidOid;
-	Oid 	owneroid = InvalidOid;
-	Oid 	tablespaceoid = InvalidOid;
-	TableSizeEntry *tsentry = NULL;
-	int64	size = 0;
-	switch (type)
-	{
-		case NAMESPACE_QUOTA:
-			namespaceoid = keys[0];
-			break;
-		case ROLE_QUOTA:
-			owneroid = keys[0];
-			break;
-		case NAMESPACE_TABLESPACE_QUOTA:
-			namespaceoid = keys[0];
-			tablespaceoid = keys[1];
-			break;
-		case ROLE_TABLESPACE_QUOTA:
-			owneroid = keys[0];
-			tablespaceoid = keys[1];
-			break;
-		default:
-			ereport(ERROR,
-					(errcode(ERRCODE_INTERNAL_ERROR),
-					 errmsg("[diskquota] unknown quota type: %d", type)));
-
-	}
-
-
-	HASH_SEQ_STATUS iter = {0};
-	hash_seq_init(&iter, table_size_map);
-	while ((tsentry = hash_seq_search(&iter)) != NULL)
-	{
-		if (tsentry->owneroid == owneroid && tsentry->namespaceoid == namespaceoid && tsentry->tablespaceoid == tablespaceoid && tsentry->segid == segid && tsentry->is_exist)
-		{
-			size += tsentry->totalsize;
-		}
-	}
-	return size;
 }
 
 /* ---- Functions for disk quota shared memory ---- */
@@ -691,6 +646,13 @@ do_check_diskquota_state_is_ready(void)
 void
 refresh_disk_quota_model(bool is_init)
 {
+	SEGCOUNT = getgpsegmentCount();
+	if (SEGCOUNT <= 0 )
+	{
+		ereport(ERROR,
+				(errmsg("[diskquota] there is no active segment, SEGCOUNT is %d", SEGCOUNT)));
+	}
+
 	if (is_init)
 		ereport(LOG, (errmsg("[diskquota] initialize quota model started")));
 	/* skip refresh model when load_quotas failed */
