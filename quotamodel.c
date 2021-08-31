@@ -961,20 +961,26 @@ flush_to_table_size(void)
 	bool		delete_statement_flag = false;
 	bool		insert_statement_flag = false;
 	int		ret;
-	char		*extversion = get_extversion();
+	int		extMajorVersion= get_ext_major_version();
 
 	/* TODO: Add flush_size_interval to avoid flushing size info in every loop */
 
 	/* concatenate all the need_to_flush table to SQL string */
 	initStringInfo(&delete_statement);
-	if (strcmp(extversion, "1.0") == 0)
-		appendStringInfo(&delete_statement, "delete from diskquota.table_size where tableid in ( ");
-	else if (strcmp(extversion, "2.0") == 0)
-		appendStringInfo(&delete_statement, "delete from diskquota.table_size where (tableid, segid) in ( ");
-	else
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("[diskquota] unknown diskquota extension version: %s", extversion)));
+	switch (extMajorVersion)
+	{
+		case 1:
+			appendStringInfo(&delete_statement, "delete from diskquota.table_size where tableid in ( ");
+			break;
+		case 2:
+			appendStringInfo(&delete_statement, "delete from diskquota.table_size where (tableid, segid) in ( ");
+			break;
+		default:
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("[diskquota] unknown diskquota extension version: %d", extMajorVersion)));
+	}
+
 	initStringInfo(&insert_statement);
 	appendStringInfo(&insert_statement, "insert into diskquota.table_size values ");
 	hash_seq_init(&iter, table_size_map);
@@ -983,14 +989,19 @@ flush_to_table_size(void)
 		/* delete dropped table from both table_size_map and table table_size */
 		if (tsentry->is_exist == false)
 		{
-			if (strcmp(extversion, "1.0") == 0)
-				appendStringInfo(&delete_statement, "%u, ", tsentry->reloid);
-			else if (strcmp(extversion, "2.0") == 0)
-				appendStringInfo(&delete_statement, "(%u,%d), ", tsentry->reloid, tsentry->segid);
-			else
-				ereport(ERROR,
-						(errcode(ERRCODE_INTERNAL_ERROR),
-						 errmsg("[diskquota] unknown diskquota extension version: %s", extversion)));
+			switch (extMajorVersion)
+			{
+				case 1:
+					appendStringInfo(&delete_statement, "%u, ", tsentry->reloid);
+					break;
+				case 2:
+					appendStringInfo(&delete_statement, "(%u,%d), ", tsentry->reloid, tsentry->segid);
+					break;
+				default:
+					ereport(ERROR,
+							(errcode(ERRCODE_INTERNAL_ERROR),
+							 errmsg("[diskquota] unknown diskquota extension version: %d", extMajorVersion)));
+			}
 			delete_statement_flag = true;
 
 			hash_search(table_size_map,
@@ -1001,27 +1012,28 @@ flush_to_table_size(void)
 		else if (tsentry->need_flush == true)
 		{
 			tsentry->need_flush = false;
-			if (strcmp(extversion, "1.0") == 0)
+			switch (extMajorVersion)
 			{
-				if (tsentry->segid == -1)
-				{
-					appendStringInfo(&delete_statement, "%u, ", tsentry->reloid);
-					appendStringInfo(&insert_statement, "(%u,%ld), ", tsentry->reloid, tsentry->totalsize);
+				case 1:
+					if (tsentry->segid == -1)
+					{
+						appendStringInfo(&delete_statement, "%u, ", tsentry->reloid);
+						appendStringInfo(&insert_statement, "(%u,%ld), ", tsentry->reloid, tsentry->totalsize);
+						delete_statement_flag = true;
+						insert_statement_flag = true;
+					}
+					break;
+				case 2:
+					appendStringInfo(&delete_statement, "(%u,%d), ", tsentry->reloid, tsentry->segid);
+					appendStringInfo(&insert_statement, "(%u,%ld,%d), ", tsentry->reloid, tsentry->totalsize, tsentry->segid);
 					delete_statement_flag = true;
 					insert_statement_flag = true;
-				}
+					break;
+				default:
+					ereport(ERROR,
+							(errcode(ERRCODE_INTERNAL_ERROR),
+							 errmsg("[diskquota] unknown diskquota extension version: %d", extMajorVersion)));
 			}
-			else if (strcmp(extversion, "2.0") == 0)
-			{
-				appendStringInfo(&delete_statement, "(%u,%d), ", tsentry->reloid, tsentry->segid);
-				appendStringInfo(&insert_statement, "(%u,%ld,%d), ", tsentry->reloid, tsentry->totalsize, tsentry->segid);
-				delete_statement_flag = true;
-				insert_statement_flag = true;
-			}
-			else
-				ereport(ERROR,
-						(errcode(ERRCODE_INTERNAL_ERROR),
-						 errmsg("[diskquota] unknown diskquota extension version: %s", extversion)));
 		}
 	}
 	truncateStringInfo(&delete_statement, delete_statement.len - strlen(", "));
@@ -1182,7 +1194,7 @@ do_load_quotas(void)
 	int		ret;
 	TupleDesc	tupdesc;
 	int		i;
-	char*		extversion;
+	int		extMajorVersion;
 
 	/*
 	 * TODO: we should skip to reload quota config when there is no change in
@@ -1191,7 +1203,7 @@ do_load_quotas(void)
 	 */
 	clear_all_quota_maps();
 	const unsigned int NUM_ATTRIBUTES = 5;
-	extversion = get_extversion();
+	extMajorVersion = get_ext_major_version();
 
 	/*
 	 * read quotas from diskquota.quota_config and target table
@@ -1208,23 +1220,21 @@ do_load_quotas(void)
 	 * Maybe this is not the best sulotion, only a work arround. Optimizing
 	 * the init procedure is a better solution.
 	 */ 
-	if (strcmp(extversion, "1.0") == 0)
+	switch (extMajorVersion)
 	{
-
-		ret = SPI_execute("select targetoid, quotatype, quotalimitMB, 0 as segratio, 0 as tablespaceoid from diskquota.quota_config", true, 0);
-	}
-	else if (strcmp(extversion,"2.0") == 0)
-	{
-		ret = SPI_execute(
-				"SELECT c.targetOid, c.quotaType, c.quotalimitMB, COALESCE(c.segratio, 0) AS segratio, COALESCE(t.tablespaceoid, 0) AS tablespaceoid "
-				"FROM diskquota.quota_config AS c LEFT OUTER JOIN diskquota.target AS t "
-				"ON c.targetOid = t.primaryOid and c.quotaType = t.quotaType", true, 0);
-	}
-	else
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				errmsg("[diskquota] unknown diskquota extension version: %s", extversion)));
+		case 1:
+			ret = SPI_execute("select targetoid, quotatype, quotalimitMB, 0 as segratio, 0 as tablespaceoid from diskquota.quota_config", true, 0);
+			break;
+		case 2:
+			ret = SPI_execute(
+					"SELECT c.targetOid, c.quotaType, c.quotalimitMB, COALESCE(c.segratio, 0) AS segratio, COALESCE(t.tablespaceoid, 0) AS tablespaceoid "
+					"FROM diskquota.quota_config AS c LEFT OUTER JOIN diskquota.target AS t "
+					"ON c.targetOid = t.primaryOid and c.quotaType = t.quotaType", true, 0);
+			break;
+		default:
+			ereport(ERROR,
+					(errcode(ERRCODE_INTERNAL_ERROR),
+					 errmsg("[diskquota] unknown diskquota extension version: %d", extMajorVersion)));
 	}
 	if (ret != SPI_OK_SELECT)
 		ereport(ERROR,
