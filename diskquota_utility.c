@@ -108,7 +108,6 @@ init_table_size_table(PG_FUNCTION_ARGS)
 			 " please recreate diskquota extension",
 			 get_database_name(MyDatabaseId));
 	}
-	/* FIXME: should here use NoLock? */
 	heap_close(rel, NoLock);
 
 	/*
@@ -1069,7 +1068,7 @@ get_rel_oid_list(void)
 			" from pg_class"
 			" where oid >= %u and (relkind='r' or relkind='m')",
 			FirstNormalObjectId);
-	SPI_connect();
+
 	ret = SPI_execute(buf.data, false, 0);
 	if (ret != SPI_OK_SELECT)
 		elog(ERROR, "cannot fetch in pg_class. error code %d", ret);
