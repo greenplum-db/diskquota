@@ -1086,7 +1086,7 @@ get_rel_oid_list(void)
 		{
 			Relation	relation;
 			List	   	*indexIds;
-			relation = try_relation_open(oid, NoLock, false);
+			relation = try_relation_open(oid, AccessShareLock, false);
 			if (relation == NULL)
 				continue;
 
