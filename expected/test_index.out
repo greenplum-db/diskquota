@@ -35,7 +35,7 @@ SELECT size, segid FROM diskquota.table_size , pg_class where tableid=oid and re
  1081344 |    -1
 (1 row)
 
--- create index for the table
+-- create index for the table, index in default tablespace
 CREATE INDEX a_index ON test_index_a(i);
 INSERT INTO test_index_a SELECT generate_series(1,10000);
 SELECT pg_sleep(5);
@@ -46,7 +46,7 @@ SELECT pg_sleep(5);
 
 -- expect insert success
 INSERT INTO test_index_a SELECT generate_series(1,100);
-SELECT schema_name,tablespace_name,quota_in_mb,nspsize_tablespace_in_bytes FROM diskquota.show_fast_schema_tablespace_quota_view WHERE schema_name    ='indexschema1' and tablespace_name='indexspc';
+SELECT schema_name,tablespace_name,quota_in_mb,nspsize_tablespace_in_bytes FROM diskquota.show_fast_schema_tablespace_quota_view WHERE schema_name ='indexschema1' and tablespace_name='indexspc';
  schema_name  | tablespace_name | quota_in_mb | nspsize_tablespace_in_bytes 
 --------------+-----------------+-------------+-----------------------------
  indexschema1 | indexspc        |           2 |                     1441792
@@ -59,6 +59,7 @@ SELECT size, segid FROM diskquota.table_size , pg_class where tableid=oid and (r
  1212416 |    -1
 (2 rows)
 
+-- add index to tablespace indexspc
 ALTER index a_index SET TABLESPACE indexspc;
 SELECT pg_sleep(20);
  pg_sleep 
@@ -66,7 +67,7 @@ SELECT pg_sleep(20);
  
 (1 row)
 
-SELECT schema_name,tablespace_name,quota_in_mb,nspsize_tablespace_in_bytes FROM diskquota.show_fast_schema_tablespace_quota_view WHERE schema_name    ='indexschema1' and tablespace_name='indexspc';
+SELECT schema_name,tablespace_name,quota_in_mb,nspsize_tablespace_in_bytes FROM diskquota.show_fast_schema_tablespace_quota_view WHERE schema_name ='indexschema1' and tablespace_name='indexspc';
  schema_name  | tablespace_name | quota_in_mb | nspsize_tablespace_in_bytes 
 --------------+-----------------+-------------+-----------------------------
  indexschema1 | indexspc        |           2 |                     2654208
@@ -78,6 +79,26 @@ SELECT size, segid FROM diskquota.table_size , pg_class where tableid=oid and (r
  1441792 |    -1
  1212416 |    -1
 (2 rows)
+
+-- expect insert fail
+INSERT INTO test_index_a SELECT generate_series(1,100);
+ERROR:  tablespace:indexspc schema:indexschema1 diskquota exceeded
+-- index tablespace quota exceeded 
+ALTER table test_index_a SET TABLESPACE pg_default;
+SELECT pg_sleep(5);
+ pg_sleep 
+----------
+ 
+(1 row)
+
+-- expect insert success
+INSERT INTO test_index_a SELECT generate_series(1,100);
+INSERT INTO test_index_a SELECT generate_series(1,200000);
+SELECT pg_sleep(5);
+ pg_sleep 
+----------
+ 
+(1 row)
 
 -- expect insert fail
 INSERT INTO test_index_a SELECT generate_series(1,100);

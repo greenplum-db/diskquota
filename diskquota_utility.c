@@ -1087,7 +1087,7 @@ get_rel_oid_list(void)
 			Relation	relation;
 			List	   	*indexIds;
 			relation = try_relation_open(oid, AccessShareLock, false);
-			if (relation == NULL)
+			if (!relation)
 				continue;
 
 			oidlist = lappend_oid(oidlist, oid);
@@ -1100,6 +1100,7 @@ get_rel_oid_list(void)
 				}
 			}
 		        relation_close(relation, NoLock);
+			list_free(indexIds);
 		}
 	}
 	return oidlist;
