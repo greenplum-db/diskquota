@@ -205,7 +205,19 @@ active_table_hook_smgrunlink(RelFileNodeBackend rnode)
 	if (prev_file_unlink_hook)
 		(*prev_file_unlink_hook) (rnode);
 
-	// report_active_table_helper(&rnode.node);
+	bool found;
+	DiskQuotaRelidCacheEntry *entry;
+
+	LWLockAcquire(diskquota_locks.pg_class_cache_lock, LW_EXCLUSIVE);
+	entry = hash_search(relid_cache, &rnode.node.relNode, HASH_FIND, &found);
+	if (found)
+	{
+		Oid relid = entry->relid;
+		hash_search(pg_class_cache, &relid, HASH_REMOVE, NULL);
+		hash_search(relation_map, &relid, HASH_REMOVE, NULL);
+		hash_search(relid_cache, &rnode.node.relNode, HASH_REMOVE, NULL);
+	}
+	LWLockRelease(diskquota_locks.pg_class_cache_lock);
 }
 
 /*
