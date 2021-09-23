@@ -35,6 +35,7 @@ struct DiskQuotaLocks
 	LWLock	   *extension_ddl_message_lock;
 	LWLock	   *extension_ddl_lock; /* ensure create diskquota extension serially */
 	LWLock	   *monitoring_dbid_cache_lock;
+	LWLock	   *pg_class_cache_lock;
 	LWLock	   *paused_lock;
 };
 typedef struct DiskQuotaLocks DiskQuotaLocks;
