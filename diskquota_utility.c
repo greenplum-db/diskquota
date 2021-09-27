@@ -343,7 +343,7 @@ diskquota_pause(PG_FUNCTION_ARGS)
 	*diskquota_paused = true;
 	LWLockRelease(diskquota_locks.paused_lock);
 
-	if (Gp_role == GP_ROLE_DISPATCH)
+	if (IS_QUERY_DISPATCHER())
 		dispatch_pause_or_resume_command(true /* pause_extension */);
 
 	PG_RETURN_VOID();
@@ -368,7 +368,7 @@ diskquota_resume(PG_FUNCTION_ARGS)
 	*diskquota_paused = false;
 	LWLockRelease(diskquota_locks.paused_lock);
 
-	if (Gp_role == GP_ROLE_DISPATCH)
+	if (IS_QUERY_DISPATCHER())
 		dispatch_pause_or_resume_command(false /* pause_extension */);
 
 	PG_RETURN_VOID();
