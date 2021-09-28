@@ -28,7 +28,7 @@ typedef enum
 	DISKQUOTA_READY_STATE
 }			DiskQuotaState;
 
-#define DiskQuotaLocksItemNumber (5)
+#define DiskQuotaLocksItemNumber (sizeof(DiskQuotaLocks) / sizeof(void*))
 struct DiskQuotaLocks
 {
 	LWLock	   *active_table_lock;
