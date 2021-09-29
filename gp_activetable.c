@@ -112,8 +112,8 @@ init_shm_worker_active_tables(void)
 	ctl.hash = tag_hash;
 
 	relation_map = ShmemInitHash("relation_map",
-									  1,
-									  diskquota_max_active_tables / 2,
+									  diskquota_max_active_tables,
+									  diskquota_max_active_tables,
 									  &ctl,
 									  HASH_ELEM | HASH_FUNCTION);
 
@@ -229,6 +229,8 @@ object_access_hook_QuotaStmt(ObjectAccessType access, Oid classId, Oid objectId,
 	if (prev_object_access_hook)
 		(*prev_object_access_hook)(access, classId, objectId, subId, arg);
 
+
+	// TODO: do we need to use "and" instead of "or"?
 	if (classId != RelationRelationId && subId == 0)
 	{
 		return;
