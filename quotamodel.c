@@ -483,6 +483,7 @@ DiskQuotaShmemSize(void)
 	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(DiskQuotaActiveTableEntry)));
 	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(DiskQuotaRelationEntry)));
 	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(DiskQuotaPgClassCacheEntry)));
+	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(DiskQuotaRelidCacheEntry)));
 	size = add_size(size, hash_estimate_size(MAX_NUM_MONITORED_DB, sizeof(Oid)));
 	size += sizeof(bool); /* sizeof(*diskquota_paused) */
 	return size;
@@ -927,7 +928,7 @@ calculate_table_disk_usage(bool is_init)
 					&key,
 					HASH_ENTER, &table_size_map_found);
 
-			if(table_size_map_found && tsentry->is_exist)
+			if (table_size_map_found && tsentry->is_exist)
 			{
 				// remove pg_class from pg_class_cache
 				hash_search(pg_class_cache, &relOid, HASH_REMOVE, NULL);
@@ -949,7 +950,7 @@ calculate_table_disk_usage(bool is_init)
 			if (tsentry)
 				tsentry->is_exist = true;
 			active_table_entry = (DiskQuotaActiveTableEntry *) hash_search(local_active_table_stat_map, &key, HASH_FIND, &active_tbl_found);
-			
+
 			/* skip to recalculate the tables which are not in active list */
 			if (active_tbl_found)
 			{

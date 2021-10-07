@@ -63,7 +63,7 @@ HTAB	   *pg_class_cache = NULL;
 static file_create_hook_type prev_file_create_hook = NULL;
 static file_extend_hook_type prev_file_extend_hook = NULL;
 static file_truncate_hook_type prev_file_truncate_hook = NULL;
-static file_truncate_hook_type prev_file_unlink_hook = NULL;
+static file_unlink_hook_type prev_file_unlink_hook = NULL;
 static object_access_hook_type prev_object_access_hook = NULL;
 
 static void active_table_hook_smgrcreate(RelFileNodeBackend rnode);
@@ -112,30 +112,34 @@ init_shm_worker_active_tables(void)
 	ctl.hash = tag_hash;
 
 	relation_map = ShmemInitHash("relation_map",
-									  diskquota_max_active_tables,
-									  diskquota_max_active_tables,
-									  &ctl,
-									  HASH_ELEM | HASH_FUNCTION);
+								 diskquota_max_active_tables,
+								 diskquota_max_active_tables,
+								 &ctl,
+								 HASH_ELEM | HASH_FUNCTION);
+
+	memset(&ctl, 0, sizeof(ctl));
 
 	ctl.keysize = sizeof(Oid);
 	ctl.entrysize = sizeof(DiskQuotaPgClassCacheEntry);
 	ctl.hash = tag_hash;
 
 	pg_class_cache = ShmemInitHash("pg_class_cache",
-									  diskquota_max_active_tables,
-									  diskquota_max_active_tables,
-									  &ctl,
-									  HASH_ELEM | HASH_FUNCTION);
+								   diskquota_max_active_tables,
+								   diskquota_max_active_tables,
+								   &ctl,
+								   HASH_ELEM | HASH_FUNCTION);
+
+	memset(&ctl, 0, sizeof(ctl));
 
 	ctl.keysize = sizeof(Oid);
 	ctl.entrysize = sizeof(DiskQuotaRelidCacheEntry);
 	ctl.hash = tag_hash;
 
 	relid_cache = ShmemInitHash("relid_cache",
-									  diskquota_max_active_tables,
-									  diskquota_max_active_tables,
-									  &ctl,
-									  HASH_ELEM | HASH_FUNCTION);
+								diskquota_max_active_tables,
+								diskquota_max_active_tables,
+								&ctl,
+								HASH_ELEM | HASH_FUNCTION);
 }
 
 /*
@@ -202,11 +206,11 @@ active_table_hook_smgrtruncate(RelFileNodeBackend rnode)
 static void 
 active_table_hook_smgrunlink(RelFileNodeBackend rnode)
 {
+	bool						found;
+	DiskQuotaRelidCacheEntry   *entry;
+
 	if (prev_file_unlink_hook)
 		(*prev_file_unlink_hook) (rnode);
-
-	bool found;
-	DiskQuotaRelidCacheEntry *entry;
 
 	LWLockAcquire(diskquota_locks.pg_class_cache_lock, LW_EXCLUSIVE);
 	entry = hash_search(relid_cache, &rnode.node.relNode, HASH_FIND, &found);
@@ -224,14 +228,25 @@ active_table_hook_smgrunlink(RelFileNodeBackend rnode)
  * Object access hook is used to monitor table access event
  */
 static void
-object_access_hook_QuotaStmt(ObjectAccessType access, Oid classId, Oid objectId, int subId, void *arg)
+object_access_hook_QuotaStmt(ObjectAccessType access,
+							 Oid classId,
+							 Oid objectId,
+							 int subId,
+							 void *arg)
 {
+	Relation					rel = NULL;
+	RelFileNode					relfileNode;
+	FormData_pg_class			pg_class;
+	DiskQuotaPgClassCacheEntry *pg_class_entry;
+	DiskQuotaRelidCacheEntry   *relid_cache_entry;
+	DiskQuotaRelationEntry	   *relation_entry;
+	bool						found;
+
 	if (prev_object_access_hook)
 		(*prev_object_access_hook)(access, classId, objectId, subId, arg);
 
-
 	// TODO: do we need to use "and" instead of "or"?
-	if (classId != RelationRelationId && subId == 0)
+	if (classId != RelationRelationId || subId != 0)
 	{
 		return;
 	}
@@ -241,23 +256,15 @@ object_access_hook_QuotaStmt(ObjectAccessType access, Oid classId, Oid objectId,
 		return;
 	}
 
-	if(access != OAT_POST_CREATE && access != OAT_POST_ALTER)
+	if (access != OAT_POST_CREATE || access != OAT_POST_ALTER)
 	{
 		return;
 	}
 
-	Relation rel = NULL;
-	RelFileNode relfileNode;
-	FormData_pg_class pg_class;
-	DiskQuotaPgClassCacheEntry	*pg_class_entry;
-	DiskQuotaRelidCacheEntry *relid_cache_entry;
-	DiskQuotaRelationEntry *relation_entry;
-	bool found;
-
 	rel = relation_open(objectId, NoLock);
 
 	/* TODO: check whether relation_open will be failed */
-	if(rel == NULL)
+	if (rel == NULL)
 	{
 		return;
 	}
@@ -271,7 +278,10 @@ object_access_hook_QuotaStmt(ObjectAccessType access, Oid classId, Oid objectId,
 	/* OAT_POST_CREATE: create pg_class_entry
 	 * OAT_POST_ALTER: modify the mapping of relid->pg_class_data when vacuum full
 	 */
-	pg_class_entry = hash_search(pg_class_cache, &objectId, HASH_ENTER_NULL, &found);
+	pg_class_entry = hash_search(pg_class_cache,
+								 &objectId,
+								 HASH_ENTER_NULL,
+								 &found);
 	if (pg_class_entry)
 	{
 		pg_class_entry->reloid = objectId;
@@ -282,11 +292,14 @@ object_access_hook_QuotaStmt(ObjectAccessType access, Oid classId, Oid objectId,
 	{
 		ereport(WARNING, (errmsg("Share memory is not enough for pg_class_cache.")));
 	}
-	
+
 	/* OAT_POST_CREATE: create relid_cache_entry
 	 * OAT_POST_ALTER: modify the mapping of relfilenode->relid when vacuum full
 	 */
-	relid_cache_entry = hash_search(relid_cache, &relfileNode.relNode, HASH_ENTER_NULL, &found);
+	relid_cache_entry = hash_search(relid_cache,
+									&relfileNode.relNode,
+									HASH_ENTER_NULL,
+									&found);
 	if (relid_cache_entry)
 	{
 		relid_cache_entry->relfilenode = relfileNode.relNode;
@@ -301,8 +314,11 @@ object_access_hook_QuotaStmt(ObjectAccessType access, Oid classId, Oid objectId,
 	// OAT_POST_ALTER: modify the mapping of relid->relfilenode when vacuum full
 	if (access == OAT_POST_ALTER)
 	{
-		relation_entry = hash_search(relation_map, &objectId, HASH_FIND, &found);
-		if(relation_entry)
+		relation_entry = hash_search(relation_map,
+									 &objectId,
+									 HASH_FIND,
+									 &found);
+		if (relation_entry)
 		{
 			relation_entry->relfilenode = relfileNode.relNode;
 		}
@@ -315,14 +331,14 @@ object_access_hook_QuotaStmt(ObjectAccessType access, Oid classId, Oid objectId,
 static void
 do_update_relation_map(Oid relid, Oid ptable_oid)
 {
-	Relation rel;
-	bool found = false;
+	Relation				rel;
+	bool					found = false;
 	DiskQuotaRelationEntry *entry;
 
 	entry = hash_search(relation_map, &relid, HASH_ENTER_NULL, &found);
 
 	// add relation mapping to primary table
-	if(!found && entry)
+	if (!found && entry)
 	{
 		rel = try_relation_open(relid, NoLock, false);
 		if (rel == NULL)
@@ -333,7 +349,7 @@ do_update_relation_map(Oid relid, Oid ptable_oid)
 		entry->relid = relid;
 		entry->relfilenode = rel->rd_node.relNode;
 		entry->primary_table_oid = ptable_oid;
-		
+
 		// add relation mapping: ao table index -> primary table
 		if (rel->rd_rel && rel->rd_rel->relhasindex)
 		{
@@ -352,7 +368,7 @@ do_update_relation_map(Oid relid, Oid ptable_oid)
 		return;
 	}
 
-	if(!found && entry == NULL)
+	if (!found && entry == NULL)
 	{
 		ereport(WARNING, (errmsg("Share memory is not enough for relation_map.")));
 	}
@@ -446,7 +462,7 @@ report_active_table_helper(const RelFileNode *relFileNode)
 		}
 		else
 		{
-			Oid relid;
+			Oid relid = InvalidOid;
 			LWLockAcquire(diskquota_locks.pg_class_cache_lock, LW_SHARED);
 			relid_cache_entry = hash_search(relid_cache, &relFileNode->relNode, HASH_FIND, &found);
 			if (found)
@@ -455,14 +471,15 @@ report_active_table_helper(const RelFileNode *relFileNode)
 			}
 			LWLockRelease(diskquota_locks.pg_class_cache_lock);
 
-			if (!found)
+			if (!found || relid == InvalidOid)
 			{
+				LWLockRelease(diskquota_locks.active_table_lock);
 				return;
 			}
 
-			quota_check_common(relid_cache_entry->relid);
+			quota_check_common(relid);
 			// TODO: check whether relation map already built
-			update_relation_map(relid_cache_entry->relid);
+			update_relation_map(relid);
 		}
 	}
 	else if (!found && entry == NULL)
