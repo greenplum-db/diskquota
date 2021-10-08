@@ -76,6 +76,7 @@ static HTAB *get_active_tables_stats(ArrayType *array);
 static HTAB *get_active_tables_oid(void);
 static HTAB *pull_active_list_from_seg(void);
 static void pull_active_table_size_from_seg(HTAB *local_table_stats_map, char *active_oid_array);
+static void pull_active_table_size_from_master(HTAB *local_table_stats_map);
 static StringInfoData convert_map_to_string(HTAB *active_list);
 static void load_table_size(HTAB *local_table_stats_map);
 static void report_active_table_helper(const RelFileNode *relFileNode);
@@ -535,8 +536,8 @@ gp_fetch_active_tables(bool is_init)
 		/* step 2: fetch active table sizes based on active oids */
 		pull_active_table_size_from_seg(local_table_stats_map, active_oid_list.data);
 
-		// /* step 3: fetch active table sizes from master */
-		// pull_active_table_size_from_master(local_table_stats_map);
+		/* step 3: fetch active table sizes from master */
+		pull_active_table_size_from_master(local_table_stats_map);
 
 		hash_destroy(local_active_table_oid_maps);
 		pfree(active_oid_list.data);
@@ -1190,4 +1191,43 @@ pull_active_table_size_from_seg(HTAB *local_table_stats_map, char *active_oid_ar
 	}
 	cdbdisp_clearCdbPgResults(&cdb_pgresults);
 	return;
+}
+
+/*
+ * TODO: Add comments.
+ */
+static void
+pull_active_table_size_from_master(HTAB *local_table_stats_map)
+{
+	DiskQuotaActiveTableEntry  *active_table_entry;
+	HASH_SEQ_STATUS				iter;
+	hash_seq_init(&iter, local_table_stats_map);
+
+	/*
+	 * TODO: Add comments.
+	 */
+	while ((active_table_entry = hash_seq_search(&iter)) != NULL)
+	{
+		if (active_table_entry->segid == -1)
+		{
+			Gp_role = GP_ROLE_UTILITY;
+
+			PG_TRY();
+			{
+				active_table_entry->tablesize +=
+					(Size) DatumGetInt64(
+								DirectFunctionCall1(
+									pg_table_size, active_table_entry->reloid));
+			}
+			PG_CATCH();
+			{
+				HOLD_INTERRUPTS();
+				FlushErrorState();
+				RESUME_INTERRUPTS();
+			}
+			PG_END_TRY();
+
+			Gp_role = GP_ROLE_DISPATCH;
+		}
+	}
 }
