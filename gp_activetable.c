@@ -256,7 +256,7 @@ object_access_hook_QuotaStmt(ObjectAccessType access,
 		return;
 	}
 
-	if (access != OAT_POST_CREATE || access != OAT_POST_ALTER)
+	if (access != OAT_POST_CREATE && access != OAT_POST_ALTER)
 	{
 		return;
 	}
