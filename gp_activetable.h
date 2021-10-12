@@ -14,14 +14,14 @@ typedef struct DiskQuotaActiveTableFileEntry
 
 typedef struct DiskQuotaRelidCacheEntry
 {
-	Oid			relfilenode;
+	RelFileNode	relfilenode;
 	Oid			relid;
 }	DiskQuotaRelidCacheEntry;
 
 typedef struct DiskQuotaRelationEntry
 {
 	Oid			relid;
-	Oid			relfilenode;
+	RelFileNode	relfilenode;
 	Oid			primary_table_oid;
 }	DiskQuotaRelationEntry;
 
