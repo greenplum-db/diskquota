@@ -1618,7 +1618,7 @@ quota_check_common(Oid reloid)
 		}
 		keyitem.databaseoid = MyDatabaseId;
 		keyitem.targettype = type;
-		elog(WARNING, "black_map_size: %d", hash_get_num_entries(disk_quota_black_map));
+		// elog(WARNING, "black_map_size: %d", hash_get_num_entries(disk_quota_black_map));
 		entry = hash_search(disk_quota_black_map,
 					&keyitem,
 					HASH_FIND, &found);

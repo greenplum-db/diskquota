@@ -306,9 +306,9 @@ object_access_hook_QuotaStmt(ObjectAccessType access,
 	{
 		relid_cache_entry->relfilenode = relfileNode;
 		relid_cache_entry->relid = objectId;
-		elog(WARNING, "object_access :::::: relfilenode : %d %d %d reloid : %d",
-				relfileNode.spcNode, relfileNode.dbNode, relfileNode.relNode,
-				objectId);
+		// elog(WARNING, "object_access :::::: relfilenode : %d %d %d reloid : %d",
+		// 		relfileNode.spcNode, relfileNode.dbNode, relfileNode.relNode,
+		// 		objectId);
 	}
 
 	if (!found && relid_cache_entry == NULL)
@@ -555,7 +555,7 @@ gp_fetch_active_tables(bool is_init)
 		pull_active_table_size_from_seg(local_table_stats_map, active_oid_list.data);
 
 		/* step 3: fetch active table sizes from master */
-		pull_active_table_size_from_master(local_table_stats_map, local_active_table_oid_maps);
+		// pull_active_table_size_from_master(local_table_stats_map, local_active_table_oid_maps);
 
 		hash_destroy(local_active_table_oid_maps);
 		pfree(active_oid_list.data);
@@ -794,23 +794,26 @@ get_active_tables_stats(ArrayType *array)
 			bool						found;
 			DiskQuotaRelationEntry	   *relation_entry;
 			DiskQuotaActiveTableEntry  *pentry;
+			Size						s1;
 			relOid = DatumGetObjectId(fetch_att(ptr, typbyval, typlen));
+
 			relation_entry = hash_search(relation_map, &relOid, HASH_FIND, &found);
-			if (!relation_entry)
+			if (relation_entry)
 			{
-				continue;
+				segId = GpIdentity.segindex;
+				key.reloid = relation_entry->primary_table_oid;
+				key.segid = segId;
+
+				entry = (DiskQuotaActiveTableEntry *) hash_search(local_table, &key, HASH_ENTER_NULL, &found);
+
+				if (!found)
+				{
+					entry->reloid = relation_entry->primary_table_oid;
+					entry->segid = segId;
+					entry->tablesize = 0;
+				}
+				entry->tablesize += diskquota_get_relation_size_by_relfilenode(&relation_entry->relfilenode);
 			}
-			segId = GpIdentity.segindex;
-			key.reloid = relation_entry->primary_table_oid;
-			key.segid = segId;
-
-			entry = (DiskQuotaActiveTableEntry *) hash_search(local_table, &key, HASH_ENTER, NULL);
-			entry->reloid = relation_entry->primary_table_oid;
-			entry->segid = segId;
-
-			if (!entry)
-				continue;
-			entry->tablesize += diskquota_get_relation_size_by_relfilenode(&relation_entry->relfilenode);
 		// relation_entry = hash_search(relation_map, &relid, HASH_FIND, &found);
 		// if (!relation_entry)
 		// {
