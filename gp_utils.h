@@ -14,6 +14,6 @@
 
 #include "storage/relfilenode.h"
 
-extern Size diskquota_get_relation_size_by_relfilenode(RelFileNode *rfh);
+extern Size diskquota_get_relation_size_by_relfilenode(RelFileNode *rfn);
 
 #endif //DISKQUOTA_GP_UTILS_H
