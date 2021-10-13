@@ -359,8 +359,13 @@ do_update_relation_map(Oid relid, Oid ptable_oid)
 	entry = hash_search(relation_map, &relid, HASH_ENTER_NULL, &found);
 
 	// add relation mapping to primary table
-	if (!found && entry)
+	if (entry)
 	{
+		// if(entry->primary_table_oid == ptable_oid)
+		// {
+		// 	return;
+		// }
+
 		rel = try_relation_open(relid, NoLock, false);
 		if (rel == NULL)
 		{
@@ -491,12 +496,12 @@ report_active_table_helper(const RelFileNode *relFileNode)
 			}
 			LWLockRelease(diskquota_locks.pg_class_cache_lock);
 
-			if (!found || relid == InvalidOid)
+			if (relid == InvalidOid)
 			{
 				LWLockRelease(diskquota_locks.active_table_lock);
 				return;
 			}
-			quota_check_common(relid);
+			// quota_check_common(relid);
 			// TODO: check whether relation map already built
 			update_relation_map(relid);
 		}
@@ -555,7 +560,7 @@ gp_fetch_active_tables(bool is_init)
 		pull_active_table_size_from_seg(local_table_stats_map, active_oid_list.data);
 
 		/* step 3: fetch active table sizes from master */
-		// pull_active_table_size_from_master(local_table_stats_map, local_active_table_oid_maps);
+		pull_active_table_size_from_master(local_table_stats_map, local_active_table_oid_maps);
 
 		hash_destroy(local_active_table_oid_maps);
 		pfree(active_oid_list.data);
@@ -1290,7 +1295,13 @@ pull_active_table_size_from_master(HTAB *local_table_stats_map, HTAB *local_acti
 		pentry = (DiskQuotaActiveTableEntry *) hash_search(
 						local_table_stats_map, &key, HASH_ENTER, &found);
 
-		if(pentry && found)
+		if(!found && pentry)
+		{
+			pentry->reloid = key.reloid;
+			pentry->segid = key.segid;
+			pentry->tablesize = 0;
+		}
+		if(pentry)
 		{
 			pentry->tablesize += table_size;
 		}
