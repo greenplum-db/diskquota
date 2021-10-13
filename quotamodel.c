@@ -67,6 +67,7 @@ typedef struct QuotaLimitEntry QuotaLimitEntry;
 typedef struct BlackMapEntry BlackMapEntry;
 typedef struct GlobalBlackMapEntry GlobalBlackMapEntry;
 typedef struct LocalBlackMapEntry LocalBlackMapEntry;
+typedef struct GlobalBlackEntryBuffer GlobalBlackEntryBuffer;
 
 
 int 	SEGCOUNT = 0;
@@ -156,6 +157,16 @@ struct LocalBlackMapEntry
 	bool		segexceeded;
 };
 
+struct GlobalBlackEntryBuffer
+{
+	StringInfoData isexceeded_buffer;
+	StringInfoData targetoid_buffer;
+	StringInfoData databaseoid_buffer;
+	StringInfoData tablespaceoid_buffer;
+	StringInfoData targettype_buffer;
+	StringInfoData segexceeded_buffer;
+};
+
 /* using hash table to support incremental update the table size entry.*/
 static HTAB *table_size_map = NULL;
 
@@ -190,6 +201,109 @@ static void init_lwlocks(void);
 
 static void export_exceeded_error(GlobalBlackMapEntry *entry);
 void truncateStringInfo(StringInfo str, int nchars);
+
+PG_FUNCTION_INFO_V1(diskquota_flush_blackmap);
+
+
+Datum
+diskquota_flush_blackmap(PG_FUNCTION_ARGS)
+{
+	static const int array_num = 6;
+	ArrayType		*arrays[array_num];
+	bool			typbyval[array_num];
+	char			typalign[array_num];
+	int16 			typlen[array_num];
+	char	   		*ptr[array_num];
+	int				i, j;
+
+	int				ndim;
+	int		   		*dims;
+	int				nitems;
+	bool			isexceeded, segexceeded;
+	BlackMapEntry 	keyitem;
+	GlobalBlackMapEntry *blackentry;
+	bool			found;
+
+	for(i = 0; i < array_num; i++)
+	{
+		arrays[i] = (ArrayType *) PG_GETARG_ARRAYTYPE_P(i);
+		get_typlenbyvalalign(ARR_ELEMTYPE(arrays[i]), &typlen[i], &typbyval[i], &typalign[i]);
+		ptr[i] = ARR_DATA_PTR(arrays[i]);
+	}
+
+	ndim = ARR_NDIM(arrays[0]);
+	dims = ARR_DIMS(arrays[0]);
+	nitems = ArrayGetNItems(ndim, dims);
+
+	LWLockAcquire(diskquota_locks.black_map_lock, LW_EXCLUSIVE);
+
+	for (i = 0; i < nitems; i++)
+	{
+
+		isexceeded = (bool) fetch_att(ptr[0], typbyval[0], typlen[0]);
+		keyitem.targetoid = DatumGetObjectId(fetch_att(ptr[1], typbyval[1], typlen[1]));
+		keyitem.databaseoid = DatumGetObjectId(fetch_att(ptr[2], typbyval[2], typlen[2]));
+		keyitem.tablespaceoid = DatumGetObjectId(fetch_att(ptr[3], typbyval[3], typlen[3]));
+		keyitem.targettype = (uint32_t) fetch_att(ptr[4], typbyval[4], typlen[4]);
+		segexceeded = (bool) fetch_att(ptr[5], typbyval[5], typlen[5]);
+
+		if (isexceeded)
+		{
+			blackentry = (GlobalBlackMapEntry *) hash_search(disk_quota_black_map, &keyitem, HASH_ENTER_NULL, &found);
+			if (blackentry == NULL)
+			{
+				ereport(WARNING, (errmsg("[diskquota] Shared disk quota black map size limit reached."
+										 "Some out-of-limit schemas or roles will be lost"
+										 "in blacklist.")));
+			}
+			else
+			{
+				blackentry->keyitem = keyitem;
+				blackentry->segexceeded = segexceeded;
+			}
+		}
+		else
+		{
+			/* db objects are removed or under quota limit in the new loop */
+			(void) hash_search(disk_quota_black_map, &keyitem, HASH_REMOVE, NULL);
+		}
+
+		for(j = 0; j < array_num; j++)
+		{
+			ptr[j] = att_addlength_pointer(ptr[j], typlen[j], ptr[j]);
+			ptr[j] = (char *) att_align_nominal(ptr[j], typalign[j]);
+		}
+	}
+
+	LWLockRelease(diskquota_locks.black_map_lock);
+
+	PG_RETURN_VOID();
+}
+
+
+
+static void
+push_black_map_to_seg(GlobalBlackEntryBuffer *buffer)
+{
+	CdbPgResults cdb_pgresults = {NULL, 0};
+	StringInfoData sql_command;
+
+	initStringInfo(&sql_command);
+	appendStringInfo(&sql_command, 
+					"select * from diskquota.diskquota_flush_blackmap(\
+					'%s'::boolean[], '%s'::oid[], '%s'::oid[], '%s'::oid[], '%s'::int4[], '%s'::boolean[])",
+					 buffer->isexceeded_buffer.data, 
+					 buffer->targetoid_buffer.data, 
+					 buffer->databaseoid_buffer.data, 
+					 buffer->tablespaceoid_buffer.data, 
+					 buffer->targettype_buffer.data, 
+					 buffer->segexceeded_buffer.data);
+
+
+	CdbDispatchCommand(sql_command.data, DF_NONE, &cdb_pgresults);
+	pfree(sql_command.data);
+}
+
 
 static void
 init_all_quota_maps(void)
@@ -996,6 +1110,64 @@ calculate_table_disk_usage(bool is_init)
 	}
 }
 
+static void
+init_blackentry_array_buffer(GlobalBlackEntryBuffer *buffer)
+{
+	initStringInfo(&buffer->isexceeded_buffer);
+	initStringInfo(&buffer->targetoid_buffer);
+	initStringInfo(&buffer->databaseoid_buffer);
+	initStringInfo(&buffer->tablespaceoid_buffer);
+	initStringInfo(&buffer->targettype_buffer);
+	initStringInfo(&buffer->segexceeded_buffer);
+	appendStringInfo(&buffer->isexceeded_buffer, "{");
+	appendStringInfo(&buffer->targetoid_buffer, "{");
+	appendStringInfo(&buffer->databaseoid_buffer, "{");
+	appendStringInfo(&buffer->tablespaceoid_buffer, "{");
+	appendStringInfo(&buffer->targettype_buffer, "{");
+	appendStringInfo(&buffer->segexceeded_buffer, "{");
+}
+
+static void
+finish_blackentry_array_buffer(GlobalBlackEntryBuffer *buffer)
+{
+	truncateStringInfo(&buffer->isexceeded_buffer, buffer->isexceeded_buffer.len - strlen(","));
+	truncateStringInfo(&buffer->targetoid_buffer, buffer->targetoid_buffer.len - strlen(","));
+	truncateStringInfo(&buffer->databaseoid_buffer, buffer->databaseoid_buffer.len - strlen(","));
+	truncateStringInfo(&buffer->tablespaceoid_buffer, buffer->tablespaceoid_buffer.len - strlen(","));
+	truncateStringInfo(&buffer->targettype_buffer, buffer->targettype_buffer.len - strlen(","));
+	truncateStringInfo(&buffer->segexceeded_buffer, buffer->segexceeded_buffer.len - strlen(","));
+	appendStringInfo(&buffer->isexceeded_buffer, "}");
+	appendStringInfo(&buffer->targetoid_buffer, "}");
+	appendStringInfo(&buffer->databaseoid_buffer, "}");
+	appendStringInfo(&buffer->tablespaceoid_buffer, "}");
+	appendStringInfo(&buffer->targettype_buffer, "}");
+	appendStringInfo(&buffer->segexceeded_buffer, "}");
+}
+
+static void
+free_blackentry_array_buffer(GlobalBlackEntryBuffer *buffer)
+{
+	pfree(buffer->isexceeded_buffer.data);
+	pfree(buffer->targetoid_buffer.data);
+	pfree(buffer->databaseoid_buffer.data);
+	pfree(buffer->tablespaceoid_buffer.data);
+	pfree(buffer->targettype_buffer.data);
+	pfree(buffer->segexceeded_buffer.data);
+}
+
+static void
+appand_blackentry_array_buffer(GlobalBlackEntryBuffer *buffer,
+								bool isexceeded,
+								GlobalBlackMapEntry *blackentry)
+{
+	appendStringInfo(&buffer->isexceeded_buffer, "%s,", isexceeded ? "true" : "false");
+	appendStringInfo(&buffer->targetoid_buffer, "%u,", blackentry->keyitem.targetoid);
+	appendStringInfo(&buffer->databaseoid_buffer, "%u,", blackentry->keyitem.databaseoid);
+	appendStringInfo(&buffer->tablespaceoid_buffer, "%u,", blackentry->keyitem.tablespaceoid);
+	appendStringInfo(&buffer->targettype_buffer, "%u,", blackentry->keyitem.targettype);
+	appendStringInfo(&buffer->segexceeded_buffer, "%s,", blackentry->segexceeded ? "true" : "false");
+}
+
 /*
  * Flush the table_size_map to user table diskquota.table_size
  * To improve update performance, we first delete all the need_to_flush
@@ -1120,6 +1292,9 @@ flush_local_black_map(void)
 	LocalBlackMapEntry *localblackentry;
 	GlobalBlackMapEntry *blackentry;
 	bool		found;
+	GlobalBlackEntryBuffer buffer;
+
+	init_blackentry_array_buffer(&buffer);
 
 	LWLockAcquire(diskquota_locks.black_map_lock, LW_EXCLUSIVE);
 
@@ -1147,24 +1322,38 @@ flush_local_black_map(void)
 					blackentry->keyitem.targettype = localblackentry->keyitem.targettype;
 					blackentry->keyitem.tablespaceoid = localblackentry->keyitem.tablespaceoid;
 					blackentry->segexceeded = localblackentry->segexceeded;
+
+					appand_blackentry_array_buffer(&buffer, localblackentry->isexceeded, blackentry);
 				}
 			}
-			blackentry->segexceeded = localblackentry->segexceeded;
+
+			if (blackentry->segexceeded != localblackentry->segexceeded) 
+			{
+				blackentry->segexceeded = localblackentry->segexceeded;
+				appand_blackentry_array_buffer(&buffer, localblackentry->isexceeded, blackentry);
+			}
+
 			localblackentry->isexceeded = false;
 			localblackentry->segexceeded = false;
 		}
 		else
 		{
 			/* db objects are removed or under quota limit in the new loop */
-			(void) hash_search(disk_quota_black_map,
+			blackentry = hash_search(disk_quota_black_map,
 							   (void *) &localblackentry->keyitem,
 							   HASH_REMOVE, NULL);
+			appand_blackentry_array_buffer(&buffer, localblackentry->isexceeded, blackentry);
+
 			(void) hash_search(local_disk_quota_black_map,
 							   (void *) &localblackentry->keyitem,
 							   HASH_REMOVE, NULL);
 		}
 	}
 	LWLockRelease(diskquota_locks.black_map_lock);
+
+	finish_blackentry_array_buffer(&buffer);
+	push_black_map_to_seg(&buffer);
+	free_blackentry_array_buffer(&buffer);
 }
 
 /*

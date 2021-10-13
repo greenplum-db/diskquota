@@ -18,6 +18,22 @@ CREATE TABLE diskquota.target (
 SELECT pg_catalog.pg_extension_config_dump('diskquota.quota_config', '');
 SELECT gp_segment_id, pg_catalog.pg_extension_config_dump('diskquota.quota_config', '') from gp_dist_random('gp_id');
 
+
+CREATE FUNCTION blackmap_entry_in(cstring)
+RETURNS blackmap_entry
+AS 'MODULE_PATHNAME'
+LANGUAGE C;
+
+CREATE FUNCTION blackmap_entry_out(blackmap_entry)
+RETURNS cstring
+AS 'MODULE_PATHNAME'
+LANGUAGE C;
+
+CREATE FUNCTION diskquota.diskquota_flush_blackmap(boolean[], oid[], oid[], oid[], integer[], boolean[])
+RETURNS void STRICT
+AS 'MODULE_PATHNAME', 'diskquota_flush_blackmap'
+LANGUAGE C;
+
 CREATE FUNCTION diskquota.set_schema_quota(text, text)
 RETURNS void STRICT
 AS 'MODULE_PATHNAME'
