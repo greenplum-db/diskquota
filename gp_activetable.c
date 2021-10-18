@@ -82,6 +82,9 @@ static StringInfoData convert_map_to_string(HTAB *active_list);
 static void load_table_size(HTAB *local_table_stats_map);
 static void report_active_table_helper(const RelFileNode *relFileNode);
 
+static RelFileNode get_relfilenode_by_relid(Oid relid);
+static Oid get_relid_by_relfilenode(RelFileNode relfilenode);
+
 void		init_active_table_hook(void);
 void		init_shm_worker_active_tables(void);
 void		init_lock_active_tables(void);
@@ -208,22 +211,22 @@ active_table_hook_smgrtruncate(RelFileNodeBackend rnode)
 static void 
 active_table_hook_smgrunlink(RelFileNodeBackend rnode)
 {
-	bool						found;
-	DiskQuotaRelidCacheEntry   *entry;
+	// bool						found;
+	// DiskQuotaRelidCacheEntry   *entry;
 
 	if (prev_file_unlink_hook)
 		(*prev_file_unlink_hook) (rnode);
 
-	LWLockAcquire(diskquota_locks.pg_class_cache_lock, LW_EXCLUSIVE);
-	entry = hash_search(relid_cache, &rnode.node, HASH_FIND, &found);
-	if (found)
-	{
-		Oid relid = entry->relid;
-		hash_search(pg_class_cache, &relid, HASH_REMOVE, NULL);
-		hash_search(relation_map, &relid, HASH_REMOVE, NULL);
-		hash_search(relid_cache, &rnode.node, HASH_REMOVE, NULL);
-	}
-	LWLockRelease(diskquota_locks.pg_class_cache_lock);
+	// LWLockAcquire(diskquota_locks.pg_class_cache_lock, LW_EXCLUSIVE);
+	// entry = hash_search(relid_cache, &rnode.node, HASH_FIND, &found);
+	// if (found)
+	// {
+	// 	Oid relid = entry->relid;
+	// 	hash_search(pg_class_cache, &relid, HASH_REMOVE, NULL);
+	// 	hash_search(relation_map, &relid, HASH_REMOVE, NULL);
+	// 	hash_search(relid_cache, &rnode.node, HASH_REMOVE, NULL);
+	// }
+	// LWLockRelease(diskquota_locks.pg_class_cache_lock);
 }
 
 /*
@@ -239,7 +242,7 @@ object_access_hook_QuotaStmt(ObjectAccessType access,
 	Relation					rel = NULL;
 	RelFileNode					relfileNode;
 	FormData_pg_class			pg_class;
-	DiskQuotaPgClassCacheEntry *pg_class_entry;
+	DiskQuotaPgClassCacheEntry *pg_class_cache_entry;
 	DiskQuotaRelidCacheEntry   *relid_cache_entry;
 	DiskQuotaRelationEntry	   *relation_entry;
 	bool						found;
@@ -277,20 +280,21 @@ object_access_hook_QuotaStmt(ObjectAccessType access,
 	relation_close(rel, NoLock);
 
 	LWLockAcquire(diskquota_locks.pg_class_cache_lock, LW_EXCLUSIVE);
-	/* OAT_POST_CREATE: create pg_class_entry
-	 * OAT_POST_ALTER: modify the mapping of relid->pg_class_data when vacuum full
+	/* OAT_POST_CREATE: create pg_class_cache_entry
+	 * OAT_POST_ALTER: modify the mapping of relid->(pg_class_data, relfilenode) when vacuum full
 	 */
-	pg_class_entry = hash_search(pg_class_cache,
+	pg_class_cache_entry = hash_search(pg_class_cache,
 								 &objectId,
 								 HASH_ENTER_NULL,
 								 &found);
-	if (pg_class_entry)
+	if (pg_class_cache_entry)
 	{
-		pg_class_entry->reloid = objectId;
-		pg_class_entry->pg_class_data = pg_class;
+		pg_class_cache_entry->reloid = objectId;
+		pg_class_cache_entry->pg_class_data = pg_class;
+		pg_class_cache_entry->relfilenode = relfileNode;
 	}
 	
-	if (!found && pg_class_entry == NULL)
+	if (!found && pg_class_cache_entry == NULL)
 	{
 		ereport(WARNING, (errmsg("Share memory is not enough for pg_class_cache.")));
 	}
@@ -323,7 +327,6 @@ object_access_hook_QuotaStmt(ObjectAccessType access,
 	if (relation_entry)
 	{
 		relation_entry->relid = objectId;
-		relation_entry->relfilenode = relfileNode;
 		relation_entry->primary_table_oid = objectId;
 	}
 
@@ -332,18 +335,6 @@ object_access_hook_QuotaStmt(ObjectAccessType access,
 		ereport(WARNING, (errmsg("Share memory is not enough for relation_map.")));
 	}
 
-	// OAT_POST_ALTER: modify the mapping of relid->relfilenode when vacuum full
-	// if (access == OAT_POST_ALTER)
-	// {
-	// 	relation_entry = hash_search(relation_map,
-	// 								 &objectId,
-	// 								 HASH_FIND,
-	// 								 &found);
-	// 	if (relation_entry)
-	// 	{
-	// 		relation_entry->relfilenode = relfileNode;
-	// 	}
-	// }
 	LWLockRelease(diskquota_locks.pg_class_cache_lock);
 
 	report_active_table_helper(&relfileNode);
@@ -354,14 +345,14 @@ do_update_relation_map(Oid relid, Oid ptable_oid)
 {
 	Relation				rel;
 	bool					found = false;
-	DiskQuotaRelationEntry *entry;
+	DiskQuotaRelationEntry *relation_entry;
 
-	entry = hash_search(relation_map, &relid, HASH_ENTER_NULL, &found);
+	relation_entry = hash_search(relation_map, &relid, HASH_ENTER_NULL, &found);
 
 	// add relation mapping to primary table
-	if (entry)
+	if (relation_entry)
 	{
-		// if(entry->primary_table_oid == ptable_oid)
+		// if(relation_entry->primary_table_oid == ptable_oid)
 		// {
 		// 	return;
 		// }
@@ -372,9 +363,8 @@ do_update_relation_map(Oid relid, Oid ptable_oid)
 			return;
 		}
 
-		entry->relid = relid;
-		entry->relfilenode = rel->rd_node;
-		entry->primary_table_oid = ptable_oid;
+		relation_entry->relid = relid;
+		relation_entry->primary_table_oid = ptable_oid;
 
 		// add relation mapping: ao table index -> primary table
 		if (rel->rd_rel && rel->rd_rel->relhasindex)
@@ -394,7 +384,7 @@ do_update_relation_map(Oid relid, Oid ptable_oid)
 		return;
 	}
 
-	if (!found && entry == NULL)
+	if (!found && relation_entry == NULL)
 	{
 		ereport(WARNING, (errmsg("Share memory is not enough for relation_map.")));
 	}
@@ -485,26 +475,25 @@ report_active_table_helper(const RelFileNode *relFileNode)
 			entry->relfilenode = item.relfilenode;
 			entry->tablespaceoid = item.tablespaceoid;
 		}
-		else
-		{
-			Oid relid = InvalidOid;
-			LWLockAcquire(diskquota_locks.pg_class_cache_lock, LW_SHARED);
-			relid_cache_entry = hash_search(relid_cache, relFileNode, HASH_FIND, &found);
-			if (found)
-			{
-				relid = relid_cache_entry->relid;
-			}
-			LWLockRelease(diskquota_locks.pg_class_cache_lock);
 
-			if (relid == InvalidOid)
-			{
-				LWLockRelease(diskquota_locks.active_table_lock);
-				return;
-			}
-			// quota_check_common(relid);
-			// TODO: check whether relation map already built
-			update_relation_map(relid);
+		Oid relid = InvalidOid;
+		LWLockAcquire(diskquota_locks.pg_class_cache_lock, LW_SHARED);
+		relid_cache_entry = hash_search(relid_cache, relFileNode, HASH_FIND, &found);
+		if (found)
+		{
+			relid = relid_cache_entry->relid;
 		}
+		LWLockRelease(diskquota_locks.pg_class_cache_lock);
+
+		if (relid == InvalidOid)
+		{
+			LWLockRelease(diskquota_locks.active_table_lock);
+			return;
+		}
+		// quota_check_common(relid);
+		// TODO: check whether relation map already built
+		update_relation_map(relid);
+		
 	}
 	else if (!found && entry == NULL)
 	{
@@ -770,36 +759,9 @@ get_active_tables_stats(ArrayType *array)
 		}
 		else
 		{
-			// relOid = DatumGetObjectId(fetch_att(ptr, typbyval, typlen));
-			// segId = GpIdentity.segindex;
-			// key.reloid = relOid;
-			// key.segid = segId;
-
-			// entry = (DiskQuotaActiveTableEntry *) hash_search(local_table, &key, HASH_ENTER, NULL);
-			// entry->reloid = relOid;
-			// entry->segid = segId;
-
-			/*
-			 * avoid to generate ERROR if relOid is not existed (i.e. table
-			 * has been droped)
-			 */
-			// PG_TRY();
-			// {
-
-			// 	/* call pg_table_size to get the active table size */
-			// 	// entry->tablesize = (Size) DatumGetInt64(DirectFunctionCall1(pg_table_size,
-			// 																// ObjectIdGetDatum(relOid)));
-			// }
-			// PG_CATCH();
-			// {
-			// 	FlushErrorState();
-			// 	entry->tablesize = 0;
-			// }
-			// PG_END_TRY();
 			bool						found;
 			DiskQuotaRelationEntry	   *relation_entry;
-			DiskQuotaActiveTableEntry  *pentry;
-			Size						s1;
+			RelFileNode 				relfilenode;
 			relOid = DatumGetObjectId(fetch_att(ptr, typbyval, typlen));
 
 			relation_entry = hash_search(relation_map, &relOid, HASH_FIND, &found);
@@ -817,29 +779,9 @@ get_active_tables_stats(ArrayType *array)
 					entry->segid = segId;
 					entry->tablesize = 0;
 				}
-				entry->tablesize += diskquota_get_relation_size_by_relfilenode(&relation_entry->relfilenode);
+				relfilenode = get_relfilenode_by_relid(relOid);
+				entry->tablesize += diskquota_get_relation_size_by_relfilenode(&relfilenode);
 			}
-		// relation_entry = hash_search(relation_map, &relid, HASH_FIND, &found);
-		// if (!relation_entry)
-		// {
-		// 	continue;
-		// }
-
-		// Size table_size = diskquota_get_relation_size_by_relfilenode(&relation_entry->relfilenode);
-
-		// if(OidIsValid(relation_entry->primary_table_oid))
-		// {
-		// 	key.reloid = relation_entry->primary_table_oid;
-		// }
-
-		// pentry = (DiskQuotaActiveTableEntry *) hash_search(
-		// 				local_table_stats_map, &key, HASH_ENTER, &found);
-
-		// if(pentry && found)
-		// {
-		// 	pentry->tablesize += table_size;
-		// }
-
 
 			ptr = att_addlength_pointer(ptr, typlen, ptr);
 			ptr = (char *) att_align_nominal(ptr, typalign);
@@ -933,11 +875,17 @@ get_active_tables_oid(void)
 	 */
 	hash_seq_init(&iter, local_active_table_file_map);
 
+	LWLockAcquire(diskquota_locks.pg_class_cache_lock, LW_EXCLUSIVE);
 	while ((active_table_file_entry = (DiskQuotaActiveTableFileEntry *) hash_seq_search(&iter)) != NULL)
 	{
 		bool		found;
+		RelFileNode relfilenode;
+		
+		relfilenode.spcNode = active_table_file_entry->tablespaceoid;
+		relfilenode.dbNode = active_table_file_entry->dbid;
+		relfilenode.relNode = active_table_file_entry->relfilenode;
+		relOid = get_relid_by_relfilenode(relfilenode);
 
-		relOid = RelidByRelfilenode(active_table_file_entry->tablespaceoid, active_table_file_entry->relfilenode);
 		if (relOid != InvalidOid)
 		{
 			active_table_entry = hash_search(local_active_table_stats_map, &relOid, HASH_ENTER, &found);
@@ -951,6 +899,8 @@ get_active_tables_oid(void)
 			hash_search(local_active_table_file_map, active_table_file_entry, HASH_REMOVE, NULL);
 		}
 	}
+
+	LWLockRelease(diskquota_locks.pg_class_cache_lock);
 
 	/*
 	 * If cannot convert relfilenode to relOid, put them back to shared memory
@@ -1275,6 +1225,8 @@ pull_active_table_size_from_master(HTAB *local_table_stats_map, HTAB *local_acti
 	while ((entry = hash_seq_search(&iter)) != NULL)
 	{
 		Oid relid = entry->reloid;
+		RelFileNode relfilenode;
+		Size table_size;
 
 		key.reloid = relid;
 		key.segid = -1;
@@ -1285,7 +1237,8 @@ pull_active_table_size_from_master(HTAB *local_table_stats_map, HTAB *local_acti
 			continue;
 		}
 
-		Size table_size = diskquota_get_relation_size_by_relfilenode(&relation_entry->relfilenode);
+		relfilenode = get_relfilenode_by_relid(relid);
+		table_size = diskquota_get_relation_size_by_relfilenode(&relfilenode);
 
 		if(OidIsValid(relation_entry->primary_table_oid))
 		{
@@ -1311,6 +1264,72 @@ pull_active_table_size_from_master(HTAB *local_table_stats_map, HTAB *local_acti
 /*
  * TODO: Add comments.
  */
+static void
+clean_cache_by_relid(Oid relid)
+{
+	DiskQuotaPgClassCacheEntry *pg_class_cache_entry;
+	pg_class_cache_entry = hash_search(pg_class_cache, &relid, HASH_FIND, NULL);
+	if(pg_class_cache_entry)
+	{
+		hash_search(relid_cache, &pg_class_cache_entry->relfilenode, HASH_REMOVE, NULL);
+		hash_search(pg_class_cache, &relid, HASH_REMOVE, NULL);
+	}
+}
+
+static RelFileNode
+get_relfilenode_by_relid(Oid relid)
+{
+	DiskQuotaPgClassCacheEntry *pg_class_cache_entry;
+	RelFileNode relfilenode = {0};
+	Relation rel;
+	
+	rel = try_relation_open(relid, AccessShareLock, false);
+	if (rel)
+	{
+		relfilenode = rel->rd_node;
+		relation_close(rel, AccessShareLock);
+		clean_cache_by_relid(relid);
+		return relfilenode;
+	}
+
+	pg_class_cache_entry = hash_search(pg_class_cache, &relid, HASH_FIND, NULL);
+	if (pg_class_cache_entry)
+	{
+		relfilenode = pg_class_cache_entry->relfilenode;
+		return relfilenode;
+	}
+
+	return relfilenode;
+}
+
+/*
+ * 1. get relid from pg_class
+ * 2. remove cache_entry from relid_cache/pg_class_cache, if pg_class exists
+ */
+static Oid
+get_relid_by_relfilenode(RelFileNode relfilenode)
+{
+	Oid relid;
+	bool found;
+	DiskQuotaRelidCacheEntry *relid_cache_entry;
+
+	relid = RelidByRelfilenode(relfilenode.spcNode, relfilenode.relNode);
+	if(OidIsValid(relid))
+	{
+		hash_search(relid_cache, &relfilenode, HASH_REMOVE, NULL);
+		clean_cache_by_relid(relid);
+	}
+	else
+	{
+		relid_cache_entry = hash_search(relid_cache, &relfilenode, HASH_ENTER, &found);
+		if (found && OidIsValid(relid_cache_entry->relid))
+		{
+			relid = relid_cache_entry->relid;
+		}
+	}
+	return relid;
+}
+
 // static void
 // pull_active_table_size_from_master(HTAB *local_table_stats_map)
 // {

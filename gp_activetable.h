@@ -21,7 +21,6 @@ typedef struct DiskQuotaRelidCacheEntry
 typedef struct DiskQuotaRelationEntry
 {
 	Oid			relid;
-	RelFileNode	relfilenode;
 	Oid			primary_table_oid;
 }	DiskQuotaRelationEntry;
 
@@ -40,8 +39,9 @@ typedef struct DiskQuotaActiveTableEntry
 
 typedef struct DiskQuotaPgClassCacheEntry
 {
-	Oid reloid;
-	FormData_pg_class pg_class_data;
+	Oid 				reloid;
+	FormData_pg_class 	pg_class_data;
+	RelFileNode			relfilenode;
 }		DiskQuotaPgClassCacheEntry;
 
 extern HTAB *gp_fetch_active_tables(bool force);

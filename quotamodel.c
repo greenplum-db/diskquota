@@ -880,7 +880,7 @@ calculate_table_disk_usage(bool is_init)
 	TableEntryKey	key;
 	List		*oidlist;
 	ListCell        *l;
-	DiskQuotaPgClassCacheEntry *pg_class_entry;
+	DiskQuotaPgClassCacheEntry *pg_class_cache_entry;
 
 
 	/*
@@ -1031,9 +1031,9 @@ calculate_table_disk_usage(bool is_init)
 
 	LWLockAcquire(diskquota_locks.pg_class_cache_lock, LW_EXCLUSIVE);
 	hash_seq_init(&iter, pg_class_cache);
-	while ((pg_class_entry = hash_seq_search(&iter)) != NULL)
+	while ((pg_class_cache_entry = hash_seq_search(&iter)) != NULL)
 	{
-		relOid = pg_class_entry->reloid;
+		relOid = pg_class_cache_entry->reloid;
 		for (int i = -1; i < SEGCOUNT; i++)
 		{
 			key.segid = i;
@@ -1054,9 +1054,9 @@ calculate_table_disk_usage(bool is_init)
 				tsentry->reloid = relOid;
 				tsentry->segid = key.segid;
 				tsentry->totalsize = 0;
-				tsentry->owneroid = pg_class_entry->pg_class_data.relowner;
-				tsentry->namespaceoid = pg_class_entry->pg_class_data.relnamespace;
-				tsentry->tablespaceoid = pg_class_entry->pg_class_data.reltablespace;
+				tsentry->owneroid = pg_class_cache_entry->pg_class_data.relowner;
+				tsentry->namespaceoid = pg_class_cache_entry->pg_class_data.relnamespace;
+				tsentry->tablespaceoid = pg_class_cache_entry->pg_class_data.reltablespace;
 				tsentry->need_flush = true;
 				tsentry->is_exist = false;
 			}
