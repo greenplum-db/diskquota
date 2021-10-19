@@ -41,7 +41,6 @@ typedef struct DiskQuotaPgClassCacheEntry
 {
 	Oid 				reloid;
 	FormData_pg_class 	pg_class_data;
-	RelFileNode			relfilenode;
 }		DiskQuotaPgClassCacheEntry;
 
 extern HTAB *gp_fetch_active_tables(bool force);

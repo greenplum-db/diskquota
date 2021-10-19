@@ -40,8 +40,9 @@
 #include "catalog/objectaccess.h"
 
 #include "gp_activetable.h"
-#include "gp_utils.h"
 #include "diskquota.h"
+
+#include <sys/stat.h>
 
 PG_FUNCTION_INFO_V1(diskquota_fetch_table_stat);
 
@@ -55,7 +56,7 @@ typedef struct DiskQuotaSetOFCache
 HTAB	   *active_tables_map = NULL;
 HTAB	   *monitoring_dbid_cache = NULL;
 HTAB	   *relation_map = NULL;
-HTAB	   *relid_cache = NULL;
+// HTAB	   *relid_cache = NULL;
 
 /* only for master */
 HTAB	   *pg_class_cache = NULL;
@@ -81,6 +82,7 @@ static void pull_active_table_size_from_master(HTAB *local_table_stats_map, HTAB
 static StringInfoData convert_map_to_string(HTAB *active_list);
 static void load_table_size(HTAB *local_table_stats_map);
 static void report_active_table_helper(const RelFileNode *relFileNode);
+static Size calculate_relfilenode_size(RelFileNode *rfn);
 
 static RelFileNode get_relfilenode_by_relid(Oid relid);
 static Oid get_relid_by_relfilenode(RelFileNode relfilenode);
@@ -134,17 +136,17 @@ init_shm_worker_active_tables(void)
 								   &ctl,
 								   HASH_ELEM | HASH_FUNCTION);
 
-	memset(&ctl, 0, sizeof(ctl));
+	// memset(&ctl, 0, sizeof(ctl));
 
-	ctl.keysize = sizeof(RelFileNode);
-	ctl.entrysize = sizeof(DiskQuotaRelidCacheEntry);
-	ctl.hash = tag_hash;
+	// ctl.keysize = sizeof(RelFileNode);
+	// ctl.entrysize = sizeof(DiskQuotaRelidCacheEntry);
+	// ctl.hash = tag_hash;
 
-	relid_cache = ShmemInitHash("relid_cache",
-								diskquota_max_active_tables,
-								diskquota_max_active_tables,
-								&ctl,
-								HASH_ELEM | HASH_FUNCTION);
+	// relid_cache = ShmemInitHash("relid_cache",
+	// 							diskquota_max_active_tables,
+	// 							diskquota_max_active_tables,
+	// 							&ctl,
+	// 							HASH_ELEM | HASH_FUNCTION);
 }
 
 /*
@@ -243,82 +245,83 @@ object_access_hook_QuotaStmt(ObjectAccessType access,
 	RelFileNode					relfileNode;
 	FormData_pg_class			pg_class;
 	DiskQuotaPgClassCacheEntry *pg_class_cache_entry;
-	DiskQuotaRelidCacheEntry   *relid_cache_entry;
+	// DiskQuotaRelidCacheEntry   *relid_cache_entry;
 	DiskQuotaRelationEntry	   *relation_entry;
 	bool						found;
 
 	if (prev_object_access_hook)
-		(*prev_object_access_hook)(access, classId, objectId, subId, arg);
+		(*prev_object_access_hook) (access, classId, objectId, subId, arg);
 
 	// TODO: do we need to use "and" instead of "or"?
-	if (classId != RelationRelationId || subId != 0)
+	if ((classId != RelationRelationId || subId != 0) ||
+		(objectId < FirstNormalObjectId))
 	{
 		return;
 	}
 
-	if (objectId < FirstNormalObjectId)
+	switch (access)
 	{
-		return;
+		case OAT_POST_CREATE:
+		{
+			PG_TRY();
+			{
+				rel = relation_open(objectId, NoLock);
+				if (rel == NULL)
+				{
+					return;
+				}
+
+				relfileNode = rel->rd_node;
+				pg_class = *(rel->rd_rel);
+
+				relation_close(rel, NoLock);
+
+				LWLockAcquire(diskquota_locks.pg_class_cache_lock, LW_EXCLUSIVE);
+				pg_class_cache_entry = hash_search(pg_class_cache,
+												   &objectId,
+												   HASH_ENTER_NULL,
+												   &found);
+				if (pg_class_cache_entry)
+				{
+					pg_class_cache_entry->reloid = objectId;
+					pg_class_cache_entry->pg_class_data = pg_class;
+				}
+				else
+				{
+					ereport(WARNING, (errmsg("Share memory is not enough for pg_class_cache.")));
+				}
+				LWLockRelease(diskquota_locks.pg_class_cache_lock);
+			}
+			PG_CATCH();
+			{
+				/* Do nothing. */
+			}
+			PG_END_TRY();
+		}
+		default:
+			return;
 	}
 
-	if (access != OAT_POST_CREATE && access != OAT_POST_ALTER)
-	{
-		return;
-	}
+	// /* OAT_POST_CREATE: create relid_cache_entry
+	//  * OAT_POST_ALTER: modify the mapping of relfilenode->relid when vacuum full
+	//  */
+	// relid_cache_entry = hash_search(relid_cache,
+	// 								&relfileNode,
+	// 								HASH_ENTER_NULL,
+	// 								&found);
+	// if (relid_cache_entry)
+	// {
+	// 	relid_cache_entry->relfilenode = relfileNode;
+	// 	relid_cache_entry->relid = objectId;
+	// 	// elog(WARNING, "object_access :::::: relfilenode : %d %d %d reloid : %d",
+	// 	// 		relfileNode.spcNode, relfileNode.dbNode, relfileNode.relNode,
+	// 	// 		objectId);
+	// }
 
-	rel = relation_open(objectId, NoLock);
-
-	/* TODO: check whether relation_open will be failed */
-	if (rel == NULL)
-	{
-		return;
-	}
-
-	relfileNode = rel->rd_node;
-	pg_class = *(rel->rd_rel);
-
-	relation_close(rel, NoLock);
-
-	LWLockAcquire(diskquota_locks.pg_class_cache_lock, LW_EXCLUSIVE);
-	/* OAT_POST_CREATE: create pg_class_cache_entry
-	 * OAT_POST_ALTER: modify the mapping of relid->(pg_class_data, relfilenode) when vacuum full
-	 */
-	pg_class_cache_entry = hash_search(pg_class_cache,
-								 &objectId,
-								 HASH_ENTER_NULL,
-								 &found);
-	if (pg_class_cache_entry)
-	{
-		pg_class_cache_entry->reloid = objectId;
-		pg_class_cache_entry->pg_class_data = pg_class;
-		pg_class_cache_entry->relfilenode = relfileNode;
-	}
-	
-	if (!found && pg_class_cache_entry == NULL)
-	{
-		ereport(WARNING, (errmsg("Share memory is not enough for pg_class_cache.")));
-	}
-
-	/* OAT_POST_CREATE: create relid_cache_entry
-	 * OAT_POST_ALTER: modify the mapping of relfilenode->relid when vacuum full
-	 */
-	relid_cache_entry = hash_search(relid_cache,
-									&relfileNode,
-									HASH_ENTER_NULL,
-									&found);
-	if (relid_cache_entry)
-	{
-		relid_cache_entry->relfilenode = relfileNode;
-		relid_cache_entry->relid = objectId;
-		// elog(WARNING, "object_access :::::: relfilenode : %d %d %d reloid : %d",
-		// 		relfileNode.spcNode, relfileNode.dbNode, relfileNode.relNode,
-		// 		objectId);
-	}
-
-	if (!found && relid_cache_entry == NULL)
-	{
-		ereport(WARNING, (errmsg("Share memory is not enough for relfilenode cache.")));
-	}
+	// if (!found && relid_cache_entry == NULL)
+	// {
+	// 	ereport(WARNING, (errmsg("Share memory is not enough for relfilenode cache.")));
+	// }
 
 	relation_entry = hash_search(relation_map,
 								 &objectId,
@@ -334,8 +337,6 @@ object_access_hook_QuotaStmt(ObjectAccessType access,
 	{
 		ereport(WARNING, (errmsg("Share memory is not enough for relation_map.")));
 	}
-
-	LWLockRelease(diskquota_locks.pg_class_cache_lock);
 
 	report_active_table_helper(&relfileNode);
 }
@@ -438,12 +439,12 @@ report_active_table_helper(const RelFileNode *relFileNode)
 {
 	DiskQuotaActiveTableFileEntry *entry;
 	DiskQuotaActiveTableFileEntry item;
-	DiskQuotaRelidCacheEntry *relid_cache_entry;
+	// DiskQuotaRelidCacheEntry *relid_cache_entry;
 	bool found = false;
 	Oid dbid = relFileNode->dbNode;
 
 	/* We do not collect the active table in either master or mirror segments  */
-	if (IsRoleMirror())
+	if (IS_QUERY_DISPATCHER() || IsRoleMirror())
 	{
 		return;
 	}
@@ -478,11 +479,11 @@ report_active_table_helper(const RelFileNode *relFileNode)
 
 		Oid relid = InvalidOid;
 		LWLockAcquire(diskquota_locks.pg_class_cache_lock, LW_SHARED);
-		relid_cache_entry = hash_search(relid_cache, relFileNode, HASH_FIND, &found);
-		if (found)
-		{
-			relid = relid_cache_entry->relid;
-		}
+		// relid_cache_entry = hash_search(relid_cache, relFileNode, HASH_FIND, &found);
+		// if (found)
+		// {
+		// 	relid = relid_cache_entry->relid;
+		// }
 		LWLockRelease(diskquota_locks.pg_class_cache_lock);
 
 		if (relid == InvalidOid)
@@ -493,7 +494,6 @@ report_active_table_helper(const RelFileNode *relFileNode)
 		// quota_check_common(relid);
 		// TODO: check whether relation map already built
 		update_relation_map(relid);
-		
 	}
 	else if (!found && entry == NULL)
 	{
@@ -780,7 +780,7 @@ get_active_tables_stats(ArrayType *array)
 					entry->tablesize = 0;
 				}
 				relfilenode = get_relfilenode_by_relid(relOid);
-				entry->tablesize += diskquota_get_relation_size_by_relfilenode(&relfilenode);
+				entry->tablesize += calculate_relfilenode_size(&relfilenode);
 			}
 
 			ptr = att_addlength_pointer(ptr, typlen, ptr);
@@ -1238,7 +1238,7 @@ pull_active_table_size_from_master(HTAB *local_table_stats_map, HTAB *local_acti
 		}
 
 		relfilenode = get_relfilenode_by_relid(relid);
-		table_size = diskquota_get_relation_size_by_relfilenode(&relfilenode);
+		table_size = calculate_relfilenode_size(&relfilenode);
 
 		if(OidIsValid(relation_entry->primary_table_oid))
 		{
@@ -1264,40 +1264,52 @@ pull_active_table_size_from_master(HTAB *local_table_stats_map, HTAB *local_acti
 /*
  * TODO: Add comments.
  */
-static void
-clean_cache_by_relid(Oid relid)
-{
-	DiskQuotaPgClassCacheEntry *pg_class_cache_entry;
-	pg_class_cache_entry = hash_search(pg_class_cache, &relid, HASH_FIND, NULL);
-	if(pg_class_cache_entry)
-	{
-		hash_search(relid_cache, &pg_class_cache_entry->relfilenode, HASH_REMOVE, NULL);
-		hash_search(pg_class_cache, &relid, HASH_REMOVE, NULL);
-	}
-}
+// static void
+// clean_cache_by_relid(Oid relid)
+// {
+// 	DiskQuotaPgClassCacheEntry *pg_class_cache_entry;
+// 	pg_class_cache_entry = hash_search(pg_class_cache, &relid, HASH_FIND, NULL);
+// 	if(pg_class_cache_entry)
+// 	{
+// 		hash_search(relid_cache, &pg_class_cache_entry->relfilenode, HASH_REMOVE, NULL);
+// 		hash_search(pg_class_cache, &relid, HASH_REMOVE, NULL);
+// 	}
+// }
 
 static RelFileNode
-get_relfilenode_by_relid(Oid relid)
+get_relfilenode_by_relid(Oid reloid, RelFileNo)
 {
-	DiskQuotaPgClassCacheEntry *pg_class_cache_entry;
-	RelFileNode relfilenode = {0};
-	Relation rel;
-	
-	rel = try_relation_open(relid, AccessShareLock, false);
-	if (rel)
-	{
-		relfilenode = rel->rd_node;
-		relation_close(rel, AccessShareLock);
-		clean_cache_by_relid(relid);
-		return relfilenode;
-	}
+	// DiskQuotaPgClassCacheEntry *pg_class_cache_entry;
+	// RelFileNode					relfilenode = {0};
+	// Relation					rel;
+	// bool						found = false;
 
-	pg_class_cache_entry = hash_search(pg_class_cache, &relid, HASH_FIND, NULL);
-	if (pg_class_cache_entry)
-	{
-		relfilenode = pg_class_cache_entry->relfilenode;
-		return relfilenode;
-	}
+	// pg_class_cache_entry = hash_search(pg_class_cache,
+	// 								   &reloid,
+	// 								   HASH_FIND, &found);
+	// if (found && pg_class_cache_entry)
+	// {
+	// 	relfilenode
+	// }
+
+	// PG_TRY();
+	// {
+	// 	rel = relation_open(reloid, AccessShareLock);
+	// 	relfilenode = rel->rd_node;
+	// 	relation_close(reloid, AccessShareLock);
+	// }
+	// PG_CATCH();
+	// {
+	// 	/* Do nothing. */
+	// }
+	// PG_END_TRY();
+
+	// pg_class_cache_entry = hash_search(pg_class_cache, &relid, HASH_FIND, NULL);
+	// if (pg_class_cache_entry)
+	// {
+	// 	relfilenode = pg_class_cache_entry->relfilenode;
+	// 	return relfilenode;
+	// }
 
 	return relfilenode;
 }
@@ -1330,38 +1342,51 @@ get_relid_by_relfilenode(RelFileNode relfilenode)
 	return relid;
 }
 
-// static void
-// pull_active_table_size_from_master(HTAB *local_table_stats_map)
-// {
-// 	DiskQuotaActiveTableEntry  *active_table_entry;
-// 	HASH_SEQ_STATUS				iter;
-// 	hash_seq_init(&iter, local_table_stats_map);
+/*
+ * TODO: Add comment.
+ */
+static Size
+calculate_relfilenode_size(RelFileNode *rfn)
+{
+    int64			totalsize = 0;
+    ForkNumber		forkNum;
+    int64			size = 0;
+    char		   *relationpath;
+    char			pathname[MAXPGPATH];
+    unsigned int	segcount = 0;
 
-// 	/*
-// 	 * TODO: Add comments.
-// 	 */
-// 	while ((active_table_entry = hash_seq_search(&iter)) != NULL)
-// 	{
-// 		if (active_table_entry->segid == -1)
-// 		{
-// 			Gp_role = GP_ROLE_UTILITY;
+    for (forkNum = 0; forkNum <= MAX_FORKNUM; forkNum++)
+    {
+		relationpath = relpathperm(*rfn, forkNum);
+		size = 0;
 
-// 			PG_TRY();
-// 			{
-// 				active_table_entry->tablesize +=
-// 					(Size) DatumGetInt64(
-// 								DirectFunctionCall1(
-// 									pg_table_size, active_table_entry->reloid));
-// 			}
-// 			PG_CATCH();
-// 			{
-// 				HOLD_INTERRUPTS();
-// 				FlushErrorState();
-// 				RESUME_INTERRUPTS();
-// 			}
-// 			PG_END_TRY();
+		for (segcount = 0;; segcount++)
+		{
+			struct stat fst;
 
-// 			Gp_role = GP_ROLE_DISPATCH;
-// 		}
-// 	}
-// }
+			CHECK_FOR_INTERRUPTS();
+
+			if (segcount == 0)
+				snprintf(pathname, MAXPGPATH, "%s",
+						 relationpath);
+			else
+				snprintf(pathname, MAXPGPATH, "%s.%u",
+						 relationpath, segcount);
+
+			if (stat(pathname, &fst) < 0)
+			{
+				if (errno == ENOENT)
+					break;
+				else
+					ereport(ERROR,
+							(errcode_for_file_access(),
+							 errmsg("could not stat file \"%s\": %m", pathname)));
+			}
+			size += fst.st_size;
+		}
+
+		totalsize += size;
+	}
+
+	return totalsize;
+}
