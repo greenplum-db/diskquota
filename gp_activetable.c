@@ -18,7 +18,9 @@
 #include "access/htup_details.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_class.h"
+#include "catalog/pg_namespace.h"
 #include "catalog/pg_type.h"
+#include "catalog/objectaccess.h"
 #include "cdb/cdbbufferedappend.h"
 #include "cdb/cdbdisp_query.h"
 #include "cdb/cdbdispatchresult.h"
@@ -30,6 +32,7 @@
 #include "libpq-fe.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
+#include "optimizer/plancat.h"
 #include "storage/shmem.h"
 #include "storage/smgr.h"
 #include "utils/array.h"
@@ -40,6 +43,8 @@
 
 #include "gp_activetable.h"
 #include "diskquota.h"
+
+#include <sys/stat.h>
 
 PG_FUNCTION_INFO_V1(diskquota_fetch_table_stat);
 
@@ -52,15 +57,24 @@ typedef struct DiskQuotaSetOFCache
 
 HTAB	   *active_tables_map = NULL;
 HTAB	   *monitoring_dbid_cache = NULL;
+HTAB	   *relation_map = NULL;
 
 /* active table hooks which detect the disk file size change. */
 static file_create_hook_type prev_file_create_hook = NULL;
 static file_extend_hook_type prev_file_extend_hook = NULL;
 static file_truncate_hook_type prev_file_truncate_hook = NULL;
+static file_unlink_hook_type prev_file_unlink_hook = NULL;
+static object_access_hook_type prev_object_access_hook = NULL;
 
 static void active_table_hook_smgrcreate(RelFileNodeBackend rnode);
 static void active_table_hook_smgrextend(RelFileNodeBackend rnode);
 static void active_table_hook_smgrtruncate(RelFileNodeBackend rnode);
+static void active_table_hook_smgrunlink(RelFileNodeBackend rnode);
+static void active_table_hook_object_access(ObjectAccessType access,
+											Oid classId,
+											Oid objectId,
+											int subId,
+											void *arg);
 
 static HTAB *get_active_tables_stats(ArrayType *array);
 static HTAB *get_active_tables_oid(void);
@@ -74,6 +88,8 @@ void		init_active_table_hook(void);
 void		init_shm_worker_active_tables(void);
 void		init_lock_active_tables(void);
 HTAB	   *gp_fetch_active_tables(bool is_init);
+Size		calculate_relation_size(Oid reloid);
+Size		calculate_uncommitted_relation_size(Oid reloid);
 
 /*
  * Init active_tables_map shared memory
@@ -110,6 +126,12 @@ init_active_table_hook(void)
 
 	prev_file_truncate_hook = file_truncate_hook;
 	file_truncate_hook = active_table_hook_smgrtruncate;
+
+	prev_object_access_hook = object_access_hook;
+	object_access_hook = active_table_hook_object_access;
+
+	prev_file_unlink_hook = file_unlink_hook;
+	file_unlink_hook = active_table_hook_smgrunlink;
 }
 
 /*
@@ -136,6 +158,7 @@ active_table_hook_smgrextend(RelFileNodeBackend rnode)
 		(*prev_file_extend_hook) (rnode);
 
 	report_active_table_helper(&rnode);
+	quota_check_common(InvalidOid, &rnode.node);
 }
 
 /*
@@ -148,6 +171,124 @@ active_table_hook_smgrtruncate(RelFileNodeBackend rnode)
 		(*prev_file_truncate_hook) (rnode);
 
 	report_active_table_helper(&rnode);
+}
+
+static void
+active_table_hook_smgrunlink(RelFileNodeBackend rnode)
+{
+	RelationMapEntry   *entry;
+	HASH_SEQ_STATUS		hash_seq;
+
+	LWLockAcquire(diskquota_locks.relation_map_lock, LW_EXCLUSIVE);
+	hash_seq_init(&hash_seq, relation_map);
+	while ((entry = (RelationMapEntry *) hash_seq_search(&hash_seq)))
+	{
+		if (RelFileNodeEquals(entry->relfilenode, rnode.node))
+			hash_search(relation_map, &entry->reloid, HASH_REMOVE, NULL);
+	}
+	LWLockRelease(diskquota_locks.relation_map_lock);
+}
+
+static Oid
+get_primary_reloid_by_relname(Oid namespace, char *relname)
+{
+	switch (namespace)
+	{
+		case PG_TOAST_NAMESPACE:
+			if (strncmp(relname, "pg_toast", 8) == 0)
+				return atoi(&relname[9]);
+		break;
+		case PG_AOSEGMENT_NAMESPACE:
+		{
+			if (strncmp(relname, "pg_aoseg", 8) == 0)
+				return atoi(&relname[9]);
+			else if (strncmp(relname, "pg_aovisimap", 12) == 0)
+				return atoi(&relname[13]);
+		}
+		break;
+	}
+	return InvalidOid;
+}
+
+static void
+relation_post_create(Oid reloid, bool is_internal)
+{
+	Relation			rel;
+	char				relkind;
+	RelationMapEntry   *entry;
+
+	if ((rel = try_relation_open(reloid, AccessShareLock, false)))
+	{
+		relation_close(rel, AccessShareLock);
+		return;
+	}
+
+	rel = relation_open(reloid, AccessShareLock);
+	relkind = rel->rd_rel->relkind;
+
+	if (relkind != 'r' && relkind != 't' && relkind != 'i')
+	{
+		relation_close(rel, AccessShareLock);
+		return;
+	}
+
+	/* TODO: Add comment. */
+	LWLockAcquire(diskquota_locks.relation_map_lock, LW_EXCLUSIVE);
+
+	entry = (RelationMapEntry *) hash_search(relation_map,
+											 &reloid,
+											 HASH_ENTER_NULL,
+											 NULL);
+	if (!entry)
+	{
+		LWLockRelease(diskquota_locks.relation_map_lock);
+		relation_close(rel, AccessShareLock);
+		return;
+	}
+
+	entry->reloid = reloid;
+	entry->relkind = relkind;
+	entry->relfilenode = rel->rd_node;
+	entry->relowner = rel->rd_rel->relowner;
+	entry->relnamespace = rel->rd_rel->relnamespace;
+	entry->reltablespace = rel->rd_rel->reltablespace;
+	entry->primary_reloid = get_primary_reloid_by_relname(rel->rd_rel->relnamespace,
+														  rel->rd_rel->relname.data);
+	if (!OidIsValid(entry->primary_reloid))
+		entry->primary_reloid = reloid;
+	LWLockRelease(diskquota_locks.relation_map_lock);
+	relation_close(rel, AccessShareLock);
+}
+
+static void
+active_table_hook_object_access(ObjectAccessType access,
+								Oid classId,
+								Oid objectId,
+								int subId, void *arg)
+{
+	if (prev_object_access_hook)
+		(*prev_object_access_hook) (access, classId, objectId, subId, arg);
+
+	switch (access)
+	{
+		case OAT_POST_CREATE:
+		{
+			bool					is_internal;
+			ObjectAccessPostCreate *pc_arg = arg;
+			is_internal = pc_arg ? pc_arg->is_internal : false;
+
+			switch (classId)
+			{
+				case RelationRelationId:
+				{
+					relation_post_create(objectId, is_internal);
+				}
+			}
+			break;
+		}
+		default:
+			return;
+	}
 }
 
 /*
@@ -394,9 +535,76 @@ diskquota_fetch_table_stat(PG_FUNCTION_ARGS)
 	SRF_RETURN_DONE(funcctx);
 }
 
+static Size
+calculate_relfilenode_size(RelFileNode *rfn)
+{
+	int64		totalsize = 0;
+	ForkNumber	forkNum;
+	int64		size = 0;
+	char	   *relationpath;
+	char		pathname[MAXPGPATH];
+	unsigned	segcount = 0;
+
+	for (forkNum = 0; forkNum <= MAX_FORKNUM; ++forkNum)
+	{
+		size = 0;
+		relationpath = relpathperm(*rfn, forkNum);
+
+		for (segcount = 0;; ++segcount)
+		{
+			struct stat fst;
+
+			CHECK_FOR_INTERRUPTS();
+
+			if (segcount == 0)
+				snprintf(pathname, MAXPGPATH, "%s", relationpath);
+			else
+				snprintf(pathname, MAXPGPATH, "%s.%u", relationpath, segcount);
+
+			if (stat(pathname, &fst) < 0)
+			{
+				if (errno == ENOENT)
+					break;
+				else
+					ereport(ERROR,
+							(errcode_for_file_access(), errmsg("could not stat file: \"%s\": %m", pathname)));
+			}
+			size += fst.st_size;
+		}
+
+		totalsize += size;
+	}
+
+	return totalsize;
+}
+
 /*
- * Call pg_table_size to calcualte the
- * active table size on each segments.
+ * Calculate an uncommitted table's size. Uncommitted table
+ * is invisible to other backends, we should fetch the relfilenode
+ * from relation_map and calculate the size of it using stat(2).
+ */
+Size
+calculate_uncommitted_relation_size(Oid reloid)
+{
+	Size					size = 0;
+	bool					found;
+	HASH_SEQ_STATUS			hash_seq;
+	RelationMapEntry	   *entry = NULL;
+	RelFileNode				relfilenode;
+	LWLockAcquire(diskquota_locks.relation_map_lock, LW_SHARED);
+	hash_seq_init(&hash_seq, relation_map);
+	while ((entry = (RelationMapEntry *) hash_seq_search(&hash_seq)))
+	{
+		if (entry->primary_reloid == reloid)
+			size += calculate_relfilenode_size(&entry->relfilenode);
+	}
+	LWLockRelease(diskquota_locks.relation_map_lock);
+	return size;
+}
+
+/*
+ * Call pg_table_size to calcualte the active table size on
+ * each segments.
  */
 static HTAB *
 get_active_tables_stats(ArrayType *array)
@@ -461,23 +669,7 @@ get_active_tables_stats(ArrayType *array)
 			entry = (DiskQuotaActiveTableEntry *) hash_search(local_table, &key, HASH_ENTER, NULL);
 			entry->reloid = relOid;
 			entry->segid = segId;
-
-			/*
-			 * avoid to generate ERROR if relOid is not existed (i.e. table
-			 * has been droped)
-			 */
-			PG_TRY();
-			{
-				/* call pg_table_size to get the active table size */
-				entry->tablesize = (Size) DatumGetInt64(DirectFunctionCall1(pg_table_size,
-																			ObjectIdGetDatum(relOid)));
-			}
-			PG_CATCH();
-			{
-				FlushErrorState();
-				entry->tablesize = 0;
-			}
-			PG_END_TRY();
+			entry->tablesize = calculate_relation_size(relOid);
 
 			ptr = att_addlength_pointer(ptr, typlen, ptr);
 			ptr = (char *) att_align_nominal(ptr, typalign);
@@ -497,6 +689,35 @@ get_active_tables_stats(ArrayType *array)
 	}
 
 	return local_table;
+}
+
+Size
+calculate_relation_size(Oid reloid)
+{
+	Size		size = 0;
+	PG_TRY();
+	{
+		Relation		rel;
+		if ((rel = try_relation_open(reloid, NoLock, false /*noWait*/)))
+		{
+			char		relstorage = rel->rd_rel->relstorage;
+			relation_close(rel, NoLock);
+			size += (Size) DatumGetInt64(DirectFunctionCall1(pg_table_size,
+										ObjectIdGetDatum(reloid)));
+		}
+		else
+		{
+			size += calculate_uncommitted_relation_size(reloid);
+		}
+	}
+	PG_CATCH();
+	{
+		HOLD_INTERRUPTS();
+		FlushErrorState();
+		RESUME_INTERRUPTS();
+	}
+	PG_END_TRY();
+	return size;
 }
 
 /*
@@ -576,6 +797,49 @@ get_active_tables_oid(void)
 		bool		found;
 
 		relOid = RelidByRelfilenode(active_table_file_entry->tablespaceoid, active_table_file_entry->relfilenode);
+		if (!OidIsValid(relOid))
+		{
+			/*
+			 * If the reloid cannot be fetched via RelidByRelfilenode(),
+			 * let's try to fetch it by iterating over relation_map.
+			 */
+			HASH_SEQ_STATUS		hash_seq;
+			RelationMapEntry   *relation_map_entry;
+
+			LWLockAcquire(diskquota_locks.relation_map_lock, LW_SHARED);
+			hash_seq_init(&hash_seq, relation_map);
+			while ((relation_map_entry = (RelationMapEntry *) hash_seq_search(&hash_seq)))
+			{
+				RelFileNode relfilenode;
+				relfilenode.spcNode = active_table_file_entry->tablespaceoid;
+				relfilenode.dbNode = active_table_file_entry->dbid;
+				relfilenode.relNode = active_table_file_entry->relfilenode;
+				if (RelFileNodeEquals(relation_map_entry->relfilenode, relfilenode) &&
+					OidIsValid(relation_map_entry->primary_reloid))
+				{
+					relOid = relation_map_entry->primary_reloid;
+				}
+			}
+			LWLockRelease(diskquota_locks.relation_map_lock);
+		}
+		else
+		{
+			/*
+			 * This reloid is valid, but it might be a toast index ...
+			 * FIXME: This function should be carefully written.
+			 */
+			Relation		rel;
+			if ((rel = try_relation_open(relOid, AccessShareLock, false /*noWait*/)))
+			{
+				const char		*relname = rel->rd_rel->relname.data;
+				if (strlen(relname) >= 9 && strncmp(relname, "pg_toast_", 9) == 0)
+				{
+					relOid = atoi(&relname[9]);
+				}
+				relation_close(rel, AccessShareLock);
+			}
+		}
+
 		if (relOid != InvalidOid)
 		{
 			active_table_entry = hash_search(local_active_table_stats_map, &relOid, HASH_ENTER, &found);

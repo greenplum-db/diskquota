@@ -138,16 +138,22 @@ struct QuotaInfo quota_info[NUM_QUOTA_TYPES] = {
 /* global blacklist for which exceed their quota limit */
 struct BlackMapEntry
 {
-	Oid		targetoid;
-	Oid		databaseoid;
+	Oid			targetoid;
+	Oid			databaseoid;
 	Oid 		tablespaceoid;
 	uint32		targettype;
+	/*
+	 * TODO: Add comments to explain the usage
+	 * of relfilenode.
+	 */
+	Oid			relfilenode;
 };
 
 struct GlobalBlackMapEntry
 {
-	BlackMapEntry 	keyitem;
+	BlackMapEntry	keyitem;
 	bool            segexceeded;
+	BlackMapEntry	segfilenodeinfo;
 };
 
 /* local blacklist for which exceed their quota limit */
@@ -182,6 +188,7 @@ static void refresh_disk_quota_usage(bool is_init);
 static void calculate_table_disk_usage(bool is_init);
 static void flush_to_table_size(void);
 static void flush_local_black_map(void);
+static void dispatch_black_map(void);
 static bool load_quotas(void);
 static void do_load_quotas(void);
 static bool do_check_diskquota_state_is_ready(void);
@@ -286,6 +293,7 @@ add_quota_to_blacklist(QuotaType type, Oid targetOid, Oid tablespaceoid, bool se
 	keyitem.databaseoid = MyDatabaseId;
 	keyitem.tablespaceoid = tablespaceoid;
 	keyitem.targettype = (uint32) type;
+	keyitem.relfilenode = InvalidOid;
 	ereport(DEBUG1, (errmsg("[diskquota] Put object %u to blacklist", targetOid)));
 	localblackentry = (LocalBlackMapEntry *) hash_search(local_disk_quota_black_map,
 			&keyitem,
@@ -293,6 +301,34 @@ add_quota_to_blacklist(QuotaType type, Oid targetOid, Oid tablespaceoid, bool se
 	localblackentry->isexceeded = true;
 	localblackentry->segexceeded = segexceeded;
 
+}
+
+static bool
+check_quota_entry(Oid key_type, Oid key)
+{
+	HeapTuple				tuple;
+	HASH_SEQ_STATUS			hash_seq;
+	RelationMapEntry	   *entry;
+	bool					result = false;
+
+	tuple = SearchSysCache1(key_type, key);
+	if (HeapTupleIsValid(tuple))
+	{
+		ReleaseSysCache(tuple);
+		return true;
+	}
+
+	LWLockAcquire(diskquota_locks.relation_map_lock, LW_SHARED);
+	hash_seq_init(&hash_seq, relation_map);
+	while ((entry = hash_seq_search(&hash_seq)) != NULL)
+	{
+		result = result || (key_type == AUTHOID && key == entry->relowner)
+						|| (key_type == NAMESPACEOID && key == entry->relnamespace)
+						|| (key_type == TABLESPACEOID && key == entry->reltablespace);
+	}
+	LWLockRelease(diskquota_locks.relation_map_lock);
+
+	return result;
 }
 
 /*
@@ -303,7 +339,6 @@ add_quota_to_blacklist(QuotaType type, Oid targetOid, Oid tablespaceoid, bool se
 static void
 check_quota_map(QuotaType type)
 {
-	HeapTuple tuple;
 	HASH_SEQ_STATUS iter;
 	struct QuotaMapEntry *entry;
 
@@ -314,14 +349,13 @@ check_quota_map(QuotaType type)
 		bool removed = false;
 		for (int i = 0; i < quota_info[type].num_keys; ++i)
 		{
-			tuple = SearchSysCache1(quota_info[type].sys_cache[i], ObjectIdGetDatum(entry->keys[i]));
-			if (!HeapTupleIsValid(tuple))
+			if (!check_quota_entry(quota_info[type].sys_cache[i],
+				ObjectIdGetDatum(entry->keys[i])))
 			{
 				remove_quota(type, entry->keys, entry->segid);
 				removed = true;
 				break;
 			}
-			ReleaseSysCache(tuple);
 		}
 		if (!removed && entry->limit > 0)
 		{
@@ -440,6 +474,16 @@ disk_quota_shmem_startup(void)
 			&hash_ctl,
 			HASH_ELEM | HASH_FUNCTION);
 
+	memset(&hash_ctl, 0, sizeof(hash_ctl));
+	hash_ctl.keysize = sizeof(Oid);
+	hash_ctl.entrysize = sizeof(RelationMapEntry);
+	hash_ctl.hash = oid_hash;
+	relation_map = ShmemInitHash("relation_map",
+			diskquota_max_active_tables,
+			diskquota_max_active_tables,
+			&hash_ctl,
+			HASH_ELEM | HASH_FUNCTION);
+
 	diskquota_paused = ShmemInitStruct("diskquota_paused",
 											sizeof(bool),
 											&found);
@@ -467,6 +511,7 @@ init_lwlocks(void)
 	diskquota_locks.extension_ddl_message_lock = LWLockAssign();
 	diskquota_locks.extension_ddl_lock = LWLockAssign();
 	diskquota_locks.monitoring_dbid_cache_lock = LWLockAssign();
+	diskquota_locks.relation_map_lock = LWLockAssign();
 	diskquota_locks.paused_lock = LWLockAssign();
 }
 
@@ -483,6 +528,7 @@ DiskQuotaShmemSize(void)
 	size = add_size(size, hash_estimate_size(MAX_DISK_QUOTA_BLACK_ENTRIES, sizeof(GlobalBlackMapEntry)));
 	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(DiskQuotaActiveTableEntry)));
 	size = add_size(size, hash_estimate_size(MAX_NUM_MONITORED_DB, sizeof(Oid)));
+	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(RelationMapEntry)));
 	size += sizeof(bool); /* sizeof(*diskquota_paused) */
 	return size;
 }
@@ -716,6 +762,8 @@ refresh_disk_quota_usage(bool is_init)
 		flush_to_table_size();
 		/* copy local black map back to shared black map */
 		flush_local_black_map();
+		/* dispatch black map to segments. */
+		dispatch_black_map();
 	}
 	PG_CATCH();
 	{
@@ -765,6 +813,9 @@ calculate_table_disk_usage(bool is_init)
 	List		*oidlist;
 	ListCell        *l;
 
+	Oid			owneroid = InvalidOid;
+	Oid			tablespaceoid = InvalidOid;
+	Oid			namespaceoid = InvalidOid;
 
 	/*
 	 * initialization stage all the tables are active. later loop, only the
@@ -777,30 +828,39 @@ calculate_table_disk_usage(bool is_init)
 	 * detect tables which have been dropped.
 	 */
 	hash_seq_init(&iter, table_size_map);
+	LWLockAcquire(diskquota_locks.relation_map_lock, LW_SHARED);
 	while ((tsentry = hash_seq_search(&iter)) != NULL)
 	{
-		tsentry->is_exist = false;
+		bool					found;
+		/* If the table is not uncommitted, we have to keep tracking it. */
+		hash_search(relation_map, &tsentry->reloid, HASH_FIND, &found);
+		if (!found)
+			tsentry->is_exist = false;
 	}
+	LWLockRelease(diskquota_locks.relation_map_lock);
 
 	/*
 	 * scan pg_class to detect table event: drop, reset schema, reset owner.
 	 * calculate the file size for active table and update namespace_size_map
 	 * and role_size_map
 	 */
-	oidlist = get_rel_oid_list();
+	oidlist = get_rel_oid_list(local_active_table_stat_map);
 	foreach(l, oidlist)
 	{
 		HeapTuple	classTup;
-		Form_pg_class classForm;
+		Form_pg_class classForm = NULL;
 		relOid = lfirst_oid(l);
 
 		classTup = SearchSysCacheCopy1(RELOID, ObjectIdGetDatum(relOid));
-		if (!HeapTupleIsValid(classTup))
+		if (HeapTupleIsValid(classTup))
 		{
-			elog(WARNING, "cache lookup failed for relation %u", relOid);
-			continue;
+			/*
+			 * The HeapTuple is valid which means the table is visible in
+			 * pg_class. Hence, we are able to read the table's information
+			 * from the classForm rather than relation_map.
+			 */
+			classForm = (Form_pg_class) GETSTRUCT(classTup);
 		}
-		classForm = (Form_pg_class) GETSTRUCT(classTup);
 
 		/*
 		 * The segid is the same as the content id in gp_segment_configuration
@@ -809,6 +869,8 @@ calculate_table_disk_usage(bool is_init)
 		 */
 		for (int i = -1; i < SEGCOUNT; i++)
 		{
+			CHECK_FOR_INTERRUPTS();
+
 			key.segid = i;
 			key.reloid = relOid;
 			tsentry = (TableSizeEntry *) hash_search(table_size_map,
@@ -838,23 +900,8 @@ calculate_table_disk_usage(bool is_init)
 				{
 					/* pretend process as utility mode, and append the table size on master */
 					Gp_role = GP_ROLE_UTILITY;
-
-					/* DirectFunctionCall1 may fail, since table maybe dropped by other backend */
-					PG_TRY();
-					{
-						/* call pg_table_size to get the active table size */
-						active_table_entry->tablesize += (Size) DatumGetInt64(DirectFunctionCall1(pg_table_size, ObjectIdGetDatum(relOid)));
-					}
-					PG_CATCH();
-					{
-						HOLD_INTERRUPTS();
-						FlushErrorState();
-						RESUME_INTERRUPTS();
-					}
-					PG_END_TRY();
-
+					active_table_entry->tablesize += calculate_relation_size(relOid);
 					Gp_role = GP_ROLE_DISPATCH;
-
 				}
 				/* firstly calculate the updated total size of a table */
 				updated_total_size = active_table_entry->tablesize - tsentry->totalsize;
@@ -876,63 +923,86 @@ calculate_table_disk_usage(bool is_init)
 				tsentry->need_flush = false;
 			}
 
+			/* TODO: If the current relation is visible to other backend. */
+			if (classForm)
+			{
+				namespaceoid = classForm->relnamespace;
+				tablespaceoid = classForm->reltablespace;
+				owneroid = classForm->relowner;
+			}
+			else
+			{
+				RelationMapEntry	   *entry;
+				bool					found;
+				LWLockAcquire(diskquota_locks.relation_map_lock, LW_SHARED);
+				entry = hash_search(relation_map, &relOid, HASH_FIND, &found);
+				if (entry && found)
+				{
+					namespaceoid = entry->relnamespace;
+					tablespaceoid = entry->reltablespace;
+					owneroid = entry->relowner;
+				}
+				LWLockRelease(diskquota_locks.relation_map_lock);
+			}
+
 			/* if schema change, transfer the file size */
-			if (tsentry->namespaceoid != classForm->relnamespace)
+			if (tsentry->namespaceoid != namespaceoid)
 			{
 				transfer_table_for_quota(
 						tsentry->totalsize,
 						NAMESPACE_QUOTA,
 						(Oid[]){tsentry->namespaceoid},
-						(Oid[]){classForm->relnamespace},
+						(Oid[]){namespaceoid},
 						key.segid);
 				transfer_table_for_quota(
 						tsentry->totalsize,
 						NAMESPACE_TABLESPACE_QUOTA,
 						(Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid},
-						(Oid[]){classForm->relnamespace, tsentry->tablespaceoid},
+						(Oid[]){namespaceoid, tsentry->tablespaceoid},
 						key.segid);
-				tsentry->namespaceoid = classForm->relnamespace;
+				tsentry->namespaceoid = namespaceoid;
 			}
 			/* if owner change, transfer the file size */
-			if (tsentry->owneroid != classForm->relowner)
+			if (tsentry->owneroid != owneroid)
 			{
 				transfer_table_for_quota(
 						tsentry->totalsize,
 						ROLE_QUOTA,
 						(Oid[]){tsentry->owneroid},
-						(Oid[]){classForm->relowner},
+						(Oid[]){owneroid},
 						key.segid
 						);
 				transfer_table_for_quota(
 						tsentry->totalsize,
 						ROLE_TABLESPACE_QUOTA,
 						(Oid[]){tsentry->owneroid, tsentry->tablespaceoid},
-						(Oid[]){classForm->relowner, tsentry->tablespaceoid},
+						(Oid[]){owneroid, tsentry->tablespaceoid},
 						key.segid
 						);
-				tsentry->owneroid = classForm->relowner;
+				tsentry->owneroid = owneroid;
 			}
-
-			if (tsentry->tablespaceoid != classForm->reltablespace)
+			if (tsentry->tablespaceoid != tablespaceoid)
 			{
 				transfer_table_for_quota(
 						tsentry->totalsize,
 						NAMESPACE_TABLESPACE_QUOTA,
 						(Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid},
-						(Oid[]){tsentry->namespaceoid, classForm->reltablespace},
+						(Oid[]){tsentry->namespaceoid, tablespaceoid},
 						key.segid
 						);
 				transfer_table_for_quota(
 						tsentry->totalsize,
 						ROLE_TABLESPACE_QUOTA,
 						(Oid[]){tsentry->owneroid, tsentry->tablespaceoid},
-						(Oid[]){tsentry->owneroid, classForm->reltablespace},
+						(Oid[]){tsentry->owneroid, tablespaceoid},
 						key.segid
 						);
-				tsentry->tablespaceoid = classForm->reltablespace;
+				tsentry->tablespaceoid = tablespaceoid;
 			}
 		}
-		heap_freetuple(classTup);
+
+		if (HeapTupleIsValid(classTup))
+			heap_freetuple(classTup);
 	}
 
 	hash_destroy(local_active_table_stat_map);
@@ -1080,7 +1150,6 @@ flush_local_black_map(void)
 	bool		found;
 
 	LWLockAcquire(diskquota_locks.black_map_lock, LW_EXCLUSIVE);
-
 	hash_seq_init(&iter, local_disk_quota_black_map);
 	while ((localblackentry = hash_seq_search(&iter)) != NULL)
 	{
@@ -1104,6 +1173,7 @@ flush_local_black_map(void)
 					blackentry->keyitem.databaseoid = MyDatabaseId;
 					blackentry->keyitem.targettype = localblackentry->keyitem.targettype;
 					blackentry->keyitem.tablespaceoid = localblackentry->keyitem.tablespaceoid;
+					blackentry->keyitem.relfilenode = localblackentry->keyitem.relfilenode;
 					blackentry->segexceeded = localblackentry->segexceeded;
 				}
 			}
@@ -1123,6 +1193,49 @@ flush_local_black_map(void)
 		}
 	}
 	LWLockRelease(diskquota_locks.black_map_lock);
+}
+
+/*
+ * Dispatch black map to segments.
+ */
+static void
+dispatch_black_map(void)
+{
+	HASH_SEQ_STATUS			hash_seq;
+	GlobalBlackMapEntry	   *entry;
+	int						entries, count;
+	CdbPgResults			cdb_pgresults = {NULL, 0};
+	StringInfoData			rows;
+	StringInfoData			sql;
+
+	initStringInfo(&sql);
+	initStringInfo(&rows);
+
+	LWLockAcquire(diskquota_locks.black_map_lock, LW_SHARED);
+	entries = hash_get_num_entries(disk_quota_black_map);
+	hash_seq_init(&hash_seq, disk_quota_black_map);
+	while ((entry = hash_seq_search(&hash_seq)) != NULL)
+	{
+		appendStringInfo(&rows,
+						 "ROW(%d, %d, %d, %d, %s)",
+						 entry->keyitem.targetoid,
+						 entry->keyitem.databaseoid,
+						 entry->keyitem.tablespaceoid,
+						 entry->keyitem.targettype,
+						 entry->segexceeded ? "true" : "false");
+		++count;
+
+		if (count != entries)
+			appendStringInfo(&rows, ",");
+	}
+	LWLockRelease(diskquota_locks.black_map_lock);
+
+	appendStringInfo(&sql,
+				"select diskquota.refresh_blackmap(ARRAY[%s]::diskquota._blackmap_entry[])", rows.data);
+
+	CdbDispatchCommand(sql.data, DF_NONE, &cdb_pgresults);
+	pfree(rows.data);
+	pfree(sql.data);
 }
 
 /*
@@ -1311,7 +1424,6 @@ get_rel_owner_schema_tablespace(Oid relid, Oid *ownerOid, Oid *nsOid, Oid *table
 	HeapTuple	tp;
 
 	tp = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
-	bool found = HeapTupleIsValid(tp);
 	if (HeapTupleIsValid(tp))
 	{
 		Form_pg_class reltup = (Form_pg_class) GETSTRUCT(tp);
@@ -1320,42 +1432,41 @@ get_rel_owner_schema_tablespace(Oid relid, Oid *ownerOid, Oid *nsOid, Oid *table
 		*nsOid = reltup->relnamespace;
 		*tablespaceoid = reltup->reltablespace;
 		ReleaseSysCache(tp);
+		return true;
 	}
-	return found;
+	else
+	{
+		RelationMapEntry	   *entry;
+		bool					found;
+		/*
+		 * If the relation is uncommitted, we should fetch it
+		 * from relation_map.
+		 */
+		LWLockAcquire(diskquota_locks.relation_map_lock, LW_SHARED);
+		entry = hash_search(relation_map, &relid, HASH_FIND, &found);
+		if (entry && found)
+		{
+			*ownerOid = entry->relowner;
+			*nsOid = entry->relnamespace;
+			*tablespaceoid = entry->reltablespace;
+		}
+		LWLockRelease(diskquota_locks.relation_map_lock);
+		return found;
+	}
 }
 
-/*
- * Given table oid, check whether quota limit
- * of table's schema or table's owner are reached.
- * Do enforcement if quota exceeds.
- */
-bool
-quota_check_common(Oid reloid)
+static bool
+check_blackmap_by_reloid(Oid reloid)
 {
-	Oid			ownerOid = InvalidOid;
-	Oid			nsOid = InvalidOid;
-	Oid 		tablespaceoid = InvalidOid;
-	bool		found;
-	bool		paused;
-	BlackMapEntry keyitem;
-	GlobalBlackMapEntry *entry;
-
-	if (!IsTransactionState())
-	{
-		return true;
-	}
-	
+	Oid						ownerOid = InvalidOid;
+	Oid						nsOid = InvalidOid;
+	Oid 					tablespaceoid = InvalidOid;
+	BlackMapEntry			keyitem;
+	GlobalBlackMapEntry	   *entry;
+	bool					found;
 	bool found_rel = get_rel_owner_schema_tablespace(reloid, &ownerOid, &nsOid, &tablespaceoid);
+
 	if (!found_rel)
-	{
-		return true;
-	}
-
-	LWLockAcquire(diskquota_locks.paused_lock, LW_SHARED);
-	paused = *diskquota_paused;
-	LWLockRelease(diskquota_locks.paused_lock);
-
-	if (paused)
 		return true;
 
 	LWLockAcquire(diskquota_locks.black_map_lock, LW_SHARED);
@@ -1386,6 +1497,7 @@ quota_check_common(Oid reloid)
 		}
 		keyitem.databaseoid = MyDatabaseId;
 		keyitem.targettype = type;
+		keyitem.relfilenode = InvalidOid;
 		entry = hash_search(disk_quota_black_map,
 					&keyitem,
 					HASH_FIND, &found);
@@ -1397,6 +1509,65 @@ quota_check_common(Oid reloid)
 		}
 	}
 	LWLockRelease(diskquota_locks.black_map_lock);
+	return true;
+}
+
+static bool
+check_blackmap_by_relfilenode(RelFileNode relfilenode)
+{
+	bool					found;
+	BlackMapEntry			keyitem;
+	GlobalBlackMapEntry	   *entry;
+
+	LWLockAcquire(diskquota_locks.black_map_lock, LW_SHARED);
+	keyitem.targettype = 0;
+	keyitem.targetoid = InvalidOid;
+	keyitem.databaseoid = InvalidOid;
+	keyitem.tablespaceoid = InvalidOid;
+	keyitem.relfilenode = relfilenode.relNode;
+	entry = hash_search(disk_quota_black_map,
+						&keyitem,
+						HASH_FIND, &found);
+
+	if (found)
+	{
+		GlobalBlackMapEntry segblackentry;
+		segblackentry.keyitem = entry->segfilenodeinfo;
+		LWLockRelease(diskquota_locks.black_map_lock);
+		export_exceeded_error(&segblackentry);
+		return false;
+	}
+	LWLockRelease(diskquota_locks.black_map_lock);
+	return true;
+}
+
+/*
+ * Given table oid or relfilenode, check whether
+ * quota limit of table's schema or table's owner
+ * are reached. Do enforcement if quota exceeds.
+ */
+bool
+quota_check_common(Oid reloid, RelFileNode *relfilenode)
+{
+	bool		paused;
+
+	if (!IsTransactionState())
+	{
+		return true;
+	}
+
+	LWLockAcquire(diskquota_locks.paused_lock, LW_SHARED);
+	paused = *diskquota_paused;
+	LWLockRelease(diskquota_locks.paused_lock);
+
+	if (paused)
+		return true;
+
+	if (OidIsValid(reloid))
+		return check_blackmap_by_reloid(reloid);
+
+	if (relfilenode)
+		return check_blackmap_by_relfilenode(*relfilenode);
 	return true;
 }
 
@@ -1465,4 +1636,146 @@ export_exceeded_error(GlobalBlackMapEntry *entry)
 					 errmsg("diskquota exceeded, unknown quota type")));
 	}
 
+}
+
+PG_FUNCTION_INFO_V1(refresh_blackmap);
+Datum
+refresh_blackmap(PG_FUNCTION_ARGS)
+{
+	ArrayType			   *arrayType = PG_GETARG_ARRAYTYPE_P(0);
+	Datum				   *datums;
+	bool				   *nulls;
+	int16					elemWidth;
+	Oid						elemType = ARR_ELEMTYPE(arrayType);
+	bool					elemTypeByVal, isNull;
+	char					elemAlignmentCode;
+	int						count;
+	HeapTupleHeader			lt;
+	bool					segexceeded;
+	BlackMapEntry			keyitem;
+	GlobalBlackMapEntry	   *blackentry;
+	HASH_SEQ_STATUS			hash_seq;
+
+	/* TODO: This function shouldn't be called by user. */
+
+	if (ARR_NDIM(arrayType) > 1)
+		ereport(ERROR, (errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR), errmsg("1-dimensional array needed")));
+
+	get_typlenbyvalalign(elemType, &elemWidth, &elemTypeByVal, &elemAlignmentCode);
+	deconstruct_array(arrayType, elemType, elemWidth,
+					  elemTypeByVal, elemAlignmentCode, &datums, &nulls, &count);
+
+	LWLockAcquire(diskquota_locks.black_map_lock, LW_EXCLUSIVE);
+	/* Firstly, let's clear the blackmap entries. */
+	hash_seq_init(&hash_seq, disk_quota_black_map);
+	while ((blackentry = hash_seq_search(&hash_seq)) != NULL)
+		hash_search(disk_quota_black_map, &blackentry->keyitem, HASH_REMOVE, NULL);
+	LWLockRelease(diskquota_locks.black_map_lock);
+
+	if (SPI_connect() != SPI_OK_CONNECT)
+		ereport(ERROR,
+				(errcode(ERRCODE_INTERNAL_ERROR),
+				 errmsg("unable to connect to execute internal query")));
+
+	/* Secondly, iterate over pg_class to find relations that should be blocked. */
+	LWLockAcquire(diskquota_locks.black_map_lock, LW_EXCLUSIVE);
+	for (int i = 0; i < count; ++i)
+	{
+		if (nulls[i])
+			continue;
+		else
+		{
+			StringInfoData		sql;
+			initStringInfo(&sql);
+			lt = DatumGetHeapTupleHeader(datums[i]);
+			keyitem.targetoid = DatumGetObjectId(GetAttributeByNum(lt, 1, &isNull));
+			keyitem.databaseoid = DatumGetObjectId(GetAttributeByNum(lt, 2, &isNull));
+			keyitem.tablespaceoid = DatumGetObjectId(GetAttributeByNum(lt, 3, &isNull));
+			keyitem.targettype = DatumGetInt32(GetAttributeByNum(lt, 4, &isNull));
+			segexceeded = DatumGetBool(GetAttributeByNum(lt, 5, &isNull));
+
+			switch ((QuotaType) keyitem.targettype)
+			{
+				case NAMESPACE_QUOTA:
+				{
+					HASH_SEQ_STATUS			hash_seq;
+					RelationMapEntry	   *relation_map_entry;
+					appendStringInfo(&sql,
+							"select relfilenode from pg_class"
+							" where oid >= %u and (relkind='r' or relkind='m')"
+							"   and relnamespace=%d",
+							FirstNormalObjectId, keyitem.targetoid);
+
+					TupleDesc		tupdesc;
+					if (SPI_OK_SELECT != SPI_execute(sql.data, true /*readonly*/, 0 /*tcount*/))
+					{
+						ereport(ERROR,
+								(errcode(ERRCODE_INTERNAL_ERROR),
+								errmsg("cannot execute %s", sql.data)));
+					}
+
+					tupdesc = SPI_tuptable->tupdesc;
+					for (int i = 0; i < SPI_processed; ++i)
+					{
+						HeapTuple	tup = SPI_tuptable->vals[i];
+						bool		isnull;
+						Oid			relfilenode = DatumGetObjectId(SPI_getbinval(tup, tupdesc, 1, &isnull));
+						if (isnull || !OidIsValid(relfilenode))
+						{
+							continue;
+						}
+
+						BlackMapEntry newkeyitem;
+						newkeyitem.targettype = 0;
+						newkeyitem.targetoid = InvalidOid;
+						newkeyitem.databaseoid = InvalidOid;
+						newkeyitem.tablespaceoid = InvalidOid;
+						newkeyitem.relfilenode = relfilenode;
+						blackentry = hash_search(disk_quota_black_map,
+												 &newkeyitem,
+												 HASH_ENTER_NULL, NULL);
+						if (blackentry)
+						{
+							blackentry->segexceeded = segexceeded;
+							blackentry->segfilenodeinfo = keyitem;
+						}
+					}
+
+					LWLockAcquire(diskquota_locks.relation_map_lock, LW_SHARED);
+					hash_seq_init(&hash_seq, relation_map);
+					while ((relation_map_entry = (RelationMapEntry *) hash_seq_search(&hash_seq)))
+					{
+						if (relation_map_entry->relnamespace == keyitem.targetoid)
+						{
+							BlackMapEntry newkeyitem;
+							newkeyitem.targettype = 0;
+							newkeyitem.targetoid = InvalidOid;
+							newkeyitem.databaseoid = InvalidOid;
+							newkeyitem.tablespaceoid = InvalidOid;
+							newkeyitem.relfilenode = relation_map_entry->relfilenode.relNode;
+							blackentry = hash_search(disk_quota_black_map,
+													 &newkeyitem,
+													 HASH_ENTER_NULL, NULL);
+							if (blackentry)
+							{
+								blackentry->segexceeded = segexceeded;
+								blackentry->segfilenodeinfo = keyitem;
+							}
+						}
+					}
+					LWLockRelease(diskquota_locks.relation_map_lock);
+					break;
+				}
+				/* TODO: Add support for hard-limit for more types! */
+				default:
+					break;
+			}
+
+		}
+	}
+	LWLockRelease(diskquota_locks.black_map_lock);
+
+	SPI_finish();
+
+	PG_RETURN_VOID();
 }

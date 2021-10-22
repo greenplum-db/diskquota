@@ -37,6 +37,7 @@
 #include "utils/builtins.h"
 #include "utils/fmgroids.h"
 #include "utils/formatting.h"
+#include "utils/lsyscache.h"
 #include "utils/memutils.h"
 #include "utils/numeric.h"
 #include "utils/snapmgr.h"
@@ -78,7 +79,7 @@ static bool generate_insert_table_size_sql(StringInfoData *buf, int extMajorVers
 static char *convert_oidlist_to_string(List *oidlist);
 
 int get_ext_major_version(void);
-List *get_rel_oid_list(void);
+List *get_rel_oid_list(HTAB *active_table_stat_map);
 
 /* ---- Help Functions to set quota limit. ---- */
 /*
@@ -129,7 +130,7 @@ init_table_size_table(PG_FUNCTION_ARGS)
 	 */
 	SPI_connect();
 	extMajorVersion = get_ext_major_version();
-	char *oids = convert_oidlist_to_string(get_rel_oid_list());
+	char *oids = convert_oidlist_to_string(get_rel_oid_list(NULL /*active_table_stat_map*/));
 
 	/* delete all the table size info in table_size if exist. */
 	initStringInfo(&buf);
@@ -1141,11 +1142,26 @@ convert_oidlist_to_string(List *oidlist)
  */
 
 List *
-get_rel_oid_list(void)
+get_rel_oid_list(HTAB *active_table_stat_map)
 {
 	List   		*oidlist = NIL;
 	StringInfoData	buf;
 	int             ret;
+	HTAB		   *oidset = NULL;
+	HASHCTL			ctl;
+	Oid			   *oidentry;
+	HASH_SEQ_STATUS	hash_seq;
+
+	memset(&ctl, 0, sizeof(ctl));
+	ctl.keysize = sizeof(Oid);
+	ctl.entrysize = sizeof(Oid);
+	ctl.hcxt = CurrentMemoryContext;
+	ctl.hash = oid_hash;
+
+	oidset = hash_create("oidset",
+						 1024,
+						 &ctl,
+						 HASH_ELEM | HASH_CONTEXT | HASH_FUNCTION);
 
 	initStringInfo(&buf);
 	appendStringInfo(&buf,
@@ -1175,18 +1191,49 @@ get_rel_oid_list(void)
 			if (!relation)
 				continue;
 
-			oidlist = lappend_oid(oidlist, oid);
+			oidentry = hash_search(oidset, &oid, HASH_ENTER, NULL);
+			*oidentry = oid;
 			indexIds = RelationGetIndexList(relation);
 			if (indexIds != NIL )
 			{
 				foreach(l, indexIds)
 				{
-					oidlist = lappend_oid(oidlist, lfirst_oid(l));
+					oid = lfirst_oid(l);
+					oidentry = hash_search(oidset, &oid,
+										   HASH_ENTER,
+										   NULL);
+					*oidentry = oid;
 				}
 			}
-		        relation_close(relation, NoLock);
+			relation_close(relation, AccessShareLock);
 			list_free(indexIds);
 		}
 	}
+
+	/*
+	 * If there're uncommitted relations, add their oids
+	 * to oidset.
+	 */
+	if (active_table_stat_map)
+	{
+		DiskQuotaActiveTableEntry *active_table_entry;
+		hash_seq_init(&hash_seq, active_table_stat_map);
+		while ((active_table_entry =
+				(DiskQuotaActiveTableEntry *) hash_seq_search(&hash_seq)))
+		{
+			bool			found;
+			Oid			reloid = active_table_entry->reloid;
+			oidentry = hash_search(oidset, &reloid, HASH_ENTER_NULL, &found);
+			if (!oidentry)
+				continue;
+			*oidentry = reloid;
+		}
+	}
+
+	/* Collect reloids and return them as a list. */
+	hash_seq_init(&hash_seq, oidset);
+	while ((oidentry = (Oid *) hash_seq_search(&hash_seq)))
+		oidlist = lappend_oid(oidlist, *oidentry);
+
 	return oidlist;
 }

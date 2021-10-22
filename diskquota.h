@@ -35,6 +35,7 @@ struct DiskQuotaLocks
 	LWLock	   *extension_ddl_message_lock;
 	LWLock	   *extension_ddl_lock; /* ensure create diskquota extension serially */
 	LWLock	   *monitoring_dbid_cache_lock;
+	LWLock	   *relation_map_lock;
 	LWLock	   *paused_lock;
 };
 typedef struct DiskQuotaLocks DiskQuotaLocks;
@@ -105,7 +106,7 @@ extern void init_disk_quota_shmem(void);
 extern void init_disk_quota_model(void);
 extern void refresh_disk_quota_model(bool force);
 extern bool check_diskquota_state_is_ready(void);
-extern bool quota_check_common(Oid reloid);
+extern bool quota_check_common(Oid reloid, RelFileNode *relfilenode);
 
 /* quotaspi interface */
 extern void init_disk_quota_hook(void);
@@ -117,5 +118,5 @@ extern int	diskquota_max_active_tables;
 extern int 	SEGCOUNT;
 extern int  get_ext_major_version(void);
 extern void truncateStringInfo(StringInfo str, int nchars);
-extern List *get_rel_oid_list(void);
+extern List *get_rel_oid_list(HTAB *active_table_stat_map);
 #endif
