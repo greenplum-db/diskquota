@@ -89,10 +89,9 @@ The root cause of this limitation that such modification operations will not tak
 - Due to MVCC, they will not take effect **in the catalogs** until committed.
 - Due to the alignment mechanism, they will not take effect **in the shared memory area** neither given that table `t` is already visible in the catalogs to Diskquota and the corresponding shared memory entry will be deleted.
 
-One way to overcome this limitation is to enhance the soft limit mechanism to calculate the resulting quota usage of such catalog modification operations and reject those that will cause quota excess before execution. This is also not trivial to implement but is in our plan.
+One way to overcome this limitation is to enhance the **soft limit** mechanism to calculate the resulting quota usage of such catalog modification operations and reject those that will cause quota excess before execution. This is also not trivial to implement but is in our plan.
 
 For now, as a workaround, the user can use `CREATE TABLE AS` to create a new table with the new properties and then delete the old one. In the example of setting tablespace, the user can create a new table `t_1` with the same data as `t` in the new tablespace using
 ```sql
 CREATE TABLE t_1 TABLESPACE new_tablespace AS SELECT * FROM t;
 ```
- 
