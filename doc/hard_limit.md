@@ -15,10 +15,9 @@ Running one single query of such types can take up all the space of a disk, whic
 
 Therefore, to mitigate the risk of having disk full issues, we plan to introduce "hard limit" in Diskquota 2.0, which enables Diskquota to terminate an in-progress query if the amount of data it writes exceeds some quota.
 
-Due to the difficulty of observing the intermediate states of an in-progress query in Greenplum, implementing hard limit is not easy. Specifically, there are three major challenges in the way:
+Due to the difficulty of observing the intermediate states of an in-progress query in Greenplum, implementing hard limit is not easy. Specifically, there are two major challenges in the way:
 1. Observing intermediate states of a query under Greenplum's MVCC mechanism.
 2. Ensuring data consistency after seeing uncommitted changes.
-3. Minimizing the overhead of such observation in the critical write path so that Diskquota will not have a large impact on the write performance.
 
 The rest of this doc will analyze the three challenges, propose possible approaches to tackle them, and introduce the design choices with the rationales behind.
 
@@ -96,7 +95,4 @@ For now, as a workaround, the user can use `CREATE TABLE AS` to create a new tab
 ```sql
 CREATE TABLE t_1 TABLESPACE new_tablespace AS SELECT * FROM t;
 ```
-
-## Challenge 3: Minimizing Overhead of Observation
-
-
+ 
