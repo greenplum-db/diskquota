@@ -19,7 +19,7 @@ Due to the difficulty of observing the intermediate states of an in-progress que
 1. Observing intermediate states of a query under Greenplum's MVCC mechanism.
 2. Ensuring data consistency after seeing uncommitted changes.
 
-The rest of this doc will analyze the three challenges, propose possible approaches to tackle them, and introduce the design choices with the rationales behind.
+The rest of this doc will analyze the challenges, propose possible approaches to tackle them, and introduce the design decisions with the rationales behind.
 
 ## Challenge 1: Observing Intermediate States
 
@@ -78,7 +78,7 @@ One of the most notable limitation is that it does not support hard limit for an
 - `DROP TABLE`
 - `TRUNCATE`
 
-This means that the effect of such operations will not be visible to Diskquota until the transaction is committed. For example, if a user changes the tablespace of a table `t` using 
+Such operations will not be visible to Diskquota until the transaction is committed. For example, if a user changes the tablespace of a table `t` using 
 ```sql
 ALTER TABLE t SET TABLESPACE new_tablespace;
 ```
@@ -87,11 +87,17 @@ From the Diskquota's perspective, table `t` still belongs to the old tablespace 
 
 The root cause of this limitation that such modification operations will not take effect until the transaction is committed. Specifically,
 - Due to MVCC, they will not take effect **in the catalogs** until committed.
-- Due to the alignment mechanism, they will not take effect **in the shared memory area** neither given that table `t` is already visible in the catalogs to Diskquota and the corresponding shared memory entry will be deleted.
+- Due to the alignment mechanism, they will not take effect **in the shared memory area** neither given that table `t` is already visible from the catalogs to Diskquota and the corresponding shared memory entry will be deleted when the bgworker retrives active relations.
 
 One way to overcome this limitation is to enhance the **soft limit** mechanism to calculate the resulting quota usage of such catalog modification operations and reject those that will cause quota excess before execution. This is also not trivial to implement but is in our plan.
 
-For now, as a workaround, the user can use `CREATE TABLE AS` to create a new table with the new properties and then delete the old one. In the example of setting tablespace, the user can create a new table `t_1` with the same data as `t` in the new tablespace using
+For now, as a workaround, in order to make the catalog modification operations hard-limited based on the new information of relations instead of the old information, the user can use the `CREATE AS` command to create a new relation with the new information and then drop the old one. Because Diskquota can see relations that have not yet been committed, the `CREATE AS` command can be hard-limited and will be hard-limited based on the new infomation. 
+
+In the above example of changing the tablespace, in order to count the size of table `t` in the quota usage of the new tablespace, the user can replace the `ALTER TABLE` command with the following `CRATE`-`DROP`-`RENAME` transaction:
 ```sql
+BEGIN;
 CREATE TABLE t_1 TABLESPACE new_tablespace AS SELECT * FROM t;
+DROP TABLE t;
+ALTER TABLE t_1 RENAME TO t;
+COMMIT;
 ```
