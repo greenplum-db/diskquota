@@ -25,9 +25,9 @@ The rest of this doc will analyze the challenges, propose possible approaches to
 
 Diskquota cares about what relations, including tables, indexes, and more, that receives new data. Those relations are called "**active**" relations. Diskquota uses background workers (bgworkers) to collect active relations periodically and then calculates their sizes using an OS system call like `stat()`.
 
-Active relations can be produced in two cases:
-- Case 1: By writing new data to existing relations, e.g., using `INSERT` or `COPY FROM`. In this case, Diskquota do not need to observe any intermediate state of in-progress queries because the information of the active relations is committed and is visible to the background worker.
-- Case 2: By creating new relations with data, e.g., using `CREATE TABLE AS` or `CREATE INDEX`. This is the hard part. In this case, the information of the active relations are intermediate states and has not been committed yet. Therefore, the information is not visible to the bgworkers when it scans the catalog tables under MVCC.
+Active relations can be produced in two ways:
+- Case 1: By writing new data to existing relations, e.g., using `INSERT` or `COPY FROM`. In this case, Diskquota do not need to observe any intermediate state during execution because the information of the active relations is committed and is visible to the background worker.
+- Case 2: By creating new relations with data, e.g., using `CREATE TABLE AS` or `CREATE INDEX`. This is the hard part. In this case, the information of the active relations and has not been committed yet during execution. Therefore, the information is not visible to the bgworkers when it scans the catalog tables under MVCC.
 
 For Case 2, to enable the bgworkers to observe the active relations created by an in-progress query, there are two options:
 1. **The `SNAPSHOT_DIRTY` approach:** Disregarding MVCC and scanning the catalog tables using `SNAPSHOT_DIRTY`. In this way, the bgworkers can see uncommitted information of the active relations by doing a table scan.
