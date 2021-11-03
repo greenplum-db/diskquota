@@ -1,4 +1,4 @@
-# Design of Hard Limit for Diskquota
+# [RFC 001] Hard Limit for Diskquota
 
 This document describes the design of the hard limit feature for Diskquota 2.0.
 
