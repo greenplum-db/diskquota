@@ -975,6 +975,8 @@ flush_to_table_size(void)
 
 	/* TODO: Add flush_size_interval to avoid flushing size info in every loop */
 
+	/* Disable ORCA since it does not support non-scalar subqueries. */
+	bool old_optimizer = optimizer;
 	optimizer = false;
 
 	initStringInfo(&deleted_table_expr);
@@ -1070,6 +1072,8 @@ flush_to_table_size(void)
 			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 							errmsg("[diskquota] flush_to_table_size SPI_execute failed: error code %d", ret)));
 	}
+
+	optimizer = old_optimizer;
 }
 
 /*
