@@ -40,6 +40,7 @@
 #include "utils/memutils.h"
 #include "utils/numeric.h"
 #include "utils/snapmgr.h"
+#include "utils/syscache.h"
 #include "libpq-fe.h"
 
 #include <cdb/cdbvars.h>
@@ -1149,9 +1150,9 @@ get_rel_oid_list(void)
 
 	initStringInfo(&buf);
 	appendStringInfo(&buf,
-			"select oid "
-			" from pg_class"
-			" where oid >= %u and (relkind='r' or relkind='m')",
+			"select oid, relkind "
+			"from pg_class "
+			"where oid >= %u and (relkind='r' or relkind='m' or relkind = 'i')",
 			FirstNormalObjectId);
 
 	ret = SPI_execute(buf.data, false, 0);
@@ -1163,29 +1164,26 @@ get_rel_oid_list(void)
 		HeapTuple	tup;
 		bool        	isnull;
 		Oid         	oid;
-		ListCell   	*l;
+		char 			relkind;
 
 		tup = SPI_tuptable->vals[i];
 		oid = DatumGetObjectId(SPI_getbinval(tup,tupdesc, 1, &isnull));
+		relkind = DatumGetChar(SPI_getbinval(tup,tupdesc, 2, &isnull));
 		if (!isnull)
 		{
-			Relation	relation;
-			List	   	*indexIds;
-			relation = try_relation_open(oid, AccessShareLock, false);
-			if (!relation)
-				continue;
-
-			oidlist = lappend_oid(oidlist, oid);
-			indexIds = RelationGetIndexList(relation);
-			if (indexIds != NIL )
+			if (relkind == RELKIND_INDEX)
 			{
-				foreach(l, indexIds)
+				HeapTuple index_tup = SearchSysCacheCopy1(INDEXRELID, ObjectIdGetDatum(oid));
+				if (HeapTupleIsValid(index_tup))
 				{
-					oidlist = lappend_oid(oidlist, lfirst_oid(l));
+					Oid table_oid = DatumGetObjectId(SysCacheGetAttr(INDEXRELID, index_tup, Anum_pg_index_indrelid, &isnull));
+					HeapTuple table_tup = SearchSysCacheCopy1(RELOID, table_oid);
+					char table_kind = ((Form_pg_class) GETSTRUCT(table_tup))->relkind;
+					if (table_kind != RELKIND_RELATION && table_kind != RELKIND_MATVIEW)
+						continue;
 				}
 			}
-		    relation_close(relation, AccessShareLock);
-			list_free(indexIds);
+			oidlist = lappend_oid(oidlist, oid);
 		}
 	}
 	return oidlist;
