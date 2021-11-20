@@ -771,6 +771,10 @@ calculate_table_disk_usage(bool is_init)
 	 * tables whose disk size changed will be treated as active
 	 */
 	local_active_table_stat_map = gp_fetch_active_tables(is_init);
+	/* pretend process as utility mode, and append the table size on master */
+	Gp_role = GP_ROLE_UTILITY;
+	collect_relation_size(local_active_table_stat_map);
+	Gp_role = GP_ROLE_DISPATCH;
 
 	/*
 	 * unset is_exist flag for tsentry in table_size_map this is used to
@@ -834,28 +838,6 @@ calculate_table_disk_usage(bool is_init)
 			/* skip to recalculate the tables which are not in active list */
 			if (active_tbl_found)
 			{
-				if (key.segid == -1)
-				{
-					/* pretend process as utility mode, and append the table size on master */
-					Gp_role = GP_ROLE_UTILITY;
-
-					/* DirectFunctionCall1 may fail, since table maybe dropped by other backend */
-					PG_TRY();
-					{
-						/* call pg_table_size to get the active table size */
-						active_table_entry->tablesize += (Size) DatumGetInt64(DirectFunctionCall1(pg_table_size, ObjectIdGetDatum(relOid)));
-					}
-					PG_CATCH();
-					{
-						HOLD_INTERRUPTS();
-						FlushErrorState();
-						RESUME_INTERRUPTS();
-					}
-					PG_END_TRY();
-
-					Gp_role = GP_ROLE_DISPATCH;
-
-				}
 				/* firstly calculate the updated total size of a table */
 				updated_total_size = active_table_entry->tablesize - tsentry->totalsize;
 

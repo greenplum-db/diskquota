@@ -13,12 +13,17 @@
  *
  * -------------------------------------------------------------------------
  */
+#include <sys/stat.h>
+
 #include "postgres.h"
 
 #include "access/htup_details.h"
 #include "access/xact.h"
 #include "catalog/indexing.h"
+#include "catalog/namespace.h"
 #include "catalog/pg_class.h"
+#include "catalog/pg_namespace.h"
+#include "catalog/pg_tablespace.h"
 #include "catalog/pg_type.h"
 #include "cdb/cdbbufferedappend.h"
 #include "cdb/cdbdisp_query.h"
@@ -39,6 +44,7 @@
 #include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
 #include "utils/relfilenodemap.h"
+#include "utils/syscache.h"
 
 #include "gp_activetable.h"
 #include "diskquota.h"
@@ -71,6 +77,7 @@ static void pull_active_table_size_from_seg(HTAB *local_table_stats_map, char *a
 static StringInfoData convert_map_to_string(HTAB *active_list);
 static void load_table_size(HTAB *local_table_stats_map);
 static void report_active_table_helper(const RelFileNodeBackend *relFileNode);
+static Oid get_primary_oid(Oid reloid, Oid relnamespace, const char* relname);
 
 void		init_active_table_hook(void);
 void		init_shm_worker_active_tables(void);
@@ -443,6 +450,10 @@ get_active_tables_stats(ArrayType *array)
 							  &ctl,
 							  HASH_ELEM | HASH_CONTEXT | HASH_FUNCTION);
 
+	/*
+	 * Iterate over the given active oid array and create entries
+	 * in local_table_map for them.
+	 */
 	for (i = 0; i < nitems; i++)
 	{
 		/*
@@ -455,72 +466,19 @@ get_active_tables_stats(ArrayType *array)
 		}
 		else
 		{
-			MemoryContext			oldcontext;
-			ResourceOwner			oldowner;
-
 			relOid = DatumGetObjectId(fetch_att(ptr, typbyval, typlen));
 			segId = GpIdentity.segindex;
 			key.reloid = relOid;
 			key.segid = segId;
 
+			/* Create an entry for the current relation and initialize tablesize to 0. */
 			entry = (DiskQuotaActiveTableEntry *) hash_search(local_table, &key, HASH_ENTER, NULL);
 			entry->reloid = relOid;
 			entry->segid = segId;
-
-			/*
-			 * pg_table_size() may throw exceptions, in order not to abort the top level
-			 * transaction, we start a subtransaction for it. This operation is expensive,
-			 * but there're good reasons. E.g.,
-			 * When the subtransaction is aborted, the resources (e.g., locks) acquired
-			 * in pg_table_size() are released in time. We can avoid potential deadlock
-			 * risks by doing this.
-			 */
-			oldcontext = CurrentMemoryContext;
-			oldowner = CurrentResourceOwner;
-
-			BeginInternalSubTransaction(NULL /* save point name */);
-			/* Run inside the function's memory context. */
-			MemoryContextSwitchTo(oldcontext);
-			PG_TRY();
-			{
-				/* call pg_table_size to get the active table size */
-				entry->tablesize = (Size) DatumGetInt64(DirectFunctionCall1(pg_table_size,
-																			ObjectIdGetDatum(relOid)));
-
-#ifdef FAULT_INJECTOR
-				SIMPLE_FAULT_INJECTOR("diskquota_fetch_table_stat");
-#endif
-				/* Commit the subtransaction. */
-				ReleaseCurrentSubTransaction();
-				MemoryContextSwitchTo(oldcontext);
-				CurrentResourceOwner = oldowner;
-			}
-			PG_CATCH();
-			{
-				ErrorData		   *edata;
-
-				/*
-				 * Save the error information, or we have no idea what is causing the
-				 * exception.
-				 */
-				MemoryContextSwitchTo(oldcontext);
-				edata = CopyErrorData();
-				FlushErrorState();
-
-				/* Abort the subtransaction and rollback. */
-				RollbackAndReleaseCurrentSubTransaction();
-				MemoryContextSwitchTo(oldcontext);
-				CurrentResourceOwner = oldowner;
-				elog(WARNING, "%s", edata->message);
-				FreeErrorData(edata);
-
-				entry->tablesize = 0;
-			}
-			PG_END_TRY();
+			entry->tablesize = 0;
 
 			ptr = att_addlength_pointer(ptr, typlen, ptr);
 			ptr = (char *) att_align_nominal(ptr, typalign);
-
 		}
 
 		/* advance bitmap pointer if any */
@@ -533,6 +491,14 @@ get_active_tables_stats(ArrayType *array)
 				bitmask = 1;
 			}
 		}
+	}
+
+	if (SPI_connect() == SPI_OK_CONNECT)
+	{
+		collect_relation_size(local_table);
+		SPI_finish();
+	} else {
+		elog(WARNING, "cannot connect to SPI");	
 	}
 
 	return local_table;
@@ -615,12 +581,19 @@ get_active_tables_oid(void)
 		bool		found;
 
 		relOid = RelidByRelfilenode(active_table_file_entry->tablespaceoid, active_table_file_entry->relfilenode);
-		if (relOid != InvalidOid)
+		if (OidIsValid(relOid))
 		{
-			active_table_entry = hash_search(local_active_table_stats_map, &relOid, HASH_ENTER, &found);
-			if (active_table_entry)
+			HeapTuple		tuple = SearchSysCacheCopy1(RELOID, ObjectIdGetDatum(relOid));
+			Oid				primary_oid = relOid;
+			if (HeapTupleIsValid(tuple))
 			{
-				active_table_entry->reloid = relOid;
+				Form_pg_class		form = (Form_pg_class) GETSTRUCT(tuple);
+				primary_oid = get_primary_oid(relOid, form->relnamespace, form->relname.data);
+			}
+			active_table_entry = hash_search(local_active_table_stats_map, &primary_oid, HASH_ENTER, &found);
+			if (active_table_entry && !found)
+			{
+				active_table_entry->reloid = primary_oid;
 				/* we don't care segid and tablesize here */
 				active_table_entry->tablesize = 0;
 				active_table_entry->segid = -1;
@@ -936,4 +909,185 @@ pull_active_table_size_from_seg(HTAB *local_table_stats_map, char *active_oid_ar
 	}
 	cdbdisp_clearCdbPgResults(&cdb_pgresults);
 	return;
+}
+
+static Size
+calculate_relfilenode_size(RelFileNode *rfn, int backendid)
+{
+	int64		totalsize = 0;
+	ForkNumber	forkNum;
+	int64		size = 0;
+	char	   *relationpath;
+	char		pathname[MAXPGPATH];
+	unsigned	segcount = 0;
+
+	for (forkNum = 0; forkNum <= MAX_FORKNUM; ++forkNum)
+	{
+		size = 0;
+		relationpath = relpathbackend(*rfn, backendid, forkNum);
+
+		for (segcount = 0;; ++segcount)
+		{
+			struct stat fst;
+
+			CHECK_FOR_INTERRUPTS();
+
+			if (segcount == 0)
+				snprintf(pathname, MAXPGPATH, "%s", relationpath);
+			else
+				snprintf(pathname, MAXPGPATH, "%s.%u", relationpath, segcount);
+
+			if (stat(pathname, &fst) < 0)
+			{
+				if (errno == ENOENT)
+					break;
+				else
+					ereport(ERROR,
+							(errcode_for_file_access(), errmsg("could not stat file: \"%s\": %m", pathname)));
+			}
+			size += fst.st_size;
+		}
+
+		totalsize += size;
+	}
+
+	return totalsize;
+}
+
+static Oid
+get_primary_oid(Oid reloid, Oid relnamespace, const char *relname)
+{
+	Oid			primary_oid = InvalidOid;
+	if (relnamespace == PG_TOAST_NAMESPACE)
+	{
+		primary_oid = atoi(&relname[9]);
+	}
+	else if (relnamespace == PG_AOSEGMENT_NAMESPACE)
+	{
+		if (strncmp(relname, "pg_aoseg_", 9) == 0)
+			primary_oid = atoi(&relname[9]);
+		else if (strncmp(relname, "pg_aocsseg_", 11) == 0)
+			primary_oid = atoi(&relname[11]);
+		else if (strncmp(relname, "pg_aoblkdir_", 12) == 0)
+			primary_oid = atoi(&relname[12]);
+		else if (strncmp(relname, "pg_aovisimap_", 13) == 0)
+			primary_oid = atoi(&relname[13]);
+	}
+	return OidIsValid(primary_oid) ? primary_oid : reloid;
+}
+
+/*
+ * Scan the pg_class and collect relation's size to the
+ * corresponding entry in local_table. This function first
+ * iterate over the pg_class and then fetches the relations'
+ * size via stat(2) the physical files. We don't need to
+ * take any locks from the relations.
+ */
+void
+collect_relation_size(HTAB *local_table)
+{
+	StringInfoData		sql;
+	int					ret;
+	TupleDesc			tupdesc;
+
+	initStringInfo(&sql);
+	/*
+	 * 'r' for ordinary relations.
+	 * 'm' for materialized views.
+	 * 'i' for indexes.
+	 * 't' for toast relations.
+	 * 'o' for aoseg relations.
+	 * 'M' for aosegvisimap relations.
+	 * 'b' for aoblkdir relations.
+	 */
+	appendStringInfo(&sql, "select oid, relfilenode, reltablespace, relnamespace, relname "
+					 "from pg_class "
+					 "where oid>=%u and "
+					 "(relkind='r' or relkind='m' or relkind='i' or relkind='t' or relkind='o' or relkind='M' or relkind='b')",
+					 FirstNormalObjectId);
+
+	ret = SPI_execute(sql.data, true /*read_only*/, 0);
+	if (ret != SPI_OK_SELECT)
+	{
+		elog(WARNING, "cannot fetch in pg_class. error code %d", ret);
+		return;
+	}
+
+	tupdesc = SPI_tuptable->tupdesc;
+	for (int i = 0; i < SPI_processed; ++i)
+	{
+		Oid			oid;
+		Oid			relfilenode;
+		Oid			reltablespace;
+		Oid			relnamespace;
+		char	   *relname;
+		bool		isnull;
+		HeapTuple	tup = SPI_tuptable->vals[i];
+
+		oid = DatumGetObjectId(SPI_getbinval(tup, tupdesc, 1, &isnull));
+		relfilenode = DatumGetObjectId(SPI_getbinval(tup, tupdesc, 2, &isnull));
+		reltablespace = DatumGetObjectId(SPI_getbinval(tup, tupdesc, 3, &isnull));
+		relnamespace = DatumGetObjectId(SPI_getbinval(tup, tupdesc, 4, &isnull));
+		relname = DatumGetCString(SPI_getbinval(tup, tupdesc, 5, &isnull));
+
+		if (!isnull)
+		{
+			/*
+			 * Since the calculate_relfilenode_size() may throw exceptions,
+			 * we need to catch the exception and save the error message to
+			 * the current memory context.
+			 */
+			MemoryContext oldcontext = CurrentMemoryContext;
+
+			PG_TRY();
+			{
+				RelFileNode						rfn;
+				TableEntryKey					key;
+				DiskQuotaActiveTableEntry	   *table_entry;
+				bool							found;
+				int								segid = GpIdentity.segindex;
+
+				rfn.dbNode = MyDatabaseId;
+				rfn.relNode = relfilenode;
+				rfn.spcNode = OidIsValid(reltablespace) ?
+					reltablespace : DEFAULTTABLESPACE_OID;
+
+				key.reloid = get_primary_oid(oid, relnamespace, relname);
+				key.segid = segid;
+
+				table_entry = (DiskQuotaActiveTableEntry *) hash_search(
+					local_table,
+					&key,
+					HASH_FIND, &found);
+				if (!found)
+					continue;
+				else
+				{
+					table_entry->tablesize +=
+						calculate_relfilenode_size(&rfn, GetTempNamespaceBackendId(relnamespace));
+
+#ifdef FAULT_INJECTOR
+					/*
+					 * calculate_relfilenode_size() may throw exceptions. We use
+					 * fault injector to simulate it. Test that when exception
+					 * happens, we are able to tolerate it and emit an warning
+					 * message to the log file.
+					 */
+					SIMPLE_FAULT_INJECTOR("diskquota_fetch_table_stat");
+#endif
+				}
+			}
+			PG_CATCH();
+			{
+				ErrorData *edata;
+
+				MemoryContextSwitchTo(oldcontext);
+				edata = CopyErrorData();
+				FlushErrorState();
+				elog(WARNING, "%s", edata->message);
+				FreeErrorData(edata);
+			}
+			PG_END_TRY();
+		}
+	}
 }
