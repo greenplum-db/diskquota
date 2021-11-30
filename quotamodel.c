@@ -1885,7 +1885,7 @@ show_blackmap(PG_FUNCTION_ARGS)
 		TupleDescInitEntry(tupdesc, (AttrNumber) 2, "target_oid", OIDOID, -1 /*typmod*/, 0 /*attdim*/);
 		TupleDescInitEntry(tupdesc, (AttrNumber) 3, "database_oid", OIDOID, -1 /*typmod*/, 0 /*attdim*/);
 		TupleDescInitEntry(tupdesc, (AttrNumber) 4, "tablespace_oid", OIDOID, -1 /*typmod*/, 0 /*attdim*/);
-		TupleDescInitEntry(tupdesc, (AttrNumber) 5, "segexceeded", BOOLOID, -1 /*typmod*/, 0 /*attdim*/);
+		TupleDescInitEntry(tupdesc, (AttrNumber) 5, "seg_exceeded", BOOLOID, -1 /*typmod*/, 0 /*attdim*/);
 		TupleDescInitEntry(tupdesc, (AttrNumber) 6, "dbnode", OIDOID, -1 /*typmod*/, 0 /*attdim*/);
 		TupleDescInitEntry(tupdesc, (AttrNumber) 7, "spcnode", OIDOID, -1 /*typmod*/, 0 /*attdim*/);
 		TupleDescInitEntry(tupdesc, (AttrNumber) 8, "relnode", OIDOID, -1 /*typmod*/, 0 /*attdim*/);

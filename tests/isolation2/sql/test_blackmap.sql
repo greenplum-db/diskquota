@@ -34,7 +34,7 @@ CREATE OR REPLACE FUNCTION block_relation_on_seg0(rel regclass, block_type text)
           (SELECT reltablespace FROM pg_class WHERE relname=rel::text),   /*in func*/
           bt,                                                             /*in func*/
           false)                                                          /*in func*/
-      ]::diskquota._blackmap_entry[],                                     /*in func*/
+      ]::diskquota.blackmap_entry[],                                      /*in func*/
     ARRAY[rel]::oid[])                                                    /*in func*/
   FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;                     /*in func*/
   END; $$                                                                 /*in func*/
@@ -61,7 +61,7 @@ SELECT gp_inject_fault_infinite('check_blackmap_by_relfilenode', 'reset', dbid)
 
 -- Clean up the blackmap on seg0.
 SELECT diskquota.refresh_blackmap(
-  ARRAY[]::diskquota._blackmap_entry[], ARRAY[]::oid[])
+  ARRAY[]::diskquota.blackmap_entry[], ARRAY[]::oid[])
   FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
 
 -- 2. Test canceling the extending of a toast relation.
@@ -85,7 +85,7 @@ SELECT gp_inject_fault_infinite('check_blackmap_by_relfilenode', 'reset', dbid)
 
 -- Clean up the blackmap on seg0.
 SELECT diskquota.refresh_blackmap(
-  ARRAY[]::diskquota._blackmap_entry[], ARRAY[]::oid[])
+  ARRAY[]::diskquota.blackmap_entry[], ARRAY[]::oid[])
   FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
 
 -- 3. Test canceling the extending of an appendonly relation.
@@ -109,7 +109,7 @@ SELECT gp_inject_fault_infinite('check_blackmap_by_relfilenode', 'reset', dbid)
 
 -- Clean up the blackmap on seg0.
 SELECT diskquota.refresh_blackmap(
-  ARRAY[]::diskquota._blackmap_entry[], ARRAY[]::oid[])
+  ARRAY[]::diskquota.blackmap_entry[], ARRAY[]::oid[])
   FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
 
 -- 4. Test canceling the extending of an index relation.
@@ -134,7 +134,7 @@ SELECT gp_inject_fault_infinite('check_blackmap_by_relfilenode', 'reset', dbid)
 
 -- Clean up the blackmap on seg0.
 SELECT diskquota.refresh_blackmap(
-  ARRAY[]::diskquota._blackmap_entry[], ARRAY[]::oid[])
+  ARRAY[]::diskquota.blackmap_entry[], ARRAY[]::oid[])
   FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
 
 -- Do some clean-ups.

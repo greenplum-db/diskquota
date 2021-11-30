@@ -47,7 +47,7 @@ CREATE OR REPLACE FUNCTION block_relation_on_seg0(rel regclass, block_type text)
           (SELECT reltablespace FROM pg_class WHERE relname=rel::text),
           bt,
           false)
-      ]::diskquota._blackmap_entry[],
+      ]::diskquota.blackmap_entry[],
     ARRAY[rel]::oid[])
   FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
   END; $$
