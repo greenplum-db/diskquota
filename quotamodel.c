@@ -305,7 +305,6 @@ add_quota_to_blacklist(QuotaType type, Oid targetOid, Oid tablespaceoid, bool se
 	keyitem.databaseoid = MyDatabaseId;
 	keyitem.tablespaceoid = tablespaceoid;
 	keyitem.targettype = (uint32) type;
-	memset(&keyitem.relfilenode, 0, sizeof(RelFileNode));
 	ereport(DEBUG1, (errmsg("[diskquota] Put object %u to blacklist", targetOid)));
 	localblackentry = (LocalBlackMapEntry *) hash_search(local_disk_quota_black_map,
 			&keyitem,
@@ -1373,6 +1372,7 @@ check_blackmap_by_relfilenode(RelFileNode relfilenode)
 	{
 		GlobalBlackMapEntry segblackentry;
 		memcpy(&segblackentry.keyitem, &entry->auxblockinfo, sizeof(BlackMapEntry));
+		segblackentry.segexceeded = entry->segexceeded;
 
 		LWLockRelease(diskquota_locks.black_map_lock);
 		export_exceeded_error(&segblackentry);
@@ -1664,6 +1664,8 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 	bool					segexceeded;
 	GlobalBlackMapEntry	   *blackmapentry;
 	HASH_SEQ_STATUS			hash_seq;
+	HTAB				   *local_blackmap;
+	HASHCTL					hashctl;
 
 	if (!superuser())
 		errmsg("must be superuser to update blackmap");
@@ -1684,14 +1686,22 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 				 errmsg("unable to connect to execute internal query")));
 
 	/*
-	 * Secondly, iterate over blackmap entries and add these entries to the global black map
+	 * Secondly, iterate over blackmap entries and add these entries to the local black map
 	 * on segment servers so that we are able to check whether the given relation (by oid)
-	 * should be blacked in O(1) time complexity.
+	 * should be blacked in O(1) time complexity in third step.
 	 */
+	memset(&hashctl, 0, sizeof(hashctl));
+	hashctl.keysize = sizeof(BlackMapEntry);
+	hashctl.entrysize = sizeof(GlobalBlackMapEntry);
+	hashctl.hcxt = CurrentMemoryContext;
+	hashctl.hash = tag_hash;
+
+	local_blackmap = hash_create("local_blackmap",
+								 1024, &hashctl,
+								 HASH_ELEM | HASH_CONTEXT | HASH_FUNCTION);
 	get_typlenbyvalalign(blackmap_elem_type, &elem_width, &elem_type_by_val, &elem_alignment_code);
 	deconstruct_array(blackmap_array_type, blackmap_elem_type, elem_width,
 					  elem_type_by_val, elem_alignment_code, &datums, &nulls, &count);
-	LWLockAcquire(diskquota_locks.black_map_lock, LW_EXCLUSIVE);
 	for (int i = 0; i < count; ++i)
 	{
 		BlackMapEntry			keyitem;
@@ -1708,11 +1718,10 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 		keyitem.targettype    = DatumGetInt32(GetAttributeByNum(lt, 4, &isnull));
 		segexceeded           = DatumGetBool(GetAttributeByNum(lt, 5, &isnull));
 
-		blackmapentry = hash_search(disk_quota_black_map, &keyitem, HASH_ENTER_NULL, NULL);
+		blackmapentry = hash_search(local_blackmap, &keyitem, HASH_ENTER_NULL, NULL);
 		if (blackmapentry)
 			blackmapentry->segexceeded = segexceeded;
 	}
-	LWLockRelease(diskquota_locks.black_map_lock);
 
 	/*
 	 * Thirdly, iterate over the active oid list. Check that if the relation should be blocked.
@@ -1744,7 +1753,6 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 			BlackMapEntry	keyitem;
 			bool			found;
 
-			LWLockAcquire(diskquota_locks.black_map_lock, LW_EXCLUSIVE);
 			for (QuotaType type = 0; type < NUM_QUOTA_TYPES; ++type)
 			{
 				/*
@@ -1763,9 +1771,9 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 				keyitem.databaseoid = MyDatabaseId;
 				keyitem.targettype = type;
 
-				hash_search(disk_quota_black_map,
-							&keyitem, HASH_FIND, &found);
-				if (found)
+				blackmapentry = hash_search(local_blackmap,
+											&keyitem, HASH_FIND, &found);
+				if (found && blackmapentry)
 				{
 					/*
 					 * If the current relation is blocked, we should add the relfilenode
@@ -1828,12 +1836,16 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 							memset(&blocked_filenode_keyitem, 0, sizeof(BlackMapEntry));
 							memcpy(&blocked_filenode_keyitem.relfilenode, &relfilenode, sizeof(RelFileNode));
 
+							LWLockAcquire(diskquota_locks.black_map_lock, LW_EXCLUSIVE);
 							blocked_filenode_entry = hash_search(disk_quota_black_map,
 																 &blocked_filenode_keyitem,
 																 HASH_ENTER_NULL, &found);
-
 							if (!found && blocked_filenode_entry)
+							{
 								memcpy(&blocked_filenode_entry->auxblockinfo, &keyitem, sizeof(BlackMapEntry));
+								blocked_filenode_entry->segexceeded = blackmapentry->segexceeded;
+							}
+							LWLockRelease(diskquota_locks.black_map_lock);
 						}
 					}
 					/*
@@ -1843,7 +1855,6 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 					break;
 				}
 			}
-			LWLockRelease(diskquota_locks.black_map_lock);
 		}
 	}
 
