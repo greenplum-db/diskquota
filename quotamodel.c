@@ -209,7 +209,7 @@ static Size DiskQuotaShmemSize(void);
 static void disk_quota_shmem_startup(void);
 static void init_lwlocks(void);
 
-static void export_exceeded_error(GlobalBlackMapEntry *entry);
+static void export_exceeded_error(GlobalBlackMapEntry *entry, bool skip_name);
 void truncateStringInfo(StringInfo str, int nchars);
 
 static void
@@ -1373,9 +1373,9 @@ check_blackmap_by_relfilenode(RelFileNode relfilenode)
 		GlobalBlackMapEntry segblackentry;
 		memcpy(&segblackentry.keyitem, &entry->auxblockinfo, sizeof(BlackMapEntry));
 		segblackentry.segexceeded = entry->segexceeded;
-
 		LWLockRelease(diskquota_locks.black_map_lock);
-		export_exceeded_error(&segblackentry);
+
+		export_exceeded_error(&segblackentry, true /*skip_name*/);
 		return false;
 	}
 	LWLockRelease(diskquota_locks.black_map_lock);
@@ -1438,7 +1438,7 @@ check_blackmap_by_reloid(Oid reloid)
 		if (found)
 		{
 			LWLockRelease(diskquota_locks.black_map_lock);
-			export_exceeded_error(entry);
+			export_exceeded_error(entry, false /*skip_name*/);
 			return false;
 		}
 	}
@@ -1496,8 +1496,44 @@ invalidate_database_blackmap(Oid dbid)
 	LWLockRelease(diskquota_locks.black_map_lock);
 }
 
+static char *
+GetNamespaceName(Oid spcid, bool skip_name)
+{
+	if (skip_name)
+	{
+		NameData	spcstr;
+		pg_ltoa(spcid, spcstr.data);
+		return pstrdup(spcstr.data);
+	}
+	return get_namespace_name(spcid);
+}
+
+static char *
+GetTablespaceName(Oid spcid, bool skip_name)
+{
+	if (skip_name)
+	{
+		NameData	spcstr;
+		pg_ltoa(spcid, spcstr.data);
+		return pstrdup(spcstr.data);
+	}
+	return get_tablespace_name(spcid);
+}
+
+static char *
+GetUserName(Oid relowner, bool skip_name)
+{
+	if (skip_name)
+	{
+		NameData	namestr;
+		pg_ltoa(relowner, namestr.data);
+		return pstrdup(namestr.data);
+	}
+	return GetUserNameFromId(relowner);
+}
+
 static void
-export_exceeded_error(GlobalBlackMapEntry *entry)
+export_exceeded_error(GlobalBlackMapEntry *entry, bool skip_name)
 {
 	BlackMapEntry *blackentry = &entry->keyitem;
 	switch(blackentry->targettype)
@@ -1505,41 +1541,38 @@ export_exceeded_error(GlobalBlackMapEntry *entry)
 		case NAMESPACE_QUOTA:
 			ereport(ERROR,
 					(errcode(ERRCODE_DISK_FULL),
-					 errmsg("schema's disk space quota exceeded with name:%s", get_namespace_name(blackentry->targetoid))));
+					 errmsg("schema's disk space quota exceeded with name:%s", GetNamespaceName(blackentry->targetoid, skip_name))));
 			break;
 		case ROLE_QUOTA:
 			ereport(ERROR,
 					(errcode(ERRCODE_DISK_FULL),
-					 errmsg("role's disk space quota exceeded with name:%s", GetUserNameFromId(blackentry->targetoid))));
+					 errmsg("role's disk space quota exceeded with name:%s", GetUserName(blackentry->targetoid, skip_name))));
 			break;
 		case NAMESPACE_TABLESPACE_QUOTA:
 			if (entry->segexceeded)
 				ereport(ERROR,
 						(errcode(ERRCODE_DISK_FULL),
-						 errmsg("tablespace:%s schema:%s diskquota exceeded per segment quota", get_tablespace_name(blackentry->tablespaceoid), get_namespace_name(blackentry->targetoid))));
+						 errmsg("tablespace:%s schema:%s diskquota exceeded per segment quota", GetTablespaceName(blackentry->tablespaceoid, skip_name), GetNamespaceName(blackentry->targetoid, skip_name))));
 			else
-
 				ereport(ERROR,
 						(errcode(ERRCODE_DISK_FULL),
-						 errmsg("tablespace:%s schema:%s diskquota exceeded", get_tablespace_name(blackentry->tablespaceoid), get_namespace_name(blackentry->targetoid))));
+						 errmsg("tablespace:%s schema:%s diskquota exceeded", GetTablespaceName(blackentry->tablespaceoid, skip_name), GetNamespaceName(blackentry->targetoid, skip_name))));
 			break;
 		case ROLE_TABLESPACE_QUOTA:
 			if (entry->segexceeded)
 				ereport(ERROR,
 						(errcode(ERRCODE_DISK_FULL),
-						 errmsg("tablespace: %s role: %s diskquota exceeded per segment quota", get_tablespace_name(blackentry->tablespaceoid), GetUserNameFromId(blackentry->targetoid))));
+						 errmsg("tablespace: %s role: %s diskquota exceeded per segment quota", GetTablespaceName(blackentry->tablespaceoid, skip_name), GetUserName(blackentry->targetoid, skip_name))));
 			else
-
 				ereport(ERROR,
 						(errcode(ERRCODE_DISK_FULL),
-						 errmsg("tablespace: %s role: %s diskquota exceeded", get_tablespace_name(blackentry->tablespaceoid), GetUserNameFromId(blackentry->targetoid))));
+						 errmsg("tablespace: %s role: %s diskquota exceeded", GetTablespaceName(blackentry->tablespaceoid, skip_name), GetUserName(blackentry->targetoid, skip_name))));
 			break;
 		default :
 			ereport(ERROR,
 					(errcode(ERRCODE_DISK_FULL),
 					 errmsg("diskquota exceeded, unknown quota type")));
 	}
-
 }
 
 /*
@@ -1716,6 +1749,15 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 		keyitem.databaseoid   = DatumGetObjectId(GetAttributeByNum(lt, 2, &isnull));
 		keyitem.tablespaceoid = DatumGetObjectId(GetAttributeByNum(lt, 3, &isnull));
 		keyitem.targettype    = DatumGetInt32(GetAttributeByNum(lt, 4, &isnull));
+		/*
+		 * If the current quota limit type is NAMESPACE_TABLESPACE_QUOTA or
+		 * ROLE_TABLESPACE_QUOTA, we should explicitly set DEFAULTTABLESPACE_OID
+		 * for relations whose reltablespace is InvalidOid.
+		 */
+		if ((keyitem.targettype == NAMESPACE_TABLESPACE_QUOTA ||
+			 keyitem.targettype == ROLE_TABLESPACE_QUOTA) &&
+			!OidIsValid(keyitem.tablespaceoid))
+			keyitem.tablespaceoid = DEFAULTTABLESPACE_OID;
 		segexceeded           = DatumGetBool(GetAttributeByNum(lt, 5, &isnull));
 
 		blackmapentry = hash_search(local_blackmap, &keyitem, HASH_ENTER_NULL, NULL);
