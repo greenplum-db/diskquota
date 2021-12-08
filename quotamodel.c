@@ -199,9 +199,10 @@ static void transfer_table_for_quota(int64 totalsize, QuotaType type, Oid* old_k
 
 /* functions to refresh disk quota model*/
 static void refresh_disk_quota_usage(bool is_init);
-static void calculate_table_disk_usage(bool is_init);
+static void calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map);
 static void flush_to_table_size(void);
 static void flush_local_black_map(void);
+static void dispatch_blackmap(HTAB *local_active_table_stat_map);
 static bool load_quotas(void);
 static void do_load_quotas(void);
 static bool do_check_diskquota_state_is_ready(void);
@@ -712,6 +713,7 @@ refresh_disk_quota_usage(bool is_init)
 	bool		connected = false;
 	bool		pushed_active_snap = false;
 	bool		ret = true;
+	HTAB	   *local_active_table_stat_map = NULL;
 
 	StartTransactionCommand();
 
@@ -731,8 +733,13 @@ refresh_disk_quota_usage(bool is_init)
 		connected = true;
 		PushActiveSnapshot(GetTransactionSnapshot());
 		pushed_active_snap = true;
+		/*
+		 * initialization stage all the tables are active. later loop, only the
+		 * tables whose disk size changed will be treated as active
+		 */
+		local_active_table_stat_map = gp_fetch_active_tables(is_init);
 		/* recalculate the disk usage of table, schema and role */
-		calculate_table_disk_usage(is_init);
+		calculate_table_disk_usage(is_init, local_active_table_stat_map);
 		for (QuotaType type = 0; type < NUM_QUOTA_TYPES; ++type) {
 			check_quota_map(type);
 		}
@@ -740,6 +747,9 @@ refresh_disk_quota_usage(bool is_init)
 		flush_to_table_size();
 		/* copy local black map back to shared black map */
 		flush_local_black_map();
+		/* Dispatch blackmap entries to segments to perform hard-limit. */
+		dispatch_blackmap(local_active_table_stat_map);
+		hash_destroy(local_active_table_stat_map);
 	}
 	PG_CATCH();
 	{
@@ -802,7 +812,7 @@ merge_uncommitted_table_to_oidlist(List *oidlist)
  */
 
 static void
-calculate_table_disk_usage(bool is_init)
+calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 {
 	bool		table_size_map_found;
 	bool		active_tbl_found;
@@ -810,18 +820,10 @@ calculate_table_disk_usage(bool is_init)
 	TableSizeEntry *tsentry = NULL;
 	Oid			relOid;
 	HASH_SEQ_STATUS iter;
-	HTAB	   *local_active_table_stat_map;
 	DiskQuotaActiveTableEntry *active_table_entry;
 	TableEntryKey	key;
 	List		*oidlist;
 	ListCell        *l;
-
-
-	/*
-	 * initialization stage all the tables are active. later loop, only the
-	 * tables whose disk size changed will be treated as active
-	 */
-	local_active_table_stat_map = gp_fetch_active_tables(is_init);
 
 	/*
 	 * unset is_exist flag for tsentry in table_size_map this is used to
@@ -1000,8 +1002,6 @@ calculate_table_disk_usage(bool is_init)
 	}
 
 	list_free(oidlist);
-
-	hash_destroy(local_active_table_stat_map);
 
 	/*
 	 * Process removed tables. Reduce schema and role size firstly. Remove
@@ -1199,6 +1199,66 @@ flush_local_black_map(void)
 		}
 	}
 	LWLockRelease(diskquota_locks.black_map_lock);
+}
+
+/*
+ * Dispatch blackmap to segment servers.
+ */
+static void
+dispatch_blackmap(HTAB *local_active_table_stat_map)
+{
+	HASH_SEQ_STATUS					hash_seq;
+	GlobalBlackMapEntry			   *blackmap_entry;
+	DiskQuotaActiveTableEntry	   *active_table_entry;
+	int								num_entries, count = 0;
+	CdbPgResults					cdb_pgresults = {NULL, 0};
+	StringInfoData					rows;
+	StringInfoData					active_oids;
+	StringInfoData					sql;
+
+	initStringInfo(&rows);
+	initStringInfo(&active_oids);
+	initStringInfo(&sql);
+
+	LWLockAcquire(diskquota_locks.black_map_lock, LW_SHARED);
+	num_entries = hash_get_num_entries(disk_quota_black_map);
+	hash_seq_init(&hash_seq, disk_quota_black_map);
+	while ((blackmap_entry = hash_seq_search(&hash_seq)) != NULL)
+	{
+		appendStringInfo(&rows,
+						 "ROW(%d, %d, %d, %d, %s)",
+						 blackmap_entry->keyitem.targetoid,
+						 blackmap_entry->keyitem.databaseoid,
+						 blackmap_entry->keyitem.tablespaceoid,
+						 blackmap_entry->keyitem.targettype,
+						 blackmap_entry->segexceeded ? "true" : "false");
+
+		if (++count != num_entries)
+			appendStringInfo(&rows, ",");
+	}
+	LWLockRelease(diskquota_locks.black_map_lock);
+
+	count = 0;
+	num_entries = hash_get_num_entries(local_active_table_stat_map);
+	hash_seq_init(&hash_seq, local_active_table_stat_map);
+	while ((active_table_entry = hash_seq_search(&hash_seq)) != NULL)
+	{
+		appendStringInfo(&active_oids,
+						 "%d", active_table_entry->reloid);
+
+		if (++count != num_entries)
+			appendStringInfo(&active_oids, ",");
+	}
+
+	appendStringInfo(&sql,
+					 "select diskquota.refresh_blackmap("
+					 "ARRAY[%s]::diskquota.blackmap_entry[], "
+					 "ARRAY[%s]::oid[])", rows.data, active_oids.data);
+	CdbDispatchCommand(sql.data, DF_NONE, &cdb_pgresults);
+
+	pfree(rows.data);
+	pfree(active_oids.data);
+	pfree(sql.data);
 }
 
 /*
