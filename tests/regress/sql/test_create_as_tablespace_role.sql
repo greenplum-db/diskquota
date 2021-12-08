@@ -3,13 +3,12 @@
 -- end_ignore
 DROP TABLESPACE IF EXISTS cas_rolespc;
 CREATE TABLESPACE cas_rolespc LOCATION '/tmp/cas_rolespc';
-CREATE ROLE r;
+CREATE ROLE r LOGIN SUPERUSER;
 SELECT diskquota.set_role_tablespace_quota('r', 'cas_rolespc', '10MB');
+SET default_tablespace = cas_rolespc;
 SET ROLE r;
 
 CREATE TABLE t1 AS SELECT generate_series(1, 100000000);
-
-CREATE TEMP TABLE t2 AS SELECT generate_series(1, 100000000);
 
 CREATE TABLE toast_table AS SELECT repeat('a', 10000) FROM generate_series(1, 10000);
 
@@ -23,6 +22,7 @@ DROP TABLE IF EXISTS toast_table;
 DROP TABLE IF EXISTS ao_table;
 DROP TABLE IF EXISTS aocs_table;
 RESET ROLE;
+RESET default_tablespace;
 DROP ROLE r;
 DROP TABLESPACE cas_rolespc;
 \! rm -rf /tmp/cas_rolespc;
