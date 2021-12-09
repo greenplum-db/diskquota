@@ -3,6 +3,10 @@ test: prepare
 test: test_relation_size
 test: test_relation_cache
 test: test_uncommitted_table_size
+test: test_create_as_role
+test: test_create_as_tablespace_role
+test: test_create_as_schema
+test: test_create_as_tablespace_schema
 # disable this tese due to GPDB behavior change
 # test: test_table_size
 test: test_fast_disk_check

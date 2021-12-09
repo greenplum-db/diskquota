@@ -1675,11 +1675,11 @@ export_exceeded_error(GlobalBlackMapEntry *entry, bool skip_name)
 			if (entry->segexceeded)
 				ereport(ERROR,
 						(errcode(ERRCODE_DISK_FULL),
-						 errmsg("tablespace: %s role: %s diskquota exceeded per segment quota", GetTablespaceName(blackentry->tablespaceoid, skip_name), GetUserName(blackentry->targetoid, skip_name))));
+						 errmsg("tablespace:%s role:%s diskquota exceeded per segment quota", GetTablespaceName(blackentry->tablespaceoid, skip_name), GetUserName(blackentry->targetoid, skip_name))));
 			else
 				ereport(ERROR,
 						(errcode(ERRCODE_DISK_FULL),
-						 errmsg("tablespace: %s role: %s diskquota exceeded", GetTablespaceName(blackentry->tablespaceoid, skip_name), GetUserName(blackentry->targetoid, skip_name))));
+						 errmsg("tablespace:%s role:%s diskquota exceeded", GetTablespaceName(blackentry->tablespaceoid, skip_name), GetUserName(blackentry->targetoid, skip_name))));
 			break;
 		default :
 			ereport(ERROR,
