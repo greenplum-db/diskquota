@@ -47,6 +47,7 @@
 #include "utils/lsyscache.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
+#include "libpq-fe.h"
 
 #include <stdlib.h>
 #include <math.h>
@@ -184,6 +185,8 @@ static HTAB *table_size_map = NULL;
 /* black list for database objects which exceed their quota limit */
 static HTAB *disk_quota_black_map = NULL;
 static HTAB *local_disk_quota_black_map = NULL;
+
+bool *diskquota_hardlimit = NULL;
 
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 
@@ -469,6 +472,12 @@ disk_quota_shmem_startup(void)
 	if (!found)
 		memset((void *) diskquota_paused, 0, sizeof(bool));
 
+	diskquota_hardlimit = ShmemInitStruct("diskquota_hardlimit",
+										  sizeof(bool),
+										  &found);
+	if (!found)
+		memset((void *) diskquota_hardlimit, 0, sizeof(bool));
+
 	LWLockRelease(AddinShmemInitLock);
 }
 
@@ -492,6 +501,7 @@ init_lwlocks(void)
 	diskquota_locks.monitoring_dbid_cache_lock = LWLockAssign();
 	diskquota_locks.paused_lock = LWLockAssign();
 	diskquota_locks.relation_cache_lock = LWLockAssign();
+	diskquota_locks.hardlimit_lock = LWLockAssign();
 }
 
 /*
@@ -510,6 +520,7 @@ DiskQuotaShmemSize(void)
 	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(DiskQuotaRelidCacheEntry)));
 	size = add_size(size, hash_estimate_size(MAX_NUM_MONITORED_DB, sizeof(Oid)));
 	size += sizeof(bool); /* sizeof(*diskquota_paused) */
+	size += sizeof(bool); /* sizeof(*diskquota_hardlimit) */
 	return size;
 }
 
@@ -714,6 +725,7 @@ refresh_disk_quota_usage(bool is_init)
 	bool		pushed_active_snap = false;
 	bool		ret = true;
 	HTAB	   *local_active_table_stat_map = NULL;
+	bool		enable_hardlimit;
 
 	StartTransactionCommand();
 
@@ -748,7 +760,11 @@ refresh_disk_quota_usage(bool is_init)
 		/* copy local black map back to shared black map */
 		flush_local_black_map();
 		/* Dispatch blackmap entries to segments to perform hard-limit. */
-		dispatch_blackmap(local_active_table_stat_map);
+		LWLockAcquire(diskquota_locks.hardlimit_lock, LW_SHARED);
+		enable_hardlimit = *diskquota_hardlimit;
+		LWLockRelease(diskquota_locks.hardlimit_lock);
+		if (enable_hardlimit)
+			dispatch_blackmap(local_active_table_stat_map);
 		hash_destroy(local_active_table_stat_map);
 	}
 	PG_CATCH();
@@ -1568,6 +1584,7 @@ bool
 quota_check_common(Oid reloid, RelFileNode *relfilenode)
 {
 	bool	paused;
+	bool	enable_hardlimit;
 
 	if (!IsTransactionState())
 		return true;
@@ -1582,7 +1599,16 @@ quota_check_common(Oid reloid, RelFileNode *relfilenode)
 	if (OidIsValid(reloid))
 		return check_blackmap_by_reloid(reloid);
 
-	if (relfilenode)
+	LWLockAcquire(diskquota_locks.hardlimit_lock, LW_SHARED);
+	enable_hardlimit = *diskquota_hardlimit;
+	LWLockRelease(diskquota_locks.hardlimit_lock);
+
+#ifdef FAULT_INJECTOR
+	if (SIMPLE_FAULT_INJECTOR("enable_check_quota_by_relfilenode") == FaultInjectorTypeSkip)
+		enable_hardlimit = true;
+#endif
+
+	if (relfilenode && enable_hardlimit)
 		return check_blackmap_by_relfilenode(*relfilenode);
 
 	return true;
@@ -1985,7 +2011,12 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 		GlobalBlackMapEntry	   *new_entry;
 		new_entry = hash_search(disk_quota_black_map, &blackmapentry->keyitem,
 								HASH_ENTER_NULL, &found);
-		if (!found && new_entry)
+		/*
+		 * We don't perform soft-limit on segment servers, so we don't flush the
+		 * blackmap entry with a valid targetoid to the global blackmap on segment
+		 * servers.
+		 */
+		if (!found && new_entry && !OidIsValid(blackmapentry->keyitem.targetoid))
 			memcpy(new_entry, blackmapentry, sizeof(GlobalBlackMapEntry));
 	}
 	LWLockRelease(diskquota_locks.black_map_lock);
@@ -2136,4 +2167,85 @@ show_blackmap(PG_FUNCTION_ARGS)
 	}
 
 	SRF_RETURN_DONE(funcctx);
+}
+
+static void
+dispatch_hardlimit_flag(bool enable_hardlimit)
+{
+	CdbPgResults		cdb_pgresults = {NULL, 0};
+	int					i;
+	StringInfoData		sql;
+
+	initStringInfo(&sql);
+	appendStringInfo(&sql, "SELECT diskquota.%s",
+					 enable_hardlimit ? "enable_hardlimit()" : "disable_hardlimit()");
+	CdbDispatchCommand(sql.data, DF_NONE, &cdb_pgresults);
+
+	for (i = 0; i < cdb_pgresults.numResults; ++i)
+	{
+		PGresult *pgresult = cdb_pgresults.pg_results[i];
+		if (PQresultStatus(pgresult) != PGRES_TUPLES_OK)
+		{
+			cdbdisp_clearCdbPgResults(&cdb_pgresults);
+			ereport(ERROR,
+					(errmsg("[diskquota] cannot %s hardlimit on segments, encounter unexpected result from segment: %d",
+							enable_hardlimit ? "enable" : "disable",
+							PQresultStatus(pgresult))));
+		}
+	}
+	cdbdisp_clearCdbPgResults(&cdb_pgresults);
+}
+
+PG_FUNCTION_INFO_V1(diskquota_enable_hardlimit);
+Datum
+diskquota_enable_hardlimit(PG_FUNCTION_ARGS)
+{
+	if (!superuser())
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("must be superuser to enable hardlimit")));
+
+	/*
+	 * If this UDF is executed on segment servers, we should clear
+	 * the blackmap firstly, or the relation may be blocked by the
+	 * blackmap dispatched by the previous iteration.
+	 */
+	if (!IS_QUERY_DISPATCHER())
+	{
+		HASH_SEQ_STATUS			hash_seq;
+		GlobalBlackMapEntry	   *blackmapentry;
+		LWLockAcquire(diskquota_locks.black_map_lock, LW_EXCLUSIVE);
+		hash_seq_init(&hash_seq, disk_quota_black_map);
+		while ((blackmapentry = hash_seq_search(&hash_seq)) != NULL)
+			hash_search(disk_quota_black_map, &blackmapentry->keyitem, HASH_REMOVE, NULL);
+		LWLockRelease(diskquota_locks.black_map_lock);
+	}
+
+	LWLockAcquire(diskquota_locks.hardlimit_lock, LW_EXCLUSIVE);
+	*diskquota_hardlimit = true;
+	LWLockRelease(diskquota_locks.hardlimit_lock);
+
+	if (IS_QUERY_DISPATCHER())
+		dispatch_hardlimit_flag(true /*enable_hardlimit*/);
+
+	PG_RETURN_VOID();
+}
+
+PG_FUNCTION_INFO_V1(diskquota_disable_hardlimit);
+Datum
+diskquota_disable_hardlimit(PG_FUNCTION_ARGS)
+{
+	if (!superuser())
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("must be superuser to disable hardlimit")));
+
+	LWLockAcquire(diskquota_locks.hardlimit_lock, LW_EXCLUSIVE);
+	*diskquota_hardlimit = false;
+	LWLockRelease(diskquota_locks.hardlimit_lock);
+
+	if (IS_QUERY_DISPATCHER())
+		dispatch_hardlimit_flag(false /*enable_hardlimit*/);
+
+	PG_RETURN_VOID();
 }
