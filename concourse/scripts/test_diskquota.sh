@@ -10,6 +10,10 @@ CUT_NUMBER=6
 source "${GPDB_CONCOURSE_DIR}/common.bash"
 source "${TOP_DIR}/diskquota_src/concourse/scripts/test_common.sh"
 
+## Currently, isolation2 testing framework relies on pg_isolation2_regress, we
+## should build it from source. However, in concourse, the gpdb_bin is fetched
+## from remote machine, the $(abs_top_srcdir) variable points to a non-existing
+## location, we fixes this issue by creating a symbolic link for it.
 function create_fake_gpdb_src() {
 	pushd gpdb_src
 	./configure --prefix=/usr/local/greenplum-db-devel \
