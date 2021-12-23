@@ -1,0 +1,185 @@
+## ======================================================================
+## Pipeline for Diskquota Pull Requests.
+## ======================================================================
+
+groups:
+- name: ALL
+  jobs:
+    - test_diskquota_pr
+
+resource_types:
+- name: gcs
+  type: registry-image
+  source:
+    repository: frodenas/gcs-resource
+- name: pull-request
+  type: docker-image
+  source:
+    repository: teliaoss/github-pr-resource
+
+resources:
+# Pull Request
+- name: pull-request
+  type: pull-request
+  check_every: 1m
+  webhook_token: ((webhook-token))
+  source:
+    repository: greenplum-db/diskquota
+    access_token: ((github-access-token))
+
+# Image Resources
+- name: centos-gpdb-dev-6
+  type: registry-image
+  source:
+    repository: gcr.io/data-gpdb-public-images/gpdb5-centos6-build-test
+    tag: latest
+
+- name: centos-gpdb-dev-7
+  type: registry-image
+  source:
+    repository: gcr.io/data-gpdb-public-images/gpdb5-centos7-build-test
+    tag: latest
+
+- name: ubuntu18-image-build
+  type: registry-image
+  source:
+    repository: gcr.io/data-gpdb-public-images/gpdb6-ubuntu18.04-build
+    tag: latest
+
+- name: ubuntu18-image-test
+  type: registry-image
+  source:
+    repository: gcr.io/data-gpdb-public-images/gpdb6-ubuntu18.04-test
+    tag: latest
+
+# Github Source Codes
+
+- name: gpdb_src
+  type: git
+  source:
+    branch: {{gpdb-git-branch}}
+    uri: {{gpdb-git-remote}}
+
+- name: diskquota_src
+  type: git
+  source:
+    branch: gpdb
+    uri: https://github.com/greenplum-db/diskquota.git
+
+# gpdb binary on gcs is located as different folder for different version
+# use gcs_gpdb_binary_folder to specify them.
+- name: bin_gpdb_centos6
+  type: gcs
+  source:
+    bucket: {{gcs-bucket-intermediates}}
+    json_key: {{concourse-gcs-resources-service-account-key}}
+    versioned_file: ((gcs_gpdb_binary_folder))/bin_gpdb_centos6/bin_gpdb.tar.gz
+- name: bin_gpdb_centos7
+  type: gcs
+  source:
+    bucket: {{gcs-bucket-intermediates}}
+    json_key: {{concourse-gcs-resources-service-account-key}}
+    versioned_file: ((gcs_gpdb_binary_folder))/bin_gpdb_centos7/bin_gpdb.tar.gz
+
+- name: bin_gpdb_ubuntu18
+  type: gcs
+  source:
+    bucket: {{gcs-bucket-intermediates}}
+    json_key: {{concourse-gcs-resources-service-account-key}}
+    versioned_file: ((gcs_gpdb_binary_folder))/bin_gpdb_ubuntu18.04/bin_gpdb.tar.gz
+
+## ======================================================================
+## jobs
+## ======================================================================
+
+jobs:
+- name: test_diskquota_pr
+  public: true
+  max_in_flight: 10
+  plan:
+  - in_parallel:
+    - get: pull-request
+      trigger: true
+      version: every
+    - get: centos-gpdb-dev-7
+    - get: centos-gpdb-dev-6
+    - get: ubuntu18-image-build
+    - get: ubuntu18-image-test
+    - get: diskquota_src
+      trigger: true
+    - get: bin_gpdb_centos7
+      resource: bin_gpdb_centos7
+    - get: bin_gpdb_centos6
+      resource: bin_gpdb_centos6
+    - get: bin_gpdb_ubuntu18
+      resource: bin_gpdb_ubuntu18
+    - get: gpdb_src
+
+  ## Set status to pending in pull requests.
+  - put: pull-request
+    params:
+      path: pull-request
+      status: pending
+
+  - on_failure:
+      put: pull-request
+      params:
+        path: pull-request
+        status: failure
+    on_success:
+      put: pull-request
+      params:
+        path: pull-request
+        status: success
+    do:
+    - in_parallel:
+        - do:
+            - task: build_diskquota_rhel7
+              file: diskquota_src/concourse/tasks/build_diskquota.yml
+              image: centos-gpdb-dev-7
+              input_mapping:
+                bin_gpdb: bin_gpdb_centos7
+              params:
+                DISKQUOTA_OS: rhel7
+            - task: test_diskquota_rhel7
+              file: diskquota_src/concourse/tasks/test_diskquota.yml
+              image: centos-gpdb-dev-7
+              input_mapping:
+                bin_gpdb: bin_gpdb_centos7
+                bin_diskquota: diskquota_artifacts
+              params:
+                DISKQUOTA_OS: rhel7
+
+        - do:
+            - task: build_diskquota_rhel6
+              file: diskquota_src/concourse/tasks/build_diskquota.yml
+              image: centos-gpdb-dev-6
+              input_mapping:
+                bin_gpdb: bin_gpdb_centos6
+              params:
+                DISKQUOTA_OS: rhel6
+            - task: test_diskquota_rhel6
+              file: diskquota_src/concourse/tasks/test_diskquota.yml
+              image: centos-gpdb-dev-6
+              input_mapping:
+                bin_gpdb: bin_gpdb_centos6
+                bin_diskquota: diskquota_artifacts
+              params:
+                DISKQUOTA_OS: rhel6
+
+        - do:
+            - task: build_diskquota_ubuntu18
+              file: diskquota_src/concourse/tasks/build_diskquota.yml
+              image: ubuntu18-image-build
+              input_mapping:
+                bin_gpdb: bin_gpdb_ubuntu18
+              params:
+                DISKQUOTA_OS: ubuntu18.04
+            - task: test_diskquota_ubuntu18
+              file: diskquota_src/concourse/tasks/test_diskquota.yml
+              image: ubuntu18-image-test
+              input_mapping:
+                bin_gpdb: bin_gpdb_ubuntu18
+                bin_diskquota: diskquota_artifacts
+              params:
+                DISKQUOTA_OS: ubuntu18.04
