@@ -52,8 +52,7 @@ resources:
     repository: gcr.io/data-gpdb-public-images/gpdb6-ubuntu18.04-test
     tag: latest
 
-# Github Source Codes
-
+# Source Codes
 - name: gpdb_src
   type: git
   source:
