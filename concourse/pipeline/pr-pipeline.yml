@@ -12,6 +12,7 @@ resource_types:
   type: registry-image
   source:
     repository: frodenas/gcs-resource
+
 - name: pull-request
   type: docker-image
   source:
@@ -19,7 +20,7 @@ resource_types:
 
 resources:
 # Pull Request
-- name: pull-request
+- name: diskquota_pr
   type: pull-request
   check_every: 1m
   webhook_token: ((webhook-token))
@@ -59,7 +60,7 @@ resources:
     branch: {{gpdb-git-branch}}
     uri: {{gpdb-git-remote}}
 
-- name: diskquota_src
+- name: diskquota_base_src
   type: git
   source:
     branch: gpdb
@@ -97,19 +98,19 @@ jobs:
   max_in_flight: 10
   plan:
   ## Set status to pending in pull requests.
-  - get: pull-request
+  - get: diskquota_pr
     trigger: true
     version: every
-  - put: pull-request
+  - put: diskquota_pr
     params:
-      path: pull-request
+      path: diskquota_pr
       status: pending
   - in_parallel:
     - get: centos-gpdb-dev-7
     - get: centos-gpdb-dev-6
     - get: ubuntu18-image-build
     - get: ubuntu18-image-test
-    - get: diskquota_src
+    - get: diskquota_base_src
       trigger: true
     - get: bin_gpdb_centos7
       resource: bin_gpdb_centos7
@@ -120,27 +121,46 @@ jobs:
     - get: gpdb_src
 
   - on_failure:
-      put: pull-request
+      put: diskquota_pr
       params:
-        path: pull-request
+        path: diskquota_pr
         status: failure
     on_success:
-      put: pull-request
+      put: diskquota_pr
       params:
-        path: pull-request
+        path: diskquota_pr
         status: success
     do:
+    - task: fetch_diskquota_pr_and_create_tag
+      image: centos-gpdb-dev-7
+      config:
+        platform: linux
+        run:
+          path: bash
+          args:
+            - -c
+            - |
+              pushd diskquota_base_src/
+              DISKQUOTA_VERSION=$(git describe --tags)
+              popd
+              git clone diskquota_pr diskquota_src && cd diskquota_src
+              git config user.email "bot@pr-pipeline"
+              git config user.name  "pr-pipeline-bot"
+              git tag -a $DISKQUOTA_VERSION -m "Create tagged version: ${DISKQUOTA_VERSION}"
+        inputs: [{ name: diskquota_pr }, { name: diskquota_base_src }]
+        outputs: [{ name: diskquota_src }]
+
     - in_parallel:
         - do:
             - task: build_diskquota_rhel7
-              file: diskquota_src/concourse/tasks/build_diskquota.yml
+              file: diskquota_base_src/concourse/tasks/build_diskquota.yml
               image: centos-gpdb-dev-7
               input_mapping:
                 bin_gpdb: bin_gpdb_centos7
               params:
                 DISKQUOTA_OS: rhel7
             - task: test_diskquota_rhel7
-              file: diskquota_src/concourse/tasks/test_diskquota.yml
+              file: diskquota_base_src/concourse/tasks/test_diskquota.yml
               image: centos-gpdb-dev-7
               input_mapping:
                 bin_gpdb: bin_gpdb_centos7
@@ -150,14 +170,14 @@ jobs:
 
         - do:
             - task: build_diskquota_rhel6
-              file: diskquota_src/concourse/tasks/build_diskquota.yml
+              file: diskquota_base_src/concourse/tasks/build_diskquota.yml
               image: centos-gpdb-dev-6
               input_mapping:
                 bin_gpdb: bin_gpdb_centos6
               params:
                 DISKQUOTA_OS: rhel6
             - task: test_diskquota_rhel6
-              file: diskquota_src/concourse/tasks/test_diskquota.yml
+              file: diskquota_base_src/concourse/tasks/test_diskquota.yml
               image: centos-gpdb-dev-6
               input_mapping:
                 bin_gpdb: bin_gpdb_centos6
@@ -167,14 +187,14 @@ jobs:
 
         - do:
             - task: build_diskquota_ubuntu18
-              file: diskquota_src/concourse/tasks/build_diskquota.yml
+              file: diskquota_base_src/concourse/tasks/build_diskquota.yml
               image: ubuntu18-image-build
               input_mapping:
                 bin_gpdb: bin_gpdb_ubuntu18
               params:
                 DISKQUOTA_OS: ubuntu18.04
             - task: test_diskquota_ubuntu18
-              file: diskquota_src/concourse/tasks/test_diskquota.yml
+              file: diskquota_base_src/concourse/tasks/test_diskquota.yml
               image: ubuntu18-image-test
               input_mapping:
                 bin_gpdb: bin_gpdb_ubuntu18
