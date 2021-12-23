@@ -97,10 +97,15 @@ jobs:
   public: true
   max_in_flight: 10
   plan:
+  ## Set status to pending in pull requests.
+  - get: pull-request
+    trigger: true
+    version: every
+  - put: pull-request
+    params:
+      path: pull-request
+      status: pending
   - in_parallel:
-    - get: pull-request
-      trigger: true
-      version: every
     - get: centos-gpdb-dev-7
     - get: centos-gpdb-dev-6
     - get: ubuntu18-image-build
@@ -114,12 +119,6 @@ jobs:
     - get: bin_gpdb_ubuntu18
       resource: bin_gpdb_ubuntu18
     - get: gpdb_src
-
-  ## Set status to pending in pull requests.
-  - put: pull-request
-    params:
-      path: pull-request
-      status: pending
 
   - on_failure:
       put: pull-request
