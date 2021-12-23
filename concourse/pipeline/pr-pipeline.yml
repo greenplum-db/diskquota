@@ -153,14 +153,14 @@ jobs:
     - in_parallel:
         - do:
             - task: build_diskquota_rhel7
-              file: diskquota_base_src/concourse/tasks/build_diskquota.yml
+              file: diskquota_src/concourse/tasks/build_diskquota.yml
               image: centos-gpdb-dev-7
               input_mapping:
                 bin_gpdb: bin_gpdb_centos7
               params:
                 DISKQUOTA_OS: rhel7
             - task: test_diskquota_rhel7
-              file: diskquota_base_src/concourse/tasks/test_diskquota.yml
+              file: diskquota_src/concourse/tasks/test_diskquota.yml
               image: centos-gpdb-dev-7
               input_mapping:
                 bin_gpdb: bin_gpdb_centos7
@@ -170,14 +170,14 @@ jobs:
 
         - do:
             - task: build_diskquota_rhel6
-              file: diskquota_base_src/concourse/tasks/build_diskquota.yml
+              file: diskquota_src/concourse/tasks/build_diskquota.yml
               image: centos-gpdb-dev-6
               input_mapping:
                 bin_gpdb: bin_gpdb_centos6
               params:
                 DISKQUOTA_OS: rhel6
             - task: test_diskquota_rhel6
-              file: diskquota_base_src/concourse/tasks/test_diskquota.yml
+              file: diskquota_src/concourse/tasks/test_diskquota.yml
               image: centos-gpdb-dev-6
               input_mapping:
                 bin_gpdb: bin_gpdb_centos6
@@ -187,14 +187,14 @@ jobs:
 
         - do:
             - task: build_diskquota_ubuntu18
-              file: diskquota_base_src/concourse/tasks/build_diskquota.yml
+              file: diskquota_src/concourse/tasks/build_diskquota.yml
               image: ubuntu18-image-build
               input_mapping:
                 bin_gpdb: bin_gpdb_ubuntu18
               params:
                 DISKQUOTA_OS: ubuntu18.04
             - task: test_diskquota_ubuntu18
-              file: diskquota_base_src/concourse/tasks/test_diskquota.yml
+              file: diskquota_src/concourse/tasks/test_diskquota.yml
               image: ubuntu18-image-test
               input_mapping:
                 bin_gpdb: bin_gpdb_ubuntu18
