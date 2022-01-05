@@ -60,12 +60,6 @@ resources:
     branch: {{gpdb-git-branch}}
     uri: {{gpdb-git-remote}}
 
-- name: diskquota_base_src
-  type: git
-  source:
-    branch: gpdb
-    uri: https://github.com/greenplum-db/diskquota.git
-
 # gpdb binary on gcs is located as different folder for different version
 # use gcs_gpdb_binary_folder to specify them.
 - name: bin_gpdb_centos6
@@ -110,8 +104,6 @@ jobs:
     - get: centos-gpdb-dev-6
     - get: ubuntu18-image-build
     - get: ubuntu18-image-test
-    - get: diskquota_base_src
-      trigger: true
     - get: bin_gpdb_centos7
       resource: bin_gpdb_centos7
     - get: bin_gpdb_centos6
@@ -140,14 +132,11 @@ jobs:
           args:
             - -c
             - |
-              pushd diskquota_base_src/
-              DISKQUOTA_VERSION=$(git describe --tags)
-              popd
               git clone diskquota_pr diskquota_src && cd diskquota_src
               git config user.email "bot@pr-pipeline"
               git config user.name  "pr-pipeline-bot"
-              git tag -a $DISKQUOTA_VERSION -m "Create tagged version: ${DISKQUOTA_VERSION}"
-        inputs: [{ name: diskquota_pr }, { name: diskquota_base_src }]
+              git tag -a $(git rev-parse --short HEAD) -m "Create tagged version."
+        inputs: [{ name: diskquota_pr }]
         outputs: [{ name: diskquota_src }]
 
     - in_parallel:
