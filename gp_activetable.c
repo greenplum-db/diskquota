@@ -149,8 +149,6 @@ active_table_hook_smgrcreate(RelFileNodeBackend rnode)
 		(*prev_file_create_hook) (rnode);
 
 	report_active_table_helper(&rnode);
-
-	SIMPLE_FAULT_INJECTOR("smgrcreate_after_report_active_table");
 }
 
 /*
@@ -212,6 +210,7 @@ object_access_hook_QuotaStmt(ObjectAccessType access, Oid classId, Oid objectId,
 		report_relation_cache_helper(objectId);
 		break;
 	case OAT_POST_ALTER:
+		SIMPLE_FAULT_INJECTOR("object_access_post_alter");
 		report_altered_reloid(objectId);
 		break;
 	default:
