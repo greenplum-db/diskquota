@@ -17,6 +17,7 @@
 
 #include "access/htup_details.h"
 #include "access/xact.h"
+#include "catalog/catalog.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_namespace.h"
@@ -596,6 +597,23 @@ get_active_tables_stats(ArrayType *array)
 }
 
 /*
+ * SetLocktagRelationOid
+ *		Set up a locktag for a relation, given only relation OID
+ */
+static inline void
+SetLocktagRelationOid(LOCKTAG *tag, Oid relid)
+{
+	Oid			dbid;
+
+	if (IsSharedRelation(relid))
+		dbid = InvalidOid;
+	else
+		dbid = MyDatabaseId;
+
+	SET_LOCKTAG_RELATION(*tag, dbid, relid);
+}
+
+/*
  * Get local active table with table oid and table size info.
  * This function first copies active table map from shared memory
  * to local active table map with refilenode info. Then traverses
@@ -730,54 +748,20 @@ get_active_tables_oid(void)
 	}
 	LWLockRelease(diskquota_locks.altered_reloid_cache_lock);
 
-	if (SPI_connect() != SPI_OK_CONNECT)
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_INTERNAL_ERROR),
-				 errmsg("unable to connect to execute internal query")));
-	}
-
 	hash_seq_init(&iter, local_altered_reloid_cache);
 	while ((altered_reloid_entry = (Oid *) hash_seq_search(&iter)) != NULL)
 	{
 		if (OidIsValid(*altered_reloid_entry))
 		{
-			StringInfoData		sql;
-			int					ret;
-
-			initStringInfo(&sql);
-
-			/*
-			 * We iterate over the entries of the altered relation cache and check
-			 * the number of AccessExclusiveLocks on thoes relations. If the number
-			 * of locks is 0, then the relation is altered and it doesn't need to be
-			 * active again.
-			 */
-			appendStringInfo(&sql, "SELECT (COUNT(*)=0) FROM pg_locks WHERE relation=%u"
-							 " AND database=%u AND mode='AccessExclusiveLock'",
-							 *altered_reloid_entry,
-							 MyDatabaseId);
-
-			if ((ret = SPI_execute(sql.data, true /* readonly */, 0)) != SPI_OK_SELECT)
-				elog(ERROR, "cannot query the pg_locks view: error code %d", ret);
-
-			if (SPI_processed > 0)
-			{
-				HeapTuple	tup = SPI_tuptable->vals[0];
-				TupleDesc	tupdesc = SPI_tuptable->tupdesc;
-				Datum		dat;
-				bool		isnull;
-
-				dat = SPI_getbinval(tup, tupdesc, 1, &isnull);
-				if (!isnull && DatumGetBool(dat))
-				{
-					hash_search(local_altered_reloid_cache,
-								altered_reloid_entry, HASH_REMOVE, NULL);
-				}
-			}
+			LOCKTAG locktag;
+			SetLocktagRelationOid(&locktag, *altered_reloid_entry);
+			VirtualTransactionId *vxid_list = GetLockConflicts(&locktag, AccessShareLock);
+			if (!VirtualTransactionIdIsValid(*vxid_list)) /* if vxid_list is empty */
+				hash_search(local_altered_reloid_cache,
+							altered_reloid_entry, HASH_REMOVE, NULL);
+			pfree(vxid_list);
 		}
 	}
-	SPI_finish();
 
 	LWLockAcquire(diskquota_locks.altered_reloid_cache_lock, LW_EXCLUSIVE);
 	hash_seq_init(&iter, altered_reloid_cache);
