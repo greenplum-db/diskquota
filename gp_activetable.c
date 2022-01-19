@@ -149,6 +149,7 @@ active_table_hook_smgrcreate(RelFileNodeBackend rnode)
 	if (prev_file_create_hook)
 		(*prev_file_create_hook) (rnode);
 
+	SIMPLE_FAULT_INJECTOR("diskquota_after_smgrcreate");
 	report_active_table_helper(&rnode);
 }
 
@@ -613,6 +614,17 @@ SetLocktagRelationOid(LOCKTAG *tag, Oid relid)
 	SET_LOCKTAG_RELATION(*tag, dbid, relid);
 }
 
+static bool
+is_relation_being_altered(Oid relid)
+{
+	LOCKTAG locktag;
+	SetLocktagRelationOid(&locktag, relid);
+	VirtualTransactionId *vxid_list = GetLockConflicts(&locktag, AccessShareLock);
+	bool being_altered = VirtualTransactionIdIsValid(*vxid_list); /* if vxid_list is empty */
+	pfree(vxid_list);
+	return being_altered;
+}
+
 /*
  * Get local active table with table oid and table size info.
  * This function first copies active table map from shared memory
@@ -676,6 +688,7 @@ get_active_tables_oid(void)
 			*entry = *active_table_file_entry;
 		hash_search(active_tables_map, active_table_file_entry, HASH_REMOVE, NULL);
 	}
+	// TODO: hash_seq_term(&iter);
 	LWLockRelease(diskquota_locks.active_table_lock);
 
 	memset(&ctl, 0, sizeof(ctl));
@@ -720,9 +733,24 @@ get_active_tables_oid(void)
 				active_table_entry->tablesize = 0;
 				active_table_entry->segid = -1;
 			}
-			hash_search(local_active_table_file_map, active_table_file_entry, HASH_REMOVE, NULL);
+			if (!is_relation_being_altered(relOid))
+				hash_search(local_active_table_file_map, active_table_file_entry, HASH_REMOVE, NULL);
 		}
 	}
+
+	// TODO: hash_seq_term(&iter);
+	
+	/* Adding the remaining relfilenodes back to the map in the shared memory */
+	LWLockAcquire(diskquota_locks.active_table_lock, LW_EXCLUSIVE);
+	hash_seq_init(&iter, local_active_table_file_map);
+	while ((active_table_file_entry = (DiskQuotaActiveTableFileEntry *) hash_seq_search(&iter)) != NULL)
+	{
+		/* TODO: handle possible ERROR here so that the bgworker will not go down. */
+		hash_search(active_tables_map, active_table_file_entry, HASH_ENTER, NULL); 
+	}
+	/* TODO: hash_seq_term(&iter); */
+	LWLockRelease(diskquota_locks.active_table_lock);
+
 
 	LWLockAcquire(diskquota_locks.altered_reloid_cache_lock, LW_SHARED);
 	hash_seq_init(&iter, altered_reloid_cache);
@@ -751,15 +779,11 @@ get_active_tables_oid(void)
 	hash_seq_init(&iter, local_altered_reloid_cache);
 	while ((altered_reloid_entry = (Oid *) hash_seq_search(&iter)) != NULL)
 	{
-		if (OidIsValid(*altered_reloid_entry))
+		if (OidIsValid(*altered_reloid_entry) && 
+			!is_relation_being_altered(*altered_reloid_entry))
 		{
-			LOCKTAG locktag;
-			SetLocktagRelationOid(&locktag, *altered_reloid_entry);
-			VirtualTransactionId *vxid_list = GetLockConflicts(&locktag, AccessShareLock);
-			if (!VirtualTransactionIdIsValid(*vxid_list)) /* if vxid_list is empty */
-				hash_search(local_altered_reloid_cache,
-							altered_reloid_entry, HASH_REMOVE, NULL);
-			pfree(vxid_list);
+			hash_search(local_altered_reloid_cache,
+						altered_reloid_entry, HASH_REMOVE, NULL);
 		}
 	}
 
