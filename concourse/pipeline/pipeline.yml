@@ -94,7 +94,7 @@ resources:
 - name: diskquota_src
   type: git
   source:
-    branch: release/1.X
+    branch: gpdb
     uri: https://github.com/greenplum-db/diskquota.git
 
 # gpdb binary on gcs is located as different folder for different version
