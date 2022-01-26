@@ -13,9 +13,8 @@ SELECT diskquota.set_role_quota(current_role, '1MB');
 
 SELECT diskquota.wait_for_worker_new_epoch();
 
+-- Expect that current role is in the blackmap 
 SELECT rolname FROM pg_authid, diskquota.blackmap WHERE oid = target_oid;
-
-DROP TABLE t;
 
 SELECT diskquota.set_role_quota(current_role, '-1');
 
@@ -23,4 +22,4 @@ SELECT diskquota.wait_for_worker_new_epoch();
 
 SELECT rolname FROM pg_authid, diskquota.blackmap WHERE oid = target_oid;
 
-SELECT diskquota.wait_for_worker_new_epoch();
+DROP TABLE t;
