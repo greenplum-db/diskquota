@@ -1,3 +1,5 @@
+CREATE ROLE test SUPERUSER;
+SET ROLE test;
 CREATE TABLE t (i) AS SELECT generate_series(1, 100000);
 NOTICE:  Table doesn't have 'DISTRIBUTED BY' clause. Creating a NULL policy entry.
 SELECT diskquota.wait_for_worker_new_epoch();
@@ -36,7 +38,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 SELECT rolname FROM pg_authid, diskquota.blackmap WHERE oid = target_oid;
  rolname 
 ---------
- gpadmin
+ test
 (1 row)
 
 SELECT diskquota.set_role_quota(current_role, '-1');
@@ -57,3 +59,5 @@ SELECT rolname FROM pg_authid, diskquota.blackmap WHERE oid = target_oid;
 (0 rows)
 
 DROP TABLE t;
+RESET ROLE;
+DROP ROLE test;

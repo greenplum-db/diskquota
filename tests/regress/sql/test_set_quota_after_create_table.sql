@@ -1,3 +1,7 @@
+CREATE ROLE test SUPERUSER;
+
+SET ROLE test;
+
 CREATE TABLE t (i) AS SELECT generate_series(1, 100000);
 
 SELECT diskquota.wait_for_worker_new_epoch();
@@ -23,3 +27,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 SELECT rolname FROM pg_authid, diskquota.blackmap WHERE oid = target_oid;
 
 DROP TABLE t;
+
+RESET ROLE;
+
+DROP ROLE test;
