@@ -117,6 +117,7 @@ struct DiskQuotaWorkerEntry
 	pid_t		pid;			/* worker pid */
 	unsigned int epoch; 		/* this counter will be increased after each worker loop */
 	bool is_paused; 			/* true if this worker is paused */
+	bool need_reload_table_size;
 	BackgroundWorkerHandle *handle;
 };
 
@@ -156,5 +157,7 @@ extern Oid diskquota_parse_primary_table_oid(Oid namespace, char *relname);
 extern bool worker_increase_epoch(Oid database_oid);
 extern unsigned int worker_get_epoch(Oid database_oid);
 extern bool diskquota_is_paused(void);
+extern bool worker_get_need_reload_table_size(void);
+extern void worker_set_need_reload_table_size(bool need_reload_table_size);
 
 #endif

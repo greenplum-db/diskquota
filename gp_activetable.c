@@ -326,22 +326,24 @@ gp_fetch_active_tables(bool is_init)
 										1024,
 										&ctl,
 										HASH_ELEM | HASH_CONTEXT | HASH_FUNCTION);
-
-	if (is_init)
+	bool need_reload = worker_get_need_reload_table_size();
+	if (is_init || need_reload)
 	{
 		load_table_size(local_table_stats_map);
 	}
-	else
+	/* step 1: fetch active oids from all the segments */
+	local_active_table_oid_maps = pull_active_list_from_seg();
+	active_oid_list = convert_map_to_string(local_active_table_oid_maps);
+
+	/* step 2: fetch active table sizes based on active oids */
+	pull_active_table_size_from_seg(local_table_stats_map, active_oid_list.data);
+
+	hash_destroy(local_active_table_oid_maps);
+	pfree(active_oid_list.data);
+	if (need_reload)
 	{
-		/* step 1: fetch active oids from all the segments */
-		local_active_table_oid_maps = pull_active_list_from_seg();
-		active_oid_list = convert_map_to_string(local_active_table_oid_maps);
-
-		/* step 2: fetch active table sizes based on active oids */
-		pull_active_table_size_from_seg(local_table_stats_map, active_oid_list.data);
-
-		hash_destroy(local_active_table_oid_maps);
-		pfree(active_oid_list.data);
+		/* clear for the next iteration. */
+		worker_set_need_reload_table_size(false);
 	}
 	return local_table_stats_map;
 }

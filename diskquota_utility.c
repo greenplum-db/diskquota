@@ -183,6 +183,8 @@ init_table_size_table(PG_FUNCTION_ARGS)
 		elog(ERROR, "cannot update state table: error code %d", ret);
 
 	SPI_finish();
+	/* Set AFTER SPI_finish() so that the change is visible. */
+	worker_set_need_reload_table_size(true);
 	PG_RETURN_VOID();
 }
 

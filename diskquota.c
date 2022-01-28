@@ -1079,3 +1079,49 @@ show_worker_epoch(PG_FUNCTION_ARGS)
 {
 	PG_RETURN_UINT32(worker_get_epoch(MyDatabaseId));
 }
+
+bool 
+worker_get_need_reload_table_size()
+{
+	LWLockAcquire(diskquota_locks.worker_map_lock, LW_SHARED);
+
+	bool found = false;
+	bool need_reload_table_size = false;
+	DiskQuotaWorkerEntry * workerentry = (DiskQuotaWorkerEntry *) hash_search(
+		disk_quota_worker_map, (void *) &MyDatabaseId, HASH_FIND, &found);
+	
+	if (found)
+	{
+		need_reload_table_size = workerentry->need_reload_table_size;
+	}
+	LWLockRelease(diskquota_locks.worker_map_lock);
+	if (!found)
+	{
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+						errmsg("[diskquota] worker not found for database \"%s\"",
+							   get_database_name(MyDatabaseId))));	
+	}
+	return need_reload_table_size;
+}
+
+void 
+worker_set_need_reload_table_size(bool need_reload_table_size)
+{
+	LWLockAcquire(diskquota_locks.worker_map_lock, LW_EXCLUSIVE);
+
+	bool found = false;
+	DiskQuotaWorkerEntry * workerentry = (DiskQuotaWorkerEntry *) hash_search(
+		disk_quota_worker_map, (void *) &MyDatabaseId, HASH_FIND, &found);
+	
+	if (found)
+	{
+		workerentry->need_reload_table_size = need_reload_table_size;
+	}
+	LWLockRelease(diskquota_locks.worker_map_lock);
+	if (!found)
+	{
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+						errmsg("[diskquota] worker not found for database \"%s\"",
+							   get_database_name(MyDatabaseId))));	
+	}
+}
