@@ -3,14 +3,14 @@
 \c
 CREATE ROLE test SUPERUSER;
 SET ROLE test;
--- Create table "t" with diskquota disabled
+-- Create table with diskquota disabled
 CREATE TABLE t_without_diskquota (i) AS SELECT generate_series(1, 100000);
 NOTICE:  Table doesn't have 'DISTRIBUTED BY' clause. Creating a NULL policy entry.
 \! gpconfig -c shared_preload_libraries -v 'diskquota'> /dev/null 
 \! gpstop -far > /dev/null
 \c
 SET ROLE test;
--- Init table_size to include table "t"
+-- Init table_size to include the table
 SELECT diskquota.init_table_size_table();
  init_table_size_table 
 -----------------------
@@ -24,7 +24,7 @@ WHERE tableid = 't_without_diskquota'::regclass AND segid = -1;
  t_without_diskquota | 3637248
 (1 row)
 
--- Ensure that table is not active
+-- Ensure that the table is not active
 SELECT diskquota.diskquota_fetch_table_stat(0, ARRAY[]::oid[])
 FROM gp_dist_random('gp_id');
  diskquota_fetch_table_stat 
