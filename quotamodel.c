@@ -1723,8 +1723,10 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 	HTAB				   *local_blackmap;
 	HASHCTL					hashctl;
 
-	if (!superuser())
-		errmsg("must be superuser to update blackmap");
+	Oid role;
+	role = get_role_oid("diskquota_admin", true);
+	if (!superuser() && !is_member_of_role(GetUserId(), role))
+		errmsg("must be superuser or diskquota_admin to update blockmap");
 
 	if (ARR_NDIM(blackmap_array_type) > 1 || ARR_NDIM(active_oid_array_type) > 1)
 		ereport(ERROR, (errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR), errmsg("1-dimensional array needed")));
@@ -2175,10 +2177,12 @@ PG_FUNCTION_INFO_V1(diskquota_enable_hardlimit);
 Datum
 diskquota_enable_hardlimit(PG_FUNCTION_ARGS)
 {
-	if (!superuser())
+	Oid role;
+	role = get_role_oid("diskquota_admin", true);
+	if (!superuser() && !is_member_of_role(GetUserId(), role))
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("must be superuser to enable hardlimit")));
+				 errmsg("must be superuser or diskquota_admin to enable hardlimit")));
 
 	/*
 	 * If this UDF is executed on segment servers, we should clear
@@ -2208,10 +2212,12 @@ PG_FUNCTION_INFO_V1(diskquota_disable_hardlimit);
 Datum
 diskquota_disable_hardlimit(PG_FUNCTION_ARGS)
 {
-	if (!superuser())
+	Oid role;
+	role = get_role_oid("diskquota_admin", true);
+	if (!superuser() && !is_member_of_role(GetUserId(), role))
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("must be superuser to disable hardlimit")));
+				 errmsg("must be superuser or diskquota_admin to disable hardlimit")));
 
 	pg_atomic_write_u32(diskquota_hardlimit, false);
 
