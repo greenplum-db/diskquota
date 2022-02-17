@@ -1,20 +1,25 @@
 select * from diskquota.status();
 
-select from diskquota.enable_hardlimit();
+\! gpconfig -c "diskquota.hard_limit" -v "true" > /dev/null
+\! gpstop -u > /dev/null
 select * from diskquota.status();
 
-select from diskquota.disable_hardlimit();
+\! gpconfig -c "diskquota.hard_limit" -v "false" > /dev/null
+\! gpstop -u > /dev/null
 select * from diskquota.status();
 
 select from diskquota.pause();
 select * from diskquota.status();
 
-select from diskquota.enable_hardlimit();
+\! gpconfig -c "diskquota.hard_limit" -v "true" > /dev/null
+\! gpstop -u > /dev/null
 select * from diskquota.status();
 
-select from diskquota.disable_hardlimit();
+\! gpconfig -c "diskquota.hard_limit" -v "false" > /dev/null
+\! gpstop -u > /dev/null
 select * from diskquota.status();
 
 select from diskquota.resume();
-select from diskquota.disable_hardlimit();
+\! gpconfig -c "diskquota.hard_limit" -v "false" > /dev/null
+\! gpstop -u > /dev/null
 select * from diskquota.status();
