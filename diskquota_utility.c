@@ -339,11 +339,13 @@ dispatch_pause_or_resume_command(Oid dbid, bool pause_extension)
 Datum
 diskquota_pause(PG_FUNCTION_ARGS)
 {
-	if (!superuser())
+	Oid role;
+	role = get_role_oid("diskquota_admin", true);
+	if (!superuser() && !is_member_of_role(GetUserId(), role))
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("must be superuser to pause diskquota")));
+				 errmsg("must be superuser or diskquota_admin to pause diskquota")));
 	}
 
 	Oid dbid = MyDatabaseId;
@@ -383,11 +385,13 @@ diskquota_pause(PG_FUNCTION_ARGS)
 Datum
 diskquota_resume(PG_FUNCTION_ARGS)
 {
-	if (!superuser())
+	Oid role;
+	role = get_role_oid("diskquota_admin", true);
+	if (!superuser() && !is_member_of_role(GetUserId(), role))
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("must be superuser to resume diskquota")));
+				 errmsg("must be superuser or diskquota_admin to resume diskquota")));
 	}
 
 	Oid dbid = MyDatabaseId;
@@ -596,11 +600,13 @@ set_role_quota(PG_FUNCTION_ARGS)
 	char	   *sizestr;
 	int64		quota_limit_mb;
 
-	if (!superuser())
+	Oid role;
+	role = get_role_oid("diskquota_admin", true);
+	if (!superuser() && !is_member_of_role(GetUserId(), role))
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("must be superuser to set disk quota limit")));
+				 errmsg("must be superuser or diskquota_admin to set disk quota limit")));
 	}
 
 	rolname = text_to_cstring(PG_GETARG_TEXT_PP(0));
@@ -632,11 +638,13 @@ set_schema_quota(PG_FUNCTION_ARGS)
 	char	   *sizestr;
 	int64		quota_limit_mb;
 
-	if (!superuser())
+	Oid role;
+	role = get_role_oid("diskquota_admin", true);
+	if (!superuser() && !is_member_of_role(GetUserId(), role))
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("must be superuser to set disk quota limit")));
+				 errmsg("must be superuser or diskquota_admin to set disk quota limit")));
 	}
 
 	nspname = text_to_cstring(PG_GETARG_TEXT_PP(0));
@@ -674,11 +682,13 @@ set_role_tablespace_quota(PG_FUNCTION_ARGS)
 	char   	*sizestr;
 	int64	quota_limit_mb;
 	
-	if (!superuser())
+	Oid role;
+	role = get_role_oid("diskquota_admin", true);
+	if (!superuser() && !is_member_of_role(GetUserId(), role))
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("must be superuser to set disk quota limit")));
+				 errmsg("must be superuser or diskquota_admin to set disk quota limit")));
 	}
 
 	rolname = text_to_cstring(PG_GETARG_TEXT_PP(0));
@@ -722,11 +732,13 @@ set_schema_tablespace_quota(PG_FUNCTION_ARGS)
 	char   	*sizestr;
 	int64	quota_limit_mb;
 	
-	if (!superuser())
+	Oid role;
+	role = get_role_oid("diskquota_admin", true);
+	if (!superuser() && !is_member_of_role(GetUserId(), role))
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("must be superuser to set disk quota limit")));
+				 errmsg("must be superuser or diskquota_admin to set disk quota limit")));
 	}
 
 	nspname = text_to_cstring(PG_GETARG_TEXT_PP(0));
@@ -1021,11 +1033,13 @@ update_diskquota_db_list(PG_FUNCTION_ARGS)
 	int	mode = PG_GETARG_INT32(1);
 	bool	found = false;
 
-	if (!superuser())
+	Oid role;
+	role = get_role_oid("diskquota_admin", true);
+	if (!superuser() && !is_member_of_role(GetUserId(), role))
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("must be superuser to update db list")));
+				 errmsg("must be superuser or diskquota_admin to update db list")));
 	}
 
 	/* add/remove the dbid to monitoring database cache to filter out table not under
@@ -1069,11 +1083,15 @@ set_per_segment_quota(PG_FUNCTION_ARGS)
 	Oid		spcoid;
 	char	   	*spcname;
 	float4		ratio;
-	if (!superuser())
+	
+	Oid role;
+	role = get_role_oid("diskquota_admin", true);
+	
+	if (!superuser() && !is_member_of_role(GetUserId(), role))
 	{
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("must be superuser to set disk quota limit")));
+				 errmsg("must be superuser or diskquota_admin to set disk quota limit")));
 	}
 
 	spcname = text_to_cstring(PG_GETARG_TEXT_PP(0));
