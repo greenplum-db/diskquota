@@ -11,7 +11,7 @@ DROP EXTENSION diskquota;
 CREATE EXTENSION diskquota;
 SELECT diskquota.wait_for_worker_new_epoch();
 
-\! gpconfig -c "diskquota.hard_limit" -v "true" > /dev/null
+\! gpconfig -c "diskquota.hard_limit" -v "on" > /dev/null
 \! gpstop -u > /dev/null
 
 CREATE SCHEMA SX;

@@ -1,5 +1,5 @@
 -- Test that diskquota is able to cancel a running CTAS query by the schema quota.
-\! gpconfig -c "diskquota.hard_limit" -v "true" > /dev/null
+\! gpconfig -c "diskquota.hard_limit" -v "on" > /dev/null
 \! gpstop -u > /dev/null
 
 CREATE SCHEMA hardlimit_s;

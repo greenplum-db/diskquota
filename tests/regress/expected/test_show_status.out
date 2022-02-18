@@ -5,7 +5,7 @@ select * from diskquota.status();
  hard limits | disabled
 (2 rows)
 
-\! gpconfig -c "diskquota.hard_limit" -v "true" > /dev/null
+\! gpconfig -c "diskquota.hard_limit" -v "on" > /dev/null
 \! gpstop -u > /dev/null
 select * from diskquota.status();
     name     | status  
@@ -34,7 +34,7 @@ select * from diskquota.status();
  hard limits | disabled
 (2 rows)
 
-\! gpconfig -c "diskquota.hard_limit" -v "true" > /dev/null
+\! gpconfig -c "diskquota.hard_limit" -v "on" > /dev/null
 \! gpstop -u > /dev/null
 select * from diskquota.status();
     name     | status 
