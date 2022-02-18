@@ -1,7 +1,7 @@
 CREATE SCHEMA hardlimit_s;
 SET search_path TO hardlimit_s;
 
-\! gpconfig -c "diskquota.hard_limit" -v "on" > /dev/null
+\! gpconfig -c "diskquota.hard_limit" -v "true" > /dev/null
 \! gpstop -u > /dev/null
 SELECT diskquota.set_schema_quota('hardlimit_s', '1 MB');
 SELECT diskquota.wait_for_worker_new_epoch();

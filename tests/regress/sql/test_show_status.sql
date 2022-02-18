@@ -1,6 +1,6 @@
 select * from diskquota.status();
 
-\! gpconfig -c "diskquota.hard_limit" -v "on" > /dev/null
+\! gpconfig -c "diskquota.hard_limit" -v "true" > /dev/null
 \! gpstop -u > /dev/null
 select * from diskquota.status();
 
@@ -11,7 +11,7 @@ select * from diskquota.status();
 select from diskquota.pause();
 select * from diskquota.status();
 
-\! gpconfig -c "diskquota.hard_limit" -v "on" > /dev/null
+\! gpconfig -c "diskquota.hard_limit" -v "true" > /dev/null
 \! gpstop -u > /dev/null
 select * from diskquota.status();
 

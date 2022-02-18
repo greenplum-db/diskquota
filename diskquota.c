@@ -255,7 +255,7 @@ define_guc_variables(void)
 							NULL,
 							NULL);
 	DefineCustomBoolVariable("diskquota.hard_limit",
-							"Set this to 'on' to enable disk-quota hardlimit.",
+							"Set this to 'true' to enable disk-quota hardlimit.",
 							NULL,
 							&diskquota_hardlimit,
 							false,
