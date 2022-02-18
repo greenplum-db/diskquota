@@ -1,5 +1,5 @@
 -- Test that diskquota is able to cancel a running CTAS query by the tablespace role quota.
-\! gpconfig -c "diskquota.hard_limit" -v "true" > /dev/null
+\! gpconfig -c "diskquota.hard_limit" -v "on" > /dev/null
 \! gpstop -u > /dev/null
 -- start_ignore
 \! mkdir -p /tmp/ctas_rolespc
@@ -44,5 +44,5 @@ RESET default_tablespace;
 DROP TABLESPACE ctas_rolespc;
 REVOKE USAGE ON SCHEMA diskquota FROM hardlimit_r;
 DROP ROLE hardlimit_r;
-\! gpconfig -c "diskquota.hard_limit" -v "false" > /dev/null
+\! gpconfig -c "diskquota.hard_limit" -v "off" > /dev/null
 \! gpstop -u > /dev/null

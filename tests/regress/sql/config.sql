@@ -6,7 +6,7 @@ CREATE DATABASE diskquota;
 
 \! gpconfig -c diskquota.naptime -v 0
 \! gpconfig -c max_worker_processes -v 20
-\! gpconfig -c diskquota.hard_limit -v "false"
+\! gpconfig -c diskquota.hard_limit -v "off"
 \! gpstop -raf
 --end_ignore
 

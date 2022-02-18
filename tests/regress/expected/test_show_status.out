@@ -5,7 +5,7 @@ select * from diskquota.status();
  hard limits | disabled
 (2 rows)
 
-\! gpconfig -c "diskquota.hard_limit" -v "true" > /dev/null
+\! gpconfig -c "diskquota.hard_limit" -v "on" > /dev/null
 \! gpstop -u > /dev/null
 select * from diskquota.status();
     name     | status  
@@ -14,7 +14,7 @@ select * from diskquota.status();
  hard limits | enabled
 (2 rows)
 
-\! gpconfig -c "diskquota.hard_limit" -v "false" > /dev/null
+\! gpconfig -c "diskquota.hard_limit" -v "off" > /dev/null
 \! gpstop -u > /dev/null
 select * from diskquota.status();
     name     |  status  
@@ -34,7 +34,7 @@ select * from diskquota.status();
  hard limits | disabled
 (2 rows)
 
-\! gpconfig -c "diskquota.hard_limit" -v "true" > /dev/null
+\! gpconfig -c "diskquota.hard_limit" -v "on" > /dev/null
 \! gpstop -u > /dev/null
 select * from diskquota.status();
     name     | status 
@@ -43,7 +43,7 @@ select * from diskquota.status();
  hard limits | paused
 (2 rows)
 
-\! gpconfig -c "diskquota.hard_limit" -v "false" > /dev/null
+\! gpconfig -c "diskquota.hard_limit" -v "off" > /dev/null
 \! gpstop -u > /dev/null
 select * from diskquota.status();
     name     |  status  
@@ -56,7 +56,7 @@ select from diskquota.resume();
 --
 (1 row)
 
-\! gpconfig -c "diskquota.hard_limit" -v "false" > /dev/null
+\! gpconfig -c "diskquota.hard_limit" -v "off" > /dev/null
 \! gpstop -u > /dev/null
 select * from diskquota.status();
     name     |  status  
