@@ -14,43 +14,28 @@
  *
  * -------------------------------------------------------------------------
  */
+#include "diskquota.h"
+#include "gp_activetable.h"
+
 #include "postgres.h"
 
-#include <unistd.h>
-#include <utils/timeout.h>
-
-#include "access/tupdesc.h"
+#include "funcapi.h"
 #include "access/xact.h"
-#include "catalog/indexing.h"
-#include "catalog/namespace.h"
-#include "catalog/pg_collation.h"
-#include "catalog/pg_database.h"
-#include "catalog/pg_extension.h"
-#include "catalog/pg_type.h"
 #include "cdb/cdbvars.h"
 #include "commands/dbcommands.h"
-#include "commands/extension.h"
 #include "executor/spi.h"
-#include "libpq/libpq-be.h"
-#include "miscadmin.h"
-#include "nodes/makefuncs.h"
-#include "pgstat.h"
+#include "port/atomics.h"
 #include "storage/ipc.h"
 #include "storage/proc.h"
 #include "tcop/idle_resource_cleaner.h"
 #include "tcop/utility.h"
-#include "utils/acl.h"
 #include "utils/builtins.h"
-#include "utils/fmgroids.h"
-#include "utils/formatting.h"
-#include "utils/memutils.h"
-#include "utils/numeric.h"
+#include "utils/faultinjector.h"
 #include "utils/ps_status.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
+#include "utils/timestamp.h"
 
-#include "gp_activetable.h"
-#include "diskquota.h"
 PG_MODULE_MAGIC;
 
 #define DISKQUOTA_DB	"diskquota"
@@ -64,6 +49,8 @@ static volatile sig_atomic_t got_sigusr1 = false;
 /* GUC variables */
 int			diskquota_naptime = 0;
 int			diskquota_max_active_tables = 0;
+int	        diskquota_worker_timeout = 60; /* default timeout is 60 seconds */
+bool		diskquota_hardlimit = false;
 
 DiskQuotaLocks diskquota_locks;
 ExtensionDDLMessage *extension_ddl_message = NULL;
@@ -72,19 +59,25 @@ ExtensionDDLMessage *extension_ddl_message = NULL;
 HTAB *disk_quota_worker_map = NULL;
 static int	num_db = 0;
 
-/*
- * diskquota_paused is a flag used to pause the extension (when the flag is
- * enabled, the extension keeps counting the disk usage but doesn't emit an
- * error when the disk usage limit is exceeded).
- */
-bool *diskquota_paused = NULL;
-
 bool
 diskquota_is_paused()
 {
-	LWLockAcquire(diskquota_locks.paused_lock, LW_SHARED);
-	bool paused = *diskquota_paused;
-	LWLockRelease(diskquota_locks.paused_lock);
+	Assert(MyDatabaseId != InvalidOid);
+	bool paused;
+
+	LWLockAcquire(diskquota_locks.worker_map_lock, LW_SHARED);
+	{
+		DiskQuotaWorkerEntry	*hash_entry;
+		bool					found;
+
+		hash_entry = (DiskQuotaWorkerEntry*) hash_search(disk_quota_worker_map,
+														(void*)&MyDatabaseId,
+														HASH_FIND,
+														&found);
+		paused = found ? hash_entry->is_paused : false;
+	}
+	LWLockRelease(diskquota_locks.worker_map_lock);
+
 	return paused;
 }
 
@@ -237,12 +230,35 @@ define_guc_variables(void)
 							NULL);
 
 	DefineCustomIntVariable("diskquota.max_active_tables",
-							"max number of active tables monitored by disk-quota",
+							"Max number of active tables monitored by disk-quota.",
 							NULL,
 							&diskquota_max_active_tables,
 							1 * 1024 * 1024,
 							1,
 							INT_MAX,
+							PGC_SIGHUP,
+							0,
+							NULL,
+							NULL,
+							NULL);
+
+	DefineCustomIntVariable("diskquota.worker_timeout",
+							"Duration between each check (in seconds).",
+							NULL,
+							&diskquota_worker_timeout,
+							60,
+							1,
+							INT_MAX,
+							PGC_SIGHUP,
+							0,
+							NULL,
+							NULL,
+							NULL);
+	DefineCustomBoolVariable("diskquota.hard_limit",
+							"Set this to 'on' to enable disk-quota hardlimit.",
+							NULL,
+							&diskquota_hardlimit,
+							false,
 							PGC_SIGHUP,
 							0,
 							NULL,
@@ -373,9 +389,12 @@ disk_quota_worker_main(Datum main_arg)
 			ProcessConfigFile(PGC_SIGHUP);
 		}
 
+		SIMPLE_FAULT_INJECTOR("diskquota_worker_main");
+
 		/* Do the work */
 		if (!diskquota_is_paused())
 			refresh_disk_quota_model(false);
+
 		worker_increase_epoch(MyDatabaseId);
 	}
 
@@ -832,18 +851,35 @@ on_del_db(Oid dbid, MessageResult * code)
 static void
 add_dbid_to_database_list(Oid dbid)
 {
-	StringInfoData str;
 	int			ret;
 
-	initStringInfo(&str);
-	appendStringInfo(&str, "insert into diskquota_namespace.database_list values(%u);", dbid);
+	Oid argt[1] = {INT4OID};
+	Datum argv[1] = {Int32GetDatum(dbid)};
 
-	/* errors will be cached in outer function */
-	ret = SPI_execute(str.data, false, 0);
-	if (ret != SPI_OK_INSERT)
-	{
-		ereport(ERROR, (errmsg("[diskquota launcher] SPI_execute sql:'%s', errno:%d", str.data, errno)));
+	ret = SPI_execute_with_args(
+			"select * from diskquota_namespace.database_list where dbid = $1",
+			1, argt, argv, NULL, true, 0);
+
+	if (ret != SPI_OK_SELECT)
+		ereport(ERROR, (errmsg(
+					"[diskquota launcher] error occured while checking database_list, "
+					" code = %d errno = %d", ret, errno)));
+
+	if (SPI_processed == 1) {
+		ereport(WARNING, (errmsg(
+						"[diskquota launcher] database id %d is already actived, "
+						"skip database_list update", dbid)));
+		return;
 	}
+
+	ret = SPI_execute_with_args("insert into diskquota_namespace.database_list values($1)",
+			1, argt,argv, NULL, false, 0);
+
+	if (ret != SPI_OK_INSERT || SPI_processed != 1)
+		ereport(ERROR, (errmsg(
+					"[diskquota launcher] error occured while updating database_list, "
+					" code = %d errno = %d", ret, errno)));
+
 	return;
 }
 
@@ -1001,7 +1037,8 @@ start_worker_by_dboid(Oid dbid)
 	{
 		workerentry->handle = handle;
 		workerentry->pid = pid;
-		workerentry->epoch = 0;
+		pg_atomic_write_u32(&(workerentry->epoch), 0);
+		workerentry->is_paused = false;
 	}
 
 	LWLockRelease(diskquota_locks.worker_map_lock);
@@ -1029,40 +1066,40 @@ is_valid_dbid(Oid dbid)
 bool
 worker_increase_epoch(Oid database_oid)
 {
-	LWLockAcquire(diskquota_locks.worker_map_lock, LW_EXCLUSIVE);
+	LWLockAcquire(diskquota_locks.worker_map_lock, LW_SHARED);
 
 	bool found = false;
 	DiskQuotaWorkerEntry * workerentry = (DiskQuotaWorkerEntry *) hash_search(
 		disk_quota_worker_map, (void *) &database_oid, HASH_FIND, &found);
-	
+
 	if (found)
 	{
-		++(workerentry->epoch);
+		pg_atomic_fetch_add_u32(&(workerentry->epoch), 1);
 	}
 	LWLockRelease(diskquota_locks.worker_map_lock);
 	return found;
 }
 
-unsigned int
+uint32
 worker_get_epoch(Oid database_oid)
 {
 	LWLockAcquire(diskquota_locks.worker_map_lock, LW_SHARED);
 
 	bool found = false;
-	unsigned int epoch = 0;
+	uint32 epoch = 0;
 	DiskQuotaWorkerEntry * workerentry = (DiskQuotaWorkerEntry *) hash_search(
 		disk_quota_worker_map, (void *) &database_oid, HASH_FIND, &found);
 	
 	if (found)
 	{
-		epoch = workerentry->epoch;
+		epoch = pg_atomic_read_u32(&(workerentry->epoch));
 	}
 	LWLockRelease(diskquota_locks.worker_map_lock);
 	if (!found)
 	{
 		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 						errmsg("[diskquota] worker not found for database \"%s\"",
-							   get_database_name(MyDatabaseId))));	
+							   get_database_name(database_oid))));	
 	}
 	return epoch;
 }
@@ -1072,4 +1109,153 @@ Datum
 show_worker_epoch(PG_FUNCTION_ARGS)
 {
 	PG_RETURN_UINT32(worker_get_epoch(MyDatabaseId));
+}
+
+static const char* diskquota_status_check_soft_limit() {
+	// should run on coordinator only.
+	Assert(IS_QUERY_DISPATCHER());
+
+	bool found, paused;
+	LWLockAcquire(diskquota_locks.worker_map_lock, LW_SHARED);
+	{
+		DiskQuotaWorkerEntry	*hash_entry;
+
+		hash_entry = (DiskQuotaWorkerEntry*) hash_search(disk_quota_worker_map,
+														(void*)&MyDatabaseId,
+														HASH_FIND,
+														&found);
+		paused = found ? hash_entry->is_paused : false;
+	}
+	LWLockRelease(diskquota_locks.worker_map_lock);
+
+	// if worker no booted, aka 'CREATE EXTENSION' not called, diskquota is paused
+	if (!found)
+		return "paused";
+
+	// if worker booted, check 'worker_map->is_paused'
+	return paused ? "paused" : "enabled";
+}
+
+static const char* diskquota_status_check_hard_limit()
+{
+	// should run on coordinator only.
+	Assert(IS_QUERY_DISPATCHER());
+
+	bool hardlimit = diskquota_hardlimit;
+
+	bool found, paused;
+	LWLockAcquire(diskquota_locks.worker_map_lock, LW_SHARED);
+	{
+		DiskQuotaWorkerEntry	*hash_entry;
+
+		hash_entry = (DiskQuotaWorkerEntry*) hash_search(disk_quota_worker_map,
+														(void*)&MyDatabaseId,
+														HASH_FIND,
+														&found);
+		paused = found ? hash_entry->is_paused : false;
+	}
+	LWLockRelease(diskquota_locks.worker_map_lock);
+
+	// if worker booted and 'worker_map->is_paused == true' and hardlimit is enabled
+	// hard limits should also paused
+	if (found && paused && hardlimit)
+		return "paused";
+
+	return hardlimit ? "enabled": "disabled";
+}
+
+PG_FUNCTION_INFO_V1(diskquota_status);
+Datum diskquota_status(PG_FUNCTION_ARGS)
+{
+	typedef struct Context {
+		int index;
+	} Context;
+
+	typedef struct FeatureStatus {
+		const char* name;
+		const char* (*status)(void);
+	} FeatureStatus;
+
+	static const FeatureStatus fs[] = {
+		{.name = "soft limits", .status = diskquota_status_check_soft_limit},
+		{.name = "hard limits", .status = diskquota_status_check_hard_limit},
+	};
+
+	FuncCallContext *funcctx;
+
+	if (SRF_IS_FIRSTCALL()) {
+		funcctx = SRF_FIRSTCALL_INIT();
+
+		MemoryContext oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+		{
+			TupleDesc tupdesc = CreateTemplateTupleDesc(2, false);
+			TupleDescInitEntry(tupdesc, 1, "name", TEXTOID, -1, 0);
+			TupleDescInitEntry(tupdesc, 2, "status", TEXTOID, -1, 0);
+			funcctx->tuple_desc = BlessTupleDesc(tupdesc);
+			Context *context = (Context *)palloc(sizeof(Context));
+			context->index = 0;
+			funcctx->user_fctx = context;
+		}
+		MemoryContextSwitchTo(oldcontext);
+	}
+
+	funcctx = SRF_PERCALL_SETUP();
+	Context *context = (Context *)funcctx->user_fctx;
+
+	if (context->index >= sizeof(fs) / sizeof(FeatureStatus)) {
+		SRF_RETURN_DONE(funcctx);
+	}
+
+	bool nulls[2] = {false, false};
+	Datum v[2] = {
+		DirectFunctionCall1(textin, CStringGetDatum(fs[context->index].name)),
+		DirectFunctionCall1(textin, CStringGetDatum(fs[context->index].status())),
+	};
+	ReturnSetInfo *rsi = (ReturnSetInfo *)fcinfo->resultinfo;
+	HeapTuple tuple = heap_form_tuple(rsi->expectedDesc, v, nulls);
+
+	context->index++;
+	SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
+}
+
+static bool
+check_for_timeout(TimestampTz start_time)
+{
+	long diff_secs = 0;
+	int diff_usecs = 0;
+	TimestampDifference(start_time, GetCurrentTimestamp(), &diff_secs, &diff_usecs);
+	if (diff_secs >= diskquota_worker_timeout)
+	{
+		ereport(NOTICE, (
+			errmsg("[diskquota] timeout when waiting for worker"),
+			errhint("please check if the bgworker is still alive.")));
+		return true;
+	}
+	return false;
+}
+
+PG_FUNCTION_INFO_V1(wait_for_worker_new_epoch);
+Datum
+wait_for_worker_new_epoch(PG_FUNCTION_ARGS)
+{
+	TimestampTz start_time = GetCurrentTimestamp();
+	uint32 current_epoch = worker_get_epoch(MyDatabaseId);
+	for (;;)
+	{
+		CHECK_FOR_INTERRUPTS();
+		if (check_for_timeout(start_time))
+			start_time = GetCurrentTimestamp();
+		uint32 new_epoch = worker_get_epoch(MyDatabaseId);
+		/* Unsigned integer underflow is OK */
+		if (new_epoch - current_epoch >= 2u)
+		{
+			PG_RETURN_BOOL(true);
+		}
+		/* Sleep for naptime to reduce CPU usage */
+		(void) WaitLatch(&MyProc->procLatch,
+						 WL_LATCH_SET | WL_TIMEOUT,
+						 diskquota_naptime ? diskquota_naptime : 1);
+		ResetLatch(&MyProc->procLatch);
+	}
+	PG_RETURN_BOOL(false);
 }

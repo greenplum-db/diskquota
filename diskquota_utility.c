@@ -17,20 +17,14 @@
  */
 #include "postgres.h"
 
-#include <unistd.h>
 #include <sys/stat.h>
 
 #include "access/aomd.h"
-#include "access/xact.h"
 #include "catalog/namespace.h"
 #include "catalog/objectaccess.h"
 #include "catalog/pg_collation.h"
-#include "catalog/pg_database.h"
 #include "catalog/pg_extension.h"
-#include "catalog/pg_tablespace.h"
-#include "catalog/pg_type.h"
 #include "catalog/pg_namespace.h"
-#include "catalog/pg_tablespace.h"
 #include "catalog/indexing.h"
 #include "commands/dbcommands.h"
 #include "commands/extension.h"
@@ -38,19 +32,14 @@
 #include "executor/spi.h"
 #include "nodes/makefuncs.h"
 #include "storage/proc.h"
-#include "tcop/utility.h"
-#include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/faultinjector.h"
 #include "utils/fmgroids.h"
 #include "utils/formatting.h"
-#include "utils/memutils.h"
 #include "utils/numeric.h"
-#include "utils/snapmgr.h"
 #include "libpq-fe.h"
 
 #include <cdb/cdbvars.h>
-#include <cdb/cdbutil.h>
 #include <cdb/cdbdisp_query.h>
 #include <cdb/cdbdispatchresult.h>
 
@@ -247,7 +236,7 @@ generate_insert_table_size_sql(StringInfoData *insert_buf, int extMajorVersion)
 Datum
 diskquota_start_worker(PG_FUNCTION_ARGS)
 {
-	int			rc;
+	int rc, launcher_pid;
 
 	/*
 	 * Lock on extension_ddl_lock to avoid multiple backend create diskquota
@@ -259,8 +248,9 @@ diskquota_start_worker(PG_FUNCTION_ARGS)
 	extension_ddl_message->cmd = CMD_CREATE_EXTENSION;
 	extension_ddl_message->result = ERR_PENDING;
 	extension_ddl_message->dbid = MyDatabaseId;
+	launcher_pid = extension_ddl_message->launcher_pid;
 	/* setup sig handler to diskquota launcher process */
-	rc = kill(extension_ddl_message->launcher_pid, SIGUSR1);
+	rc = kill(launcher_pid, SIGUSR1);
 	LWLockRelease(diskquota_locks.extension_ddl_message_lock);
 	if (rc == 0)
 	{
@@ -275,6 +265,11 @@ diskquota_start_worker(PG_FUNCTION_ARGS)
 			if (rc & WL_POSTMASTER_DEATH)
 				break;
 			ResetLatch(&MyProc->procLatch);
+
+			ereportif(kill(launcher_pid, 0) == -1 && errno == ESRCH, // do existence check
+					ERROR,
+					(errmsg("[diskquota] diskquota launcher pid = %d no longer exists", launcher_pid)));
+
 			LWLockAcquire(diskquota_locks.extension_ddl_message_lock, LW_SHARED);
 			if (extension_ddl_message->result != ERR_PENDING)
 			{
@@ -306,14 +301,19 @@ diskquota_start_worker(PG_FUNCTION_ARGS)
  * Dispatch pausing/resuming command to segments.
  */
 static void
-dispatch_pause_or_resume_command(bool pause_extension)
+dispatch_pause_or_resume_command(Oid dbid, bool pause_extension)
 {
 	CdbPgResults cdb_pgresults = {NULL, 0};
 	int			i;
 	StringInfoData sql;
 
 	initStringInfo(&sql);
-	appendStringInfo(&sql, "SELECT diskquota.%s", pause_extension ? "pause()" : "resume()");
+	appendStringInfo(&sql, "SELECT diskquota.%s", pause_extension ? "pause" : "resume");
+	if (dbid == InvalidOid) {
+		appendStringInfo(&sql, "()");
+	} else {
+		appendStringInfo(&sql, "(%d)", dbid);
+	}
 	CdbDispatchCommand(sql.data, DF_NONE, &cdb_pgresults);
 
 	for (i = 0; i < cdb_pgresults.numResults; ++i)
@@ -332,10 +332,9 @@ dispatch_pause_or_resume_command(bool pause_extension)
 }
 
 /*
- * Set diskquota_paused to true.
- * This function is called by user. After this function being called, diskquota
- * keeps counting the disk usage but doesn't emit an error when the disk usage
- * limit is exceeded.
+ * this function is called by user.
+ * pause diskquota in current or specific database.
+ * After this function being called, diskquota doesn't emit an error when the disk usage limit is exceeded.
  */
 Datum
 diskquota_pause(PG_FUNCTION_ARGS)
@@ -347,20 +346,39 @@ diskquota_pause(PG_FUNCTION_ARGS)
 				 errmsg("must be superuser to pause diskquota")));
 	}
 
-	LWLockAcquire(diskquota_locks.paused_lock, LW_EXCLUSIVE);
-	*diskquota_paused = true;
-	LWLockRelease(diskquota_locks.paused_lock);
+	Oid dbid = MyDatabaseId;
+	if (PG_NARGS() == 1) {
+		dbid = PG_GETARG_OID(0);
+	}
+
+	// pause current worker
+	LWLockAcquire(diskquota_locks.worker_map_lock, LW_EXCLUSIVE);
+	{
+		bool found;
+		DiskQuotaWorkerEntry *hentry;
+
+		hentry = (DiskQuotaWorkerEntry*) hash_search(disk_quota_worker_map,
+													(void*)&dbid,
+													// segment dose not boot the worker
+													// this will add new element on segment
+													// delete this element in diskquota_resume()
+													HASH_ENTER,
+													&found);
+
+		hentry->is_paused = true;
+	}
+	LWLockRelease(diskquota_locks.worker_map_lock);
 
 	if (IS_QUERY_DISPATCHER())
-		dispatch_pause_or_resume_command(true /* pause_extension */);
+		dispatch_pause_or_resume_command(PG_NARGS() == 0 ? InvalidOid : dbid,
+										 true /* pause_extension */);
 
 	PG_RETURN_VOID();
 }
 
 /*
- * Set diskquota_paused to false.
- * This function is called by user. After this function being called, diskquota
- * resume to emit an error when the disk usage limit is exceeded.
+ * this function is called by user.
+ * active diskquota in current or specific database
  */
 Datum
 diskquota_resume(PG_FUNCTION_ARGS)
@@ -372,12 +390,36 @@ diskquota_resume(PG_FUNCTION_ARGS)
 				 errmsg("must be superuser to resume diskquota")));
 	}
 
-	LWLockAcquire(diskquota_locks.paused_lock, LW_EXCLUSIVE);
-	*diskquota_paused = false;
-	LWLockRelease(diskquota_locks.paused_lock);
+	Oid dbid = MyDatabaseId;
+	if (PG_NARGS() == 1) {
+		dbid = PG_GETARG_OID(0);
+	}
+
+	// active current worker
+	LWLockAcquire(diskquota_locks.worker_map_lock, LW_EXCLUSIVE);
+	{
+		bool found;
+		DiskQuotaWorkerEntry *hentry;
+
+		hentry = (DiskQuotaWorkerEntry*) hash_search(disk_quota_worker_map,
+													(void*)&dbid,
+													HASH_FIND,
+													&found);
+		if (found) {
+			hentry->is_paused = false;
+		}
+
+		// remove the element since we do not need any more
+		// ref diskquota_pause()
+		if (found && hentry->handle == NULL) {
+			hash_search(disk_quota_worker_map, (void*)&dbid, HASH_REMOVE, &found);
+		}
+	}
+	LWLockRelease(diskquota_locks.worker_map_lock);
 
 	if (IS_QUERY_DISPATCHER())
-		dispatch_pause_or_resume_command(false /* pause_extension */);
+		dispatch_pause_or_resume_command(PG_NARGS() == 0 ? InvalidOid : dbid,
+										 false /* pause_extension */);
 
 	PG_RETURN_VOID();
 }
@@ -450,7 +492,7 @@ dq_object_access_hook(ObjectAccessType access, Oid classId,
 					  Oid objectId, int subId, void *arg)
 {
 	Oid			oid;
-	int			rc;
+	int			rc, launcher_pid;
 
 	if (access != OAT_DROP || classId != ExtensionRelationId)
 		goto out;
@@ -468,7 +510,8 @@ dq_object_access_hook(ObjectAccessType access, Oid classId,
 	extension_ddl_message->cmd = CMD_DROP_EXTENSION;
 	extension_ddl_message->result = ERR_PENDING;
 	extension_ddl_message->dbid = MyDatabaseId;
-	rc = kill(extension_ddl_message->launcher_pid, SIGUSR1);
+	launcher_pid = extension_ddl_message->launcher_pid;
+	rc = kill(launcher_pid, SIGUSR1);
 	LWLockRelease(diskquota_locks.extension_ddl_message_lock);
 	if (rc == 0)
 	{
@@ -483,6 +526,11 @@ dq_object_access_hook(ObjectAccessType access, Oid classId,
 			if (rc & WL_POSTMASTER_DEATH)
 				break;
 			ResetLatch(&MyProc->procLatch);
+
+			ereportif(kill(launcher_pid, 0) == -1 && errno == ESRCH, // do existence check
+					ERROR,
+					(errmsg("[diskquota] diskquota launcher pid = %d no longer exists", launcher_pid)));
+
 			LWLockAcquire(diskquota_locks.extension_ddl_message_lock, LW_SHARED);
 			if (extension_ddl_message->result != ERR_PENDING)
 			{

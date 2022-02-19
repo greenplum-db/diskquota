@@ -32,16 +32,6 @@ RETURNS void STRICT
 AS 'MODULE_PATHNAME', 'diskquota_resume'
 LANGUAGE C;
 
-CREATE OR REPLACE FUNCTION diskquota.enable_hardlimit()
-RETURNS void STRICT
-AS 'MODULE_PATHNAME', 'diskquota_enable_hardlimit'
-LANGUAGE C;
-
-CREATE OR REPLACE FUNCTION diskquota.disable_hardlimit()
-RETURNS void STRICT
-AS 'MODULE_PATHNAME', 'diskquota_disable_hardlimit'
-LANGUAGE C;
-
 CREATE TYPE diskquota.blackmap_entry AS
   (target_oid oid, database_oid oid, tablespace_oid oid, target_type integer, seg_exceeded boolean);
 CREATE FUNCTION diskquota.refresh_blackmap(diskquota.blackmap_entry[], oid[])
@@ -117,3 +107,9 @@ CREATE TYPE diskquota.diskquota_active_table_type AS ("TABLE_OID" oid,  "TABLE_S
 CREATE OR REPLACE FUNCTION diskquota.diskquota_fetch_table_stat(int4, oid[]) RETURNS setof diskquota.diskquota_active_table_type
 AS 'MODULE_PATHNAME', 'diskquota_fetch_table_stat'
 LANGUAGE C VOLATILE;
+
+-- returns the current status in current database
+CREATE OR REPLACE FUNCTION diskquota.status()
+RETURNS TABLE ("name" text, "status" text) STRICT
+AS 'MODULE_PATHNAME', 'diskquota_status'
+LANGUAGE C;

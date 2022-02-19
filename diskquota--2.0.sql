@@ -93,16 +93,6 @@ RETURNS void STRICT
 AS 'MODULE_PATHNAME', 'diskquota_resume'
 LANGUAGE C;
 
-CREATE OR REPLACE FUNCTION diskquota.enable_hardlimit()
-RETURNS void STRICT
-AS 'MODULE_PATHNAME', 'diskquota_enable_hardlimit'
-LANGUAGE C;
-
-CREATE OR REPLACE FUNCTION diskquota.disable_hardlimit()
-RETURNS void STRICT
-AS 'MODULE_PATHNAME', 'diskquota_disable_hardlimit'
-LANGUAGE C;
-
 CREATE VIEW diskquota.show_fast_schema_quota_view AS
 select pgns.nspname as schema_name, pgc.relnamespace as schema_oid, qc.quotalimitMB as quota_in_mb, sum(ts.size) as nspsize_in_bytes
 from diskquota.table_size as ts,
@@ -214,24 +204,16 @@ LANGUAGE C;
 --    In this case, we must ensure this UDF can be interrupted by the user.
 CREATE OR REPLACE FUNCTION diskquota.wait_for_worker_new_epoch()
 RETURNS boolean STRICT
-AS $$
-DECLARE
-        current_epoch bigint;
-        new_epoch bigint;
-BEGIN
-        current_epoch := diskquota.show_worker_epoch();
-        LOOP
-                new_epoch := diskquota.show_worker_epoch();
-                IF new_epoch <> current_epoch THEN
-                        current_epoch := new_epoch;
-                        LOOP
-                                new_epoch := diskquota.show_worker_epoch();
-                                IF new_epoch <> current_epoch THEN
-                                        RETURN TRUE;
-                                END IF;
-                        END LOOP;
-                END IF;
-        END LOOP;
-        RETURN FALSE;
-END;
-$$ LANGUAGE PLpgSQL;
+AS 'MODULE_PATHNAME', 'wait_for_worker_new_epoch'
+LANGUAGE C;
+
+-- returns the current status in current database
+CREATE OR REPLACE FUNCTION diskquota.status()
+RETURNS TABLE ("name" text, "status" text) STRICT
+AS 'MODULE_PATHNAME', 'diskquota_status'
+LANGUAGE C;
+
+-- re-dispatch pause status to false. in case user pause-drop-recreate.
+-- refer to see test case 'test_drop_after_pause'
+SELECT from diskquota.resume();
+

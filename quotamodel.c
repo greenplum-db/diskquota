@@ -13,52 +13,32 @@
  *
  * -------------------------------------------------------------------------
  */
+#include "diskquota.h"
+#include "gp_activetable.h"
+#include "relation_cache.h"
+
 #include "postgres.h"
 
-#include "access/heapam.h"
-#include "access/htup_details.h"
-#include "access/reloptions.h"
-#include "access/skey.h"
-#include "access/transam.h"
-#include "access/tupdesc.h"
 #include "access/xact.h"
-#include "catalog/indexing.h"
-#include "catalog/namespace.h"
-#include "catalog/pg_class.h"
-#include "catalog/pg_database.h"
 #include "catalog/pg_tablespace.h"
-#include "catalog/pg_type.h"
 #include "commands/dbcommands.h"
 #include "commands/tablespace.h"
 #include "executor/spi.h"
 #include "funcapi.h"
-#include "lib/stringinfo.h"
-#include "miscadmin.h"
-#include "nodes/makefuncs.h"
 #include "storage/ipc.h"
-#include "storage/latch.h"
-#include "storage/lwlock.h"
-#include "storage/relfilenode.h"
-#include "storage/shmem.h"
+#include "port/atomics.h"
 #include "utils/builtins.h"
 #include "utils/guc.h"
 #include "utils/faultinjector.h"
-#include "utils/fmgroids.h"
 #include "utils/lsyscache.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "libpq-fe.h"
 
-#include <stdlib.h>
-#include <math.h>
 #include "cdb/cdbvars.h"
 #include "cdb/cdbdisp_query.h"
 #include "cdb/cdbdispatchresult.h"
 #include "cdb/cdbutil.h"
-
-#include "gp_activetable.h"
-#include "diskquota.h"
-#include "relation_cache.h"
 
 /* cluster level max size of black list */
 #define MAX_DISK_QUOTA_BLACK_ENTRIES (1024 * 1024)
@@ -185,8 +165,6 @@ static HTAB *table_size_map = NULL;
 /* black list for database objects which exceed their quota limit */
 static HTAB *disk_quota_black_map = NULL;
 static HTAB *local_disk_quota_black_map = NULL;
-
-bool *diskquota_hardlimit = NULL;
 
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 
@@ -431,8 +409,7 @@ disk_quota_shmem_startup(void)
 	 * Four shared memory data. extension_ddl_message is used to handle
 	 * diskquota extension create/drop command. disk_quota_black_map is used
 	 * to store out-of-quota blacklist. active_tables_map is used to store
-	 * active tables whose disk usage is changed. diskquota_paused is a flag
-	 * used to pause the extension.
+	 * active tables whose disk usage is changed.
 	 */
 	extension_ddl_message = ShmemInitStruct("disk_quota_extension_ddl_message",
 											sizeof(ExtensionDDLMessage),
@@ -465,18 +442,6 @@ disk_quota_shmem_startup(void)
 			MAX_NUM_MONITORED_DB,
 			&hash_ctl,
 			HASH_ELEM | HASH_FUNCTION);
-
-	diskquota_paused = ShmemInitStruct("diskquota_paused",
-											sizeof(bool),
-											&found);
-	if (!found)
-		memset((void *) diskquota_paused, 0, sizeof(bool));
-
-	diskquota_hardlimit = ShmemInitStruct("diskquota_hardlimit",
-										  sizeof(bool),
-										  &found);
-	if (!found)
-		memset((void *) diskquota_hardlimit, 0, sizeof(bool));
 
 	/* use disk_quota_worker_map to manage diskquota worker processes. */
 	memset(&hash_ctl, 0, sizeof(hash_ctl));
@@ -511,9 +476,7 @@ init_lwlocks(void)
 	diskquota_locks.extension_ddl_message_lock = LWLockAssign();
 	diskquota_locks.extension_ddl_lock = LWLockAssign();
 	diskquota_locks.monitoring_dbid_cache_lock = LWLockAssign();
-	diskquota_locks.paused_lock = LWLockAssign();
 	diskquota_locks.relation_cache_lock = LWLockAssign();
-	diskquota_locks.hardlimit_lock = LWLockAssign();
 	diskquota_locks.worker_map_lock = LWLockAssign();
 	diskquota_locks.altered_reloid_cache_lock = LWLockAssign();
 }
@@ -535,8 +498,6 @@ DiskQuotaShmemSize(void)
 	size = add_size(size, hash_estimate_size(MAX_NUM_MONITORED_DB, sizeof(Oid)));
 	size = add_size(size, hash_estimate_size(MAX_NUM_MONITORED_DB, sizeof(DiskQuotaWorkerEntry)));
 	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(Oid)));
-	size += sizeof(bool); /* sizeof(*diskquota_paused) */
-	size += sizeof(bool); /* sizeof(*diskquota_hardlimit) */
 	return size;
 }
 
@@ -741,7 +702,6 @@ refresh_disk_quota_usage(bool is_init)
 	bool		pushed_active_snap = false;
 	bool		ret = true;
 	HTAB	   *local_active_table_stat_map = NULL;
-	bool		enable_hardlimit;
 
 	StartTransactionCommand();
 
@@ -776,10 +736,7 @@ refresh_disk_quota_usage(bool is_init)
 		/* copy local black map back to shared black map */
 		flush_local_black_map();
 		/* Dispatch blackmap entries to segments to perform hard-limit. */
-		LWLockAcquire(diskquota_locks.hardlimit_lock, LW_SHARED);
-		enable_hardlimit = *diskquota_hardlimit;
-		LWLockRelease(diskquota_locks.hardlimit_lock);
-		if (enable_hardlimit)
+		if (diskquota_hardlimit)
 			dispatch_blackmap(local_active_table_stat_map);
 		hash_destroy(local_active_table_stat_map);
 	}
@@ -1610,9 +1567,7 @@ quota_check_common(Oid reloid, RelFileNode *relfilenode)
 	if (OidIsValid(reloid))
 		return check_blackmap_by_reloid(reloid);
 
-	LWLockAcquire(diskquota_locks.hardlimit_lock, LW_SHARED);
-	enable_hardlimit = *diskquota_hardlimit;
-	LWLockRelease(diskquota_locks.hardlimit_lock);
+	enable_hardlimit = diskquota_hardlimit;
 
 #ifdef FAULT_INJECTOR
 	if (SIMPLE_FAULT_INJECTOR("enable_check_quota_by_relfilenode") == FaultInjectorTypeSkip)
@@ -2178,85 +2133,4 @@ show_blackmap(PG_FUNCTION_ARGS)
 	}
 
 	SRF_RETURN_DONE(funcctx);
-}
-
-static void
-dispatch_hardlimit_flag(bool enable_hardlimit)
-{
-	CdbPgResults		cdb_pgresults = {NULL, 0};
-	int					i;
-	StringInfoData		sql;
-
-	initStringInfo(&sql);
-	appendStringInfo(&sql, "SELECT diskquota.%s",
-					 enable_hardlimit ? "enable_hardlimit()" : "disable_hardlimit()");
-	CdbDispatchCommand(sql.data, DF_NONE, &cdb_pgresults);
-
-	for (i = 0; i < cdb_pgresults.numResults; ++i)
-	{
-		PGresult *pgresult = cdb_pgresults.pg_results[i];
-		if (PQresultStatus(pgresult) != PGRES_TUPLES_OK)
-		{
-			cdbdisp_clearCdbPgResults(&cdb_pgresults);
-			ereport(ERROR,
-					(errmsg("[diskquota] cannot %s hardlimit on segments, encounter unexpected result from segment: %d",
-							enable_hardlimit ? "enable" : "disable",
-							PQresultStatus(pgresult))));
-		}
-	}
-	cdbdisp_clearCdbPgResults(&cdb_pgresults);
-}
-
-PG_FUNCTION_INFO_V1(diskquota_enable_hardlimit);
-Datum
-diskquota_enable_hardlimit(PG_FUNCTION_ARGS)
-{
-	if (!superuser())
-		ereport(ERROR,
-				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("must be superuser to enable hardlimit")));
-
-	/*
-	 * If this UDF is executed on segment servers, we should clear
-	 * the blackmap firstly, or the relation may be blocked by the
-	 * blackmap dispatched by the previous iteration.
-	 */
-	if (!IS_QUERY_DISPATCHER())
-	{
-		HASH_SEQ_STATUS			hash_seq;
-		GlobalBlackMapEntry	   *blackmapentry;
-		LWLockAcquire(diskquota_locks.black_map_lock, LW_EXCLUSIVE);
-		hash_seq_init(&hash_seq, disk_quota_black_map);
-		while ((blackmapentry = hash_seq_search(&hash_seq)) != NULL)
-			hash_search(disk_quota_black_map, &blackmapentry->keyitem, HASH_REMOVE, NULL);
-		LWLockRelease(diskquota_locks.black_map_lock);
-	}
-
-	LWLockAcquire(diskquota_locks.hardlimit_lock, LW_EXCLUSIVE);
-	*diskquota_hardlimit = true;
-	LWLockRelease(diskquota_locks.hardlimit_lock);
-
-	if (IS_QUERY_DISPATCHER())
-		dispatch_hardlimit_flag(true /*enable_hardlimit*/);
-
-	PG_RETURN_VOID();
-}
-
-PG_FUNCTION_INFO_V1(diskquota_disable_hardlimit);
-Datum
-diskquota_disable_hardlimit(PG_FUNCTION_ARGS)
-{
-	if (!superuser())
-		ereport(ERROR,
-				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("must be superuser to disable hardlimit")));
-
-	LWLockAcquire(diskquota_locks.hardlimit_lock, LW_EXCLUSIVE);
-	*diskquota_hardlimit = false;
-	LWLockRelease(diskquota_locks.hardlimit_lock);
-
-	if (IS_QUERY_DISPATCHER())
-		dispatch_hardlimit_flag(false /*enable_hardlimit*/);
-
-	PG_RETURN_VOID();
 }
