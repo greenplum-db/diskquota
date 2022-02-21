@@ -57,7 +57,7 @@ case ${pipeline_config} in
     ;;
   commit)
       if [ -z "${pipeline_name}" ]; then
-          pipeline_name="COMMIT:diskquota/gpdb"
+          pipeline_name="COMMIT:diskquota:gpdb"
       fi
       # Default branch is 'gpdb' as it is our main branch
       if [ -z "${branch}" ]; then

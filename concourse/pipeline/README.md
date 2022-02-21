@@ -3,7 +3,7 @@
 ## Naming Prefix Rule
 
 - `PR:<project_name>` for pull-request pipelines
-- `COMMIT:<project_name>/<branch_name>` for branch pipelines. It will be executed when a commit committed/merged into the branch.
+- `COMMIT:<project_name>:<branch_name>` for branch pipelines. It will be executed when a commit committed/merged into the branch.
 - `DEV:<your_name>_<project_name>[any_other_info]` for personal development usage. Put your name into the pipeline name so others can know who own it.
 
 ## Pipelines for daily work
@@ -15,7 +15,7 @@ https://extensions.ci.gpdb.pivotal.io/teams/main/pipelines/PR:diskquota
 ### Main Branch Pipeline
 
 The development happens on the `gpdb` branch. The commit pipeline for the `gpdb`
-https://extensions.ci.gpdb.pivotal.io/teams/main/pipelines/COMMIT:diskquota/gpdb
+https://extensions.ci.gpdb.pivotal.io/teams/main/pipelines/COMMIT:diskquota:gpdb
 
 
 # Fly a pipeline
