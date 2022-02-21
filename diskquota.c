@@ -316,9 +316,12 @@ disk_quota_worker_main(Datum main_arg)
 		}
 		rc = WaitLatch(&MyProc->procLatch,
 					   WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
-					   // be nice to scheduler when naptime == 0 and diskquota_is_paused() == true
-					   diskquota_naptime == 0 ? usleep(1), 0 : diskquota_naptime * 1000L);
+					   diskquota_naptime * 1000L);
 		ResetLatch(&MyProc->procLatch);
+
+		// be nice to scheduler when naptime == 0 and diskquota_is_paused() == true
+		if (!diskquota_naptime)
+			usleep(1);
 
 		/* Emergency bailout if postmaster has died */
 		if (rc & WL_POSTMASTER_DEATH)
@@ -360,9 +363,12 @@ disk_quota_worker_main(Datum main_arg)
 		 */
 		rc = WaitLatch(&MyProc->procLatch,
 					   WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
-					   // be nice to scheduler when naptime == 0 and diskquota_is_paused() == true
-					   diskquota_naptime == 0 ? usleep(1), 0:  diskquota_naptime * 1000L);
+					   diskquota_naptime * 1000L);
 		ResetLatch(&MyProc->procLatch);
+
+		// be nice to scheduler when naptime == 0 and diskquota_is_paused() == true
+		if (!diskquota_naptime)
+			usleep(1);
 
 		/* Emergency bailout if postmaster has died */
 		if (rc & WL_POSTMASTER_DEATH)
@@ -462,9 +468,12 @@ disk_quota_launcher_main(Datum main_arg)
 		 */
 		rc = WaitLatch(&MyProc->procLatch,
 					   WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
-					   // wait at least one time slice, avoid 100% CPU usage
-					   diskquota_naptime == 0 ? usleep(1), 0 : diskquota_naptime * 1000L);
+					   diskquota_naptime * 1000L);
 		ResetLatch(&MyProc->procLatch);
+
+		// wait at least one time slice, avoid 100% CPU usage
+		if (!diskquota_naptime)
+			usleep(1);
 
 		/* Emergency bailout if postmaster has died */
 		if (rc & WL_POSTMASTER_DEATH)
