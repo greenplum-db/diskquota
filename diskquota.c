@@ -56,6 +56,8 @@ PG_MODULE_MAGIC;
 #define DISKQUOTA_DB	"diskquota"
 #define DISKQUOTA_APPLICATION_NAME  "gp_reserved_gpdiskquota"
 
+extern int usleep(useconds_t usec); // in <unistd.h>
+
 /* flags set by signal handlers */
 static volatile sig_atomic_t got_sighup = false;
 static volatile sig_atomic_t got_sigterm = false;
