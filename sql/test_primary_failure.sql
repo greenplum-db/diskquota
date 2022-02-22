@@ -60,7 +60,7 @@ select pg_sleep(10);
 select pg_recoverseg((select datadir from gp_segment_configuration c where c.role='p' and c.content=-1), 'ar');
 select pg_sleep(10);
 -- check GPDB status
-select content, preferred_role, role, status, mode from gp_segment_configuration where content = 0;
+select content, preferred_role, role, status, mode from gp_segment_configuration;
 SELECT pg_sleep(10);
 -- end_ignore
 
@@ -69,3 +69,9 @@ INSERT INTO a SELECT generate_series(1,100);
 
 DROP TABLE a;
 DROP SCHEMA ftsr CASCADE;
+
+-- FIXME: The dbid cache won't be dispatched automatically while switching mirrors.
+-- Do a ADD_DB_TO_MONITOR manually here, otherwise warning:
+-- "cannot remove the database from db list, dbid not found"
+-- will be emitted in the clean test.
+SELECT diskquota.diskquota_fetch_table_stat(2, ARRAY[]::oid[]) FROM gp_dist_random('gp_id');

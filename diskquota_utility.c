@@ -50,7 +50,6 @@ PG_FUNCTION_INFO_V1(init_table_size_table);
 PG_FUNCTION_INFO_V1(diskquota_start_worker);
 PG_FUNCTION_INFO_V1(set_schema_quota);
 PG_FUNCTION_INFO_V1(set_role_quota);
-PG_FUNCTION_INFO_V1(update_diskquota_db_list);
 
 /* timeout count to wait response from launcher process, in 1/10 sec */
 #define WAIT_TIME_COUNT  1200
@@ -294,6 +293,17 @@ dq_object_access_hook(ObjectAccessType access, Oid classId,
 	oid = get_extension_oid("diskquota", true);
 	if (oid != objectId)
 		goto out;
+
+	/* 
+	 * Remove the current database from monitored db cache 
+	 * on all segments and on coordinator.
+	 */
+	update_diskquota_db_list(MyDatabaseId, HASH_REMOVE);
+
+	if (!IS_QUERY_DISPATCHER())
+	{
+		return;
+	}
 
 	/*
 	 * Lock on extension_ddl_lock to avoid multiple backend create diskquota
@@ -642,38 +652,29 @@ get_size_in_mb(char *str)
 
 /*
  * Function to update the db list on each segment
+ * Will print a WARNING to log if out of memory
  */
-Datum
-update_diskquota_db_list(PG_FUNCTION_ARGS)
+void
+update_diskquota_db_list(Oid dbid, HASHACTION action)
 {
-	Oid	dbid = PG_GETARG_OID(0);
-	int	mode = PG_GETARG_INT32(1);
 	bool	found = false;
-
-	if (!superuser())
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("must be superuser to update db list")));
-	}
 
 	/* add/remove the dbid to monitoring database cache to filter out table not under
 	* monitoring in hook functions
 	*/
 
 	LWLockAcquire(diskquota_locks.monitoring_dbid_cache_lock, LW_EXCLUSIVE);
-	if (mode == 0)
+	if (action == HASH_ENTER)
 	{	
 		Oid *entry = NULL;
-		entry = hash_search(monitoring_dbid_cache, &dbid, HASH_ENTER, &found);
-		elog(WARNING, "add dbid %u into SHM", dbid);
-		if (!found && entry == NULL)
+		entry = hash_search(monitoring_dbid_cache, &dbid, HASH_ENTER_NULL, &found);
+		if (entry == NULL)
 		{
 			ereport(WARNING,
 				(errmsg("can't alloc memory on dbid cache, there ary too many databases to monitor")));
 		}
 	}
-	else if (mode == 1)
+	else if (action == HASH_REMOVE)
 	{
 		hash_search(monitoring_dbid_cache, &dbid, HASH_REMOVE, &found);
 		if (!found)
@@ -683,7 +684,4 @@ update_diskquota_db_list(PG_FUNCTION_ARGS)
 		}
 	}
 	LWLockRelease(diskquota_locks.monitoring_dbid_cache_lock);
-
-	PG_RETURN_VOID();
-
 }

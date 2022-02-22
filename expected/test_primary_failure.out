@@ -280,3 +280,12 @@ DROP SCHEMA ftsr CASCADE;
 NOTICE:  drop cascades to 2 other objects
 DETAIL:  drop cascades to function pg_ctl(text,text,text)
 drop cascades to function pg_recoverseg(text,text)
+-- FIXME: The dbid cache won't be dispatched automatically while switching mirrors.
+-- Do a ADD_DB_TO_MONITOR manually here, otherwise warning:
+-- "cannot remove the database from db list, dbid not found"
+-- will be emitted in the clean test.
+SELECT diskquota.diskquota_fetch_table_stat(2, ARRAY[]::oid[]) FROM gp_dist_random('gp_id');
+ diskquota_fetch_table_stat 
+----------------------------
+(0 rows)
+

@@ -21,6 +21,9 @@ RETURNS void STRICT
 AS 'MODULE_PATHNAME'
 LANGUAGE C;
 
+-- This UDF won't be used. But we keep it here so that it would be the same with
+-- 1.0.3. Easier for 2.x upgrade design. Be notice that, the C function is not
+-- there anymore, calling this UDF will report an error
 CREATE FUNCTION diskquota.update_diskquota_db_list(oid, int4)
 RETURNS void STRICT
 AS 'MODULE_PATHNAME'
