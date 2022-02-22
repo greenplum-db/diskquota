@@ -21,7 +21,8 @@
 #@     centos6_gpdb6_conf(),
 #@     centos7_gpdb6_conf(),
 #@     rhel8_gpdb6_conf(),
-#@     ubuntu18_gpdb6_conf()]
+#@     ubuntu18_gpdb6_conf()
+    ]
 #@ }
 jobs:
 - #@ build_test_job(job_param)
