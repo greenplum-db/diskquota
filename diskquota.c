@@ -347,7 +347,8 @@ disk_quota_worker_main(Datum main_arg)
 			usleep(1);
 
 		/* Emergency bailout if postmaster has died */
-		if (rc & WL_POSTMASTER_DEATH) {
+		if (rc & WL_POSTMASTER_DEATH)
+		{
 			ereport(LOG, (errmsg(term_postmaster_msg, dbname)));
 			proc_exit(1);
 		}
