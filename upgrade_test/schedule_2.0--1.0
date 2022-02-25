@@ -1,0 +1,7 @@
+test: 2.0_install
+test: 2.0_set_quota
+test: 2.0_catalog
+test: 1.0_migrate_to_version_1x
+test: 1.0_catalog
+test: 2.0_test_quota_in_1x
+test: 2.0_cleanup_quota
