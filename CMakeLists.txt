@@ -63,6 +63,11 @@ list(
 
 add_library(diskquota MODULE ${diskquota_SRC})
 
+# pg_config do not give us the `--prefix` we use `../../` as a workaround
+if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
+  set(CMAKE_INSTALL_PREFIX "${PG_PKG_LIB_DIR}/../../")
+endif()
+
 set_target_properties(
   diskquota
   PROPERTIES OUTPUT_NAME ${DISKQUOTA_BINARY_NAME}
@@ -70,6 +75,5 @@ set_target_properties(
              C_STANDARD 99
              LINKER_LANGUAGE "CXX")
 
-set(PG_EXTENSION_DDL_INSTALL_DIR "${PG_SHARE_DIR}/extension")
-install(FILES ${diskquota_DDL} DESTINATION ${PG_EXTENSION_DDL_INSTALL_DIR})
-install(TARGETS diskquota DESTINATION ${PG_PKG_LIB_DIR})
+install(FILES ${diskquota_DDL} DESTINATION "share/postgresql/extension/")
+install(TARGETS diskquota DESTINATION "lib/postgresql/")
