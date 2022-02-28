@@ -63,9 +63,8 @@ list(
 
 add_library(diskquota MODULE ${diskquota_SRC})
 
-# pg_config do not give us the `--prefix` we use `../../` as a workaround
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-  set(CMAKE_INSTALL_PREFIX "${PG_PKG_LIB_DIR}/../../")
+  set(CMAKE_INSTALL_PREFIX "${PG_HOME}")
 endif()
 
 set_target_properties(
