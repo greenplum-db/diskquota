@@ -9,7 +9,7 @@ function test(){
 		echo "export MASTER_DATA_DIRECTORY=\$MASTER_DATA_DIRECTORY" >> /usr/local/greenplum-db-devel/greenplum_path.sh
 		source /usr/local/greenplum-db-devel/greenplum_path.sh
 		createdb diskquota
-		gpconfig -c shared_preload_libraries -v 'diskquota'
+		gpconfig -c shared_preload_libraries -v $(../../cmake/current_binary_name)
 		gpstop -arf
 		gpconfig -c diskquota.naptime -v 1
 		gpstop -arf

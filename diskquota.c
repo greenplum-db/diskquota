@@ -124,7 +124,7 @@ _PG_init(void)
 
 	/* diskquota.so must be in shared_preload_libraries to init SHM. */
 	if (!process_shared_preload_libraries_in_progress)
-		ereport(ERROR, (errmsg("diskquota.so not in shared_preload_libraries.")));
+		ereport(ERROR, (errmsg("diskquota-<major.minor>.so not in shared_preload_libraries.")));
 
 	/* values are used in later calls */
 	define_guc_variables();
@@ -1141,6 +1141,10 @@ worker_get_epoch(Oid database_oid)
 	return epoch;
 }
 
+// Returns the worker epoch for the current database.
+// An epoch marks a new iteration of refreshing quota usage by a bgworker.
+// An epoch is a 32-bit unsigned integer and there is NO invalid value.
+// Therefore, the UDF must throw an error if something unexpected occurs.
 PG_FUNCTION_INFO_V1(show_worker_epoch);
 Datum
 show_worker_epoch(PG_FUNCTION_ARGS)
@@ -1271,6 +1275,10 @@ check_for_timeout(TimestampTz start_time)
 	return false;
 }
 
+// Checks if the bgworker for the current database works as expected.
+// 1. If it returns successfully in `diskquota.naptime`, the bgworker works as expected.
+// 2. If it does not terminate, there must be some issues with the bgworker.
+//    In this case, we must ensure this UDF can be interrupted by the user.
 PG_FUNCTION_INFO_V1(wait_for_worker_new_epoch);
 Datum
 wait_for_worker_new_epoch(PG_FUNCTION_ARGS)
