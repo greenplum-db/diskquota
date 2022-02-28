@@ -1,0 +1,63 @@
+cmake_minimum_required(VERSION 3.13)
+project(diskquota)
+
+# generate 'compile_commands.json'
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Gpdb.cmake)
+
+# set include directories for all sub-projects
+include_directories(${PG_INCLUDE_DIR_SERVER})
+include_directories(${PG_INCLUDE_DIR}) # for libpq
+# set link flags for all sub-projects
+set(CMAKE_SHARED_LINKER_FLAGS "${PG_LD_FLAGS}")
+# set c and ld flags for all projects
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${PG_C_FLAGS}")
+set(CMAKE_MODULE_LINKER_FLAGS_INIT "${CMAKE_EXE_LINKER_FLAGS} ${PG_LD_FLAGS}")
+
+# generate version
+if(NOT DEFINED DISKQUOTA_MINOR_VERSION)
+  file(STRINGS "MINOR_VERSION" DISKQUOTA_MINOR_VERSION)
+endif()
+
+set(CMAKE_C_FLAGS
+    "${CMAKE_C_FLAGS} '-DDISKQUOTA_MINOR_VERSION=\"${DISKQUOTA_MINOR_VERSION}\"'"
+)
+
+if("${DISKQUOTA_MINOR_VERSION}" STREQUAL "1.0")
+  set(DISKQUOTA_BINARY_NAME "diskquota") # in special, version do not has suffix
+else()
+  set(DISKQUOTA_BINARY_NAME "diskquota-${DISKQUOTA_MINOR_VERSION}")
+endif()
+
+list(
+  APPEND
+  diskquota_SRC
+  diskquota.c
+  diskquota_utility.c
+  enforcement.c
+  gp_activetable.c
+  quotamodel.c
+  relation_cache.c)
+
+list(
+  APPEND
+  diskquota_DDL
+  diskquota.control
+  diskquota--1.0.sql
+  diskquota--1.0--2.0.sql
+  diskquota--2.0.sql
+  diskquota--2.0--1.0.sql)
+
+add_library(diskquota MODULE ${diskquota_SRC})
+
+set_target_properties(
+  diskquota
+  PROPERTIES OUTPUT_NAME ${DISKQUOTA_BINARY_NAME}
+             PREFIX ""
+             C_STANDARD 99
+             LINKER_LANGUAGE "CXX")
+
+set(PG_EXTENSION_DDL_INSTALL_DIR "${PG_SHARE_DIR}/extension")
+install(FILES ${diskquota_DDL} DESTINATION ${PG_EXTENSION_DDL_INSTALL_DIR})
+install(TARGETS diskquota DESTINATION ${PG_PKG_LIB_DIR})
