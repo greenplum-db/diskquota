@@ -75,5 +75,26 @@ set_target_properties(
              C_STANDARD 99
              LINKER_LANGUAGE "CXX")
 
+# packing part, move to a separate file if this part is too large
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Distro.cmake)
+
+if(DEFINED DISKQUOTA_PREVIOUS_INSTALLER)
+  message(STATUS "Copy pervious installer from ${DISKQUOTA_PREVIOUS_INSTALLER}")
+  file(ARCHIVE_EXTRACT INPUT ${DISKQUOTA_PREVIOUS_INSTALLER} PATTERNS "*.so")
+  file(GLOB DISKQUOTA_PREVIOUS_LIBRARY
+       "${CMAKE_BINARY_DIR}/lib/postgresql/*.so")
+  install(PROGRAMS ${DISKQUOTA_PREVIOUS_LIBRARY} DESTINATION "lib/postgresql/")
+endif()
+
+set(CPACK_GENERATOR "TGZ")
+set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY OFF)
+set(CPACK_PACKAGE_FILE_NAME
+    "diskquota-${DISKQUOTA_MAJOR_VERSION}.${DISKQUOTA_MINOR_VERSION}.${DISKQUOTA_PATCH_VERSION}-${DISTRO_NAME}_x86_64"
+)
+include(CPack)
+# packing end
+
+# NOTE: keep install part at the end of file, to overwrite previous binary
+install(PROGRAMS "cmake/install_gpdb_component" DESTINATION ".")
 install(FILES ${diskquota_DDL} DESTINATION "share/postgresql/extension/")
 install(TARGETS diskquota DESTINATION "lib/postgresql/")
