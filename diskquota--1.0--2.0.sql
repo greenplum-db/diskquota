@@ -9,7 +9,7 @@ CREATE TABLE diskquota.target (
 );
 
 ALTER TABLE diskquota.table_size DROP CONSTRAINT table_size_pkey;
-ALTER TABLE diskquota.table_size ADD COLUMN segid smallint DEFAULT 0;
+ALTER TABLE diskquota.table_size ADD COLUMN segid smallint DEFAULT -1; -- segid = coordinator means table size in cluster level
 ALTER TABLE diskquota.table_size SET DISTRIBUTED by (tableid, segid);
 ALTER TABLE diskquota.table_size ADD PRIMARY KEY (tableid, segid);
 
