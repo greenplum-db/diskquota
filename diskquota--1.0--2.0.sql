@@ -100,6 +100,13 @@ CREATE FUNCTION diskquota.show_relation_cache_all_seg() RETURNS setof diskquota.
 -- UDF end
 
 -- views
+/* ALTER */ CREATE OR REPLACE VIEW diskquota.show_fast_database_size_view AS
+select (
+    (select sum(pg_relation_size(oid)) from pg_class where oid <= 16384)
+        +
+    (select sum(size) from diskquota.table_size where segid = -1)
+) AS dbsize;
+
 CREATE VIEW diskquota.blackmap AS SELECT * FROM diskquota.show_blackmap() AS BM;
 
 CREATE VIEW diskquota.show_fast_schema_tablespace_quota_view AS

@@ -139,7 +139,7 @@ CREATE VIEW diskquota.show_fast_database_size_view AS
 select (
     (select sum(pg_relation_size(oid)) from pg_class where oid <= 16384)
         +
-    (select sum(size) from diskquota.table_size)
+    (select sum(size) from diskquota.table_size where segid = -1)
 ) AS dbsize;
 
 CREATE VIEW diskquota.blackmap AS SELECT * FROM diskquota.show_blackmap() AS BM;

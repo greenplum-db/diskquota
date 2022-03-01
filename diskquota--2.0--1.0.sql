@@ -56,3 +56,12 @@ DROP TYPE diskquota.relation_cache_detail;
 DROP VIEW diskquota.blackmap;
 DROP VIEW diskquota.show_fast_schema_tablespace_quota_view;
 DROP VIEW diskquota.show_fast_role_tablespace_quota_view;
+
+/* ALTER */ CREATE OR REPLACE VIEW diskquota.show_fast_database_size_view AS
+select (
+    (select sum(pg_relation_size(oid)) from pg_class where oid <= 16384)
+        +
+    (select sum(size) from diskquota.table_size)
+) AS dbsize;
+
+
