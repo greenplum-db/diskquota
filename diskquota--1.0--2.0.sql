@@ -1,3 +1,5 @@
+-- TODO check if worker should not refresh, current lib should be diskquota-2.0.so
+
 -- table part
 ALTER TABLE diskquota.quota_config ADD COLUMN segratio float4 DEFAULT -1;
 
@@ -7,20 +9,19 @@ CREATE TABLE diskquota.target (
 	tablespaceOid oid, -- REFERENCES pg_tablespace.oid,
 	PRIMARY KEY (primaryOid, tablespaceOid, quotatype)
 );
+-- TODO ALTER TABLE diskquota.target SET DEPENDS ON EXTENSION diskquota;
 
-ALTER TABLE diskquota.table_size DROP CONSTRAINT table_size_pkey;
 ALTER TABLE diskquota.table_size ADD COLUMN segid smallint DEFAULT -1; -- segid = coordinator means table size in cluster level
-ALTER TABLE diskquota.table_size SET DISTRIBUTED by (tableid, segid);
+ALTER TABLE diskquota.table_size DROP CONSTRAINT table_size_pkey;
 ALTER TABLE diskquota.table_size ADD PRIMARY KEY (tableid, segid);
+ALTER TABLE diskquota.table_size SET WITH (REORGANIZE=true) DISTRIBUTED BY (tableid, segid);
 
-SELECT pg_catalog.pg_extension_config_dump('diskquota.target', '');
-SELECT gp_segment_id, pg_catalog.pg_extension_config_dump('diskquota.target', '') from gp_dist_random('gp_id');
+-- TODO SELECT pg_catalog.pg_extension_config_dump('diskquota.target', '');
+-- TODO SELECT gp_segment_id, pg_catalog.pg_extension_config_dump('diskquota.target', '') from gp_dist_random('gp_id');
 -- table part end
 
 -- type define
-ALTER TYPE diskquota.diskquota_active_table_type ADD ATTRIBUTE (
-	"GP_SEGMENT_ID" smallint
-);
+ALTER TYPE diskquota.diskquota_active_table_type ADD ATTRIBUTE "GP_SEGMENT_ID" smallint;
 
 CREATE TYPE diskquota.blackmap_entry AS (
 	target_oid oid,
@@ -58,12 +59,12 @@ CREATE TYPE diskquota.relation_cache_detail AS (
 -- type define end
 
 -- UDF
-ALTER FUNCTION diskquota.set_schema_quota(text, text) RETURNS void STRICT AS '$libdir/diskquota.so' LANGUAGE C;
-ALTER FUNCTION diskquota.set_role_quota(text, text) RETURNS void STRICT AS '$libdir/diskquota.so' LANGUAGE C;
-ALTER FUNCTION diskquota.init_table_size_table() RETURNS void STRICT AS '$libdir/diskquota.so' LANGUAGE C;
-ALTER FUNCTION diskquota.diskquota_fetch_table_stat(int4, oid[]) RETURNS setof diskquota.diskquota_active_table_type AS '$libdir/diskquota.so', 'diskquota_fetch_table_stat' LANGUAGE C VOLATILE;
+/* ALTER */ CREATE OR REPLACE FUNCTION diskquota.set_schema_quota(text, text) RETURNS void STRICT AS '$libdir/diskquota-2.0.so' LANGUAGE C;
+/* ALTER */ CREATE OR REPLACE FUNCTION diskquota.set_role_quota(text, text) RETURNS void STRICT AS '$libdir/diskquota-2.0.so' LANGUAGE C;
+/* ALTER */ CREATE OR REPLACE FUNCTION diskquota.init_table_size_table() RETURNS void STRICT AS '$libdir/diskquota-2.0.so' LANGUAGE C;
+/* ALTER */ CREATE OR REPLACE FUNCTION diskquota.diskquota_fetch_table_stat(int4, oid[]) RETURNS setof diskquota.diskquota_active_table_type AS '$libdir/diskquota-2.0.so', 'diskquota_fetch_table_stat' LANGUAGE C VOLATILE;
 
-DROP FUNCTION diskquota.update_diskquota_db_list(oid, int4);
+-- TODO solve dependency DROP FUNCTION diskquota.update_diskquota_db_list(oid, int4);
 
 CREATE FUNCTION diskquota.set_schema_tablespace_quota(text, text, text) RETURNS void STRICT AS '$libdir/diskquota-2.0.so' LANGUAGE C;
 CREATE FUNCTION diskquota.set_role_tablespace_quota(text, text, text) RETURNS void STRICT AS '$libdir/diskquota-2.0.so' LANGUAGE C;
@@ -100,6 +101,8 @@ CREATE FUNCTION diskquota.show_relation_cache_all_seg() RETURNS setof diskquota.
 -- UDF end
 
 -- views
+CREATE VIEW diskquota.blackmap AS SELECT * FROM diskquota.show_blackmap() AS BM;
+
 /* ALTER */ CREATE OR REPLACE VIEW diskquota.show_fast_database_size_view AS
 select (
     (select sum(pg_relation_size(oid)) from pg_class where oid <= 16384)
@@ -107,7 +110,24 @@ select (
     (select sum(size) from diskquota.table_size where segid = -1)
 ) AS dbsize;
 
-CREATE VIEW diskquota.blackmap AS SELECT * FROM diskquota.show_blackmap() AS BM;
+/* ALTER */ CREATE OR REPLACE VIEW diskquota.show_fast_schema_quota_view AS
+select pgns.nspname as schema_name, pgc.relnamespace as schema_oid, qc.quotalimitMB as quota_in_mb, sum(ts.size) as nspsize_in_bytes
+from diskquota.table_size as ts,
+	pg_class as pgc,
+	diskquota.quota_config as qc,
+	pg_namespace as pgns
+where ts.tableid = pgc.oid and qc.targetoid = pgc.relnamespace and pgns.oid = pgc.relnamespace and qc.quotatype = 0 and ts.segid = -1
+group by relnamespace, qc.quotalimitMB, pgns.nspname
+order by pgns.nspname;
+
+/* ALTER */ CREATE OR REPLACE VIEW diskquota.show_fast_role_quota_view AS
+select pgr.rolname as role_name, pgc.relowner as role_oid, qc.quotalimitMB as quota_in_mb, sum(ts.size) as rolsize_in_bytes
+from diskquota.table_size as ts,
+	pg_class as pgc,
+	diskquota.quota_config as qc,
+	pg_roles as pgr
+WHERE pgc.relowner = qc.targetoid and pgc.relowner = pgr.oid and ts.tableid = pgc.oid and qc.quotatype = 1 and ts.segid = -1
+GROUP BY pgc.relowner, pgr.rolname, qc.quotalimitMB;
 
 CREATE VIEW diskquota.show_fast_schema_tablespace_quota_view AS
 select pgns.nspname as schema_name, pgc.relnamespace as schema_oid, pgsp.spcname as tablespace_name, pgc.reltablespace as tablespace_oid, qc.quotalimitMB as quota_in_mb, sum(ts.size) as nspsize_tablespace_in_bytes
@@ -117,7 +137,7 @@ from diskquota.table_size as ts,
 	pg_namespace as pgns,
 	pg_tablespace as pgsp,
 	diskquota.target as t
-where ts.tableid = pgc.oid and qc.targetoid = pgc.relnamespace and pgns.oid = pgc.relnamespace and pgsp.oid = pgc.reltablespace and qc.quotatype=2 and qc.targetoid=t.primaryoid and t.tablespaceoid=pgc.reltablespace and ts.segid=-1
+where ts.tableid = pgc.oid and qc.targetoid = pgc.relnamespace and pgns.oid = pgc.relnamespace and pgsp.oid = pgc.reltablespace and qc.quotatype = 2 and qc.targetoid=t.primaryoid and t.tablespaceoid=pgc.reltablespace and ts.segid = -1
 group by relnamespace, reltablespace, qc.quotalimitMB, pgns.nspname, pgsp.spcname
 order by pgns.nspname, pgsp.spcname;
 
@@ -129,6 +149,7 @@ from diskquota.table_size as ts,
 	pg_roles as pgr,
 	pg_tablespace as pgsp,
 	diskquota.target as t
-WHERE pgc.relowner = qc.targetoid and pgc.relowner = pgr.oid and ts.tableid = pgc.oid and pgsp.oid = pgc.reltablespace and qc.quotatype=3 and qc.targetoid=t.primaryoid and t.tablespaceoid=pgc.reltablespace and ts.segid=-1
+WHERE pgc.relowner = qc.targetoid and pgc.relowner = pgr.oid and ts.tableid = pgc.oid and pgsp.oid = pgc.reltablespace and qc.quotatype = 3 and qc.targetoid=t.primaryoid and t.tablespaceoid=pgc.reltablespace and ts.segid = -1
 GROUP BY pgc.relowner, reltablespace, pgr.rolname, pgsp.spcname, qc.quotalimitMB;
 -- views end
+
