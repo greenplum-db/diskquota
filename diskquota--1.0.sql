@@ -64,7 +64,7 @@ SELECT (
 ) AS dbsize;
 
 -- prepare to boot
-INSERT INTO diskquota.state SELECT (count(relname) = 0)::int  FROM pg_class AS c, pg_namespace AS n WHERE c.oid > 16384 AND relnamespace = n.oid AND nspname != 'diskquota';
+INSERT INTO diskquota.state SELECT (count(relname) = 0)::int FROM pg_class AS c, pg_namespace AS n WHERE c.oid > 16384 AND relnamespace = n.oid AND nspname != 'diskquota';
 
 CREATE FUNCTION diskquota.diskquota_start_worker() RETURNS void STRICT AS '$libdir/diskquota.so' LANGUAGE C;
 SELECT diskquota.diskquota_start_worker();
