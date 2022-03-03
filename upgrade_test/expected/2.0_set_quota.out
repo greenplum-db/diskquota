@@ -5,11 +5,6 @@ Master  value: diskquota-2.0.so
 Segment value: diskquota-2.0.so
 create extension diskquota with version '2.0';
 \!sleep 5
--- diskquota.set_schema_quota
--- diskquota.set_role_quota
--- diskquota.set_schema_tablespace_quota
--- diskquota.set_role_tablespace_quota
--- diskquota.set_per_segment_quota
 -- schema quota
 create schema s1;
 select diskquota.set_schema_quota('s1', '1 MB');

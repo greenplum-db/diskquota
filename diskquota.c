@@ -126,13 +126,18 @@ extern void invalidate_database_blackmap(Oid dbid);
 void
 _PG_init(void)
 {
-	BackgroundWorker worker;
-
-	memset(&worker, 0, sizeof(BackgroundWorker));
-
 	/* diskquota.so must be in shared_preload_libraries to init SHM. */
-	if (!process_shared_preload_libraries_in_progress)
-		ereport(ERROR, (errmsg(DISKQUOTA_BINARY_NAME " not in shared_preload_libraries.")));
+	if (!process_shared_preload_libraries_in_progress) {
+		ereport(ERROR, (
+				errmsg("booting diskquota-" DISKQUOTA_VERSION ", but "
+						DISKQUOTA_BINARY_NAME " not in shared_preload_libraries. abort.")
+		));
+	} else {
+		ereport(INFO, (errmsg("booting diskquota-"DISKQUOTA_VERSION)));
+	}
+
+	BackgroundWorker worker;
+	memset(&worker, 0, sizeof(BackgroundWorker));
 
 	/* values are used in later calls */
 	define_guc_variables();
@@ -307,14 +312,6 @@ disk_quota_worker_main(Datum main_arg)
 	                  PGC_USERSET,PGC_S_SESSION,
 	                  GUC_ACTION_SAVE, true, 0);
 
-	/*
-	 * Set ps display name of the worker process of diskquota, so we can
-	 * distinguish them quickly. Note: never mind parameter name of the
-	 * function `init_ps_display`, we only want the ps name looks like
-	 * 'bgworker: [diskquota] <dbname> ...'
-	 */
-	init_ps_display("bgworker:", "[diskquota]", dbname, "");
-
 	/* diskquota worker should has Gp_role as dispatcher */
 	Gp_role = GP_ROLE_DISPATCH;
 
@@ -323,6 +320,44 @@ disk_quota_worker_main(Datum main_arg)
 	 * immediately
 	 */
 	init_disk_quota_model();
+
+	// check current binary version and SQL DLL version are matched
+	int times = 0;
+	while (!got_sigterm) {
+		CHECK_FOR_INTERRUPTS();
+
+		int major = -1, minor = -1;
+		int new_create = worker_spi_get_extension_version(&major, &minor) == -1;
+
+		if (major == DISKQUOTA_MAJOR_VERSION && minor == DISKQUOTA_MINOR_VERSION)
+			break;
+
+		init_ps_display("bgworker:", "[diskquota]", dbname,
+				new_create ? "creating" : "v" DISKQUOTA_VERSION " is not match with current SQL. stop working");
+
+		ereportif(
+			times > 0 && !new_create,
+			WARNING,
+			(errmsg("[diskquota] worker for '%s' detected the installed version is %d.%d, "
+					"but current version is %s. abort due to version not match", dbname, major, minor, DISKQUOTA_VERSION),
+			errhint("run alter extension diskquota update to '%d.%d'",
+					DISKQUOTA_MAJOR_VERSION, DISKQUOTA_MINOR_VERSION)));
+
+		int rc = WaitLatch(&MyProc->procLatch, WL_LATCH_SET|WL_TIMEOUT|WL_POSTMASTER_DEATH, diskquota_naptime * 1000L);
+		ResetLatch(&MyProc->procLatch);
+		if (rc & WL_POSTMASTER_DEATH)
+			break;
+
+		times++;
+	}
+
+	/*
+	 * Set ps display name of the worker process of diskquota, so we can
+	 * distinguish them quickly. Note: never mind parameter name of the
+	 * function `init_ps_display`, we only want the ps name looks like
+	 * 'bgworker: [diskquota] <dbname> ...'
+	 */
+	init_ps_display("bgworker:", "[diskquota]", dbname, "");
 
 	/* Waiting for diskquota state become ready */
 	while (!got_sigterm)
@@ -466,7 +501,7 @@ disk_quota_launcher_main(Datum main_arg)
 
 	/* diskquota launcher should has Gp_role as dispatcher */
 	Gp_role = GP_ROLE_DISPATCH;
-	
+
 	/*
 	 * use table diskquota_namespace.database_list to store diskquota enabled
 	 * database.
@@ -829,7 +864,7 @@ on_add_db(Oid dbid, MessageResult * code)
 
 /*
  * Handle message: drop extension diskquota
- * do our best to:
+ * do:
  * 1. kill the associated worker process
  * 2. delete dbid from diskquota_namespace.database_list
  * 3. invalidate black-map entries and monitoring_dbid_cache from shared memory
@@ -1014,13 +1049,13 @@ worker_set_handle(Oid dbid, BackgroundWorkerHandle *handle)
 	if (found)
 	{
 		workerentry->handle = handle;
-	} 
+	}
 	LWLockRelease(diskquota_locks.worker_map_lock);
 	if (!found)
 	{
 		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 						errmsg("[diskquota] worker not found for database \"%s\"",
-							   get_database_name(dbid))));	
+							   get_database_name(dbid))));
 	}
 	return found;
 }

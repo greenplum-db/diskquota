@@ -1,7 +1,7 @@
 -- need run 1.0_set_quota before run this test
 -- FIXME add version check here
 
-\!sleep 5
+\! sleep 5
 
 insert into s1.a select generate_series(1, 10000000); -- fail.
 insert into srole.b select generate_series(1, 100000); -- fail.

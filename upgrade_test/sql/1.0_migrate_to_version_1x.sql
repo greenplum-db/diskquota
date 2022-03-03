@@ -5,4 +5,5 @@
 
 \c
 alter extension diskquota update to '1.0';
--- FIXME add version check here
+-- 2.0 to 1.0 need reboot
+\! gpstop -arf > /dev/null

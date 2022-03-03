@@ -5,4 +5,4 @@
 
 \c
 alter extension diskquota update to '2.0';
--- FIXME add version check here
+\! sleep 5
