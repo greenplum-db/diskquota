@@ -117,7 +117,7 @@ FROM diskquota.table_size AS ts,
 	diskquota.quota_config AS qc,
 	pg_namespace AS pgns
 WHERE ts.tableid = pgc.oid AND qc.targetoid = pgc.relnamespace AND pgns.oid = pgc.relnamespace AND qc.quotatype = 0 AND ts.segid = -1
-group by relnamespace, qc.quotalimitMB, pgns.nspname
+GROUP BY relnamespace, qc.quotalimitMB, pgns.nspname
 ORDER BY pgns.nspname;
 
 /* ALTER */ CREATE OR REPLACE VIEW diskquota.show_fast_role_quota_view AS
@@ -138,7 +138,7 @@ FROM diskquota.table_size AS ts,
 	pg_tablespace AS pgsp,
 	diskquota.target AS t
 WHERE ts.tableid = pgc.oid AND qc.targetoid = pgc.relnamespace AND pgns.oid = pgc.relnamespace AND pgsp.oid = pgc.reltablespace AND qc.quotatype = 2 AND qc.targetoid=t.primaryoid AND t.tablespaceoid=pgc.reltablespace AND ts.segid = -1
-group by relnamespace, reltablespace, qc.quotalimitMB, pgns.nspname, pgsp.spcname
+GROUP BY relnamespace, reltablespace, qc.quotalimitMB, pgns.nspname, pgsp.spcname
 ORDER BY pgns.nspname, pgsp.spcname;
 
 CREATE VIEW diskquota.show_fast_role_tablespace_quota_view AS
