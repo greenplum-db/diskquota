@@ -41,8 +41,12 @@ PG_MODULE_MAGIC;
 #define DISKQUOTA_DB	"diskquota"
 #define DISKQUOTA_APPLICATION_NAME  "gp_reserved_gpdiskquota"
 
-#ifndef DISKQUOTA_BINARY_NAME
-	#error DISKQUOTA_BINARY_NAME should be defined by build system
+#if !defined(DISKQUOTA_VERSION) || \
+	!defined(DISKQUOTA_MAJOR_VERSION) || \
+	!defined(DISKQUOTA_PATCH_VERSION) || \
+	!defined(DISKQUOTA_MINOR_VERSION) || \
+	!defined(DISKQUOTA_BINARY_NAME)
+	#error version define is not passed in, check the build system
 #endif
 
 #include <unistd.h> // for useconds_t
