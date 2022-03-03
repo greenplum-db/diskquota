@@ -31,14 +31,14 @@ CREATE TYPE diskquota.diskquota_active_table_type AS (
 	"TABLE_SIZE" int8
 );
 
-CREATE FUNCTION diskquota.set_schema_quota(text, text) RETURNS void STRICT AS '$libdir/diskquota.so' LANGUAGE C;
-CREATE FUNCTION diskquota.set_role_quota(text, text) RETURNS void STRICT AS '$libdir/diskquota.so' LANGUAGE C;
+CREATE FUNCTION diskquota.set_schema_quota(text, text) RETURNS void STRICT AS 'MODULE_PATHNAME' LANGUAGE C;
+CREATE FUNCTION diskquota.set_role_quota(text, text) RETURNS void STRICT AS 'MODULE_PATHNAME' LANGUAGE C;
 -- This UDF won't be used. But we keep it here so that it would be the same with
 -- 1.0.3. Easier for 2.x upgrade design. Be notice that, the C function is not
 -- there anymore, calling this UDF will report an error
-CREATE FUNCTION diskquota.update_diskquota_db_list(oid, int4) RETURNS void STRICT AS '$libdir/diskquota.so' LANGUAGE C;
-CREATE FUNCTION diskquota.init_table_size_table() RETURNS void STRICT AS '$libdir/diskquota.so' LANGUAGE C;
-CREATE FUNCTION diskquota.diskquota_fetch_table_stat(int4, oid[]) RETURNS setof diskquota.diskquota_active_table_type AS '$libdir/diskquota.so', 'diskquota_fetch_table_stat' LANGUAGE C VOLATILE;
+CREATE FUNCTION diskquota.update_diskquota_db_list(oid, int4) RETURNS void STRICT AS 'MODULE_PATHNAME' LANGUAGE C;
+CREATE FUNCTION diskquota.init_table_size_table() RETURNS void STRICT AS 'MODULE_PATHNAME' LANGUAGE C;
+CREATE FUNCTION diskquota.diskquota_fetch_table_stat(int4, oid[]) RETURNS setof diskquota.diskquota_active_table_type AS 'MODULE_PATHNAME', 'diskquota_fetch_table_stat' LANGUAGE C VOLATILE;
 
 CREATE VIEW diskquota.show_fast_schema_quota_view AS
 SELECT pgns.nspname AS schema_name, pgc.relnamespace AS schema_oid, qc.quotalimitMB AS quota_in_mb, SUM(ts.size) AS nspsize_in_bytes
@@ -69,6 +69,6 @@ SELECT (
 -- prepare to boot
 INSERT INTO diskquota.state SELECT (count(relname) = 0)::int FROM pg_class AS c, pg_namespace AS n WHERE c.oid > 16384 AND relnamespace = n.oid AND nspname != 'diskquota';
 
-CREATE FUNCTION diskquota.diskquota_start_worker() RETURNS void STRICT AS '$libdir/diskquota.so' LANGUAGE C;
+CREATE FUNCTION diskquota.diskquota_start_worker() RETURNS void STRICT AS 'MODULE_PATHNAME' LANGUAGE C;
 SELECT diskquota.diskquota_start_worker();
 DROP FUNCTION diskquota.diskquota_start_worker();

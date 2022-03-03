@@ -1,5 +1,5 @@
 # diskquota extension
 comment = 'Disk Quota Main Program'
 default_version = '1.0'
-module_pathname = 'do-not-use-this'
+module_pathname = '$libdir/diskquota'
 relocatable = true
