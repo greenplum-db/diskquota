@@ -30,11 +30,11 @@ CREATE TABLE diskquota.state(
 	PRIMARY KEY(state)
 ) DISTRIBUTED BY (state);
 
--- diskquota.quota_config and diskquota.target is dump-able, other table can be generate on fly
+-- diskquota.quota_config AND diskquota.target is dump-able, other table can be generate on fly
 SELECT pg_catalog.pg_extension_config_dump('diskquota.quota_config', '');
-SELECT gp_segment_id, pg_catalog.pg_extension_config_dump('diskquota.quota_config', '') from gp_dist_random('gp_id');
+SELECT gp_segment_id, pg_catalog.pg_extension_config_dump('diskquota.quota_config', '') FROM gp_dist_random('gp_id');
 SELECT pg_catalog.pg_extension_config_dump('diskquota.target', '');
-SELECT gp_segment_id, pg_catalog.pg_extension_config_dump('diskquota.target', '') from gp_dist_random('gp_id');
+SELECT gp_segment_id, pg_catalog.pg_extension_config_dump('diskquota.target', '') FROM gp_dist_random('gp_id');
 
 CREATE TYPE diskquota.diskquota_active_table_type AS (
 	"TABLE_OID" oid,
@@ -99,7 +99,7 @@ CREATE FUNCTION diskquota.relation_size_local(
 RETURNS bigint STRICT AS '$libdir/diskquota-2.0.so', 'relation_size_local' LANGUAGE C;
 
 CREATE FUNCTION diskquota.relation_size(relation regclass) RETURNS bigint STRICT AS $$
-	SELECT sum(size)::bigint FROM (
+	SELECT SUM(size)::bigint FROM (
 		SELECT diskquota.relation_size_local(reltablespace, relfilenode, relpersistence, relstorage) AS size
 		FROM gp_dist_random('pg_class') WHERE oid = relation
 		UNION ALL
@@ -117,59 +117,59 @@ CREATE FUNCTION diskquota.show_relation_cache_all_seg() RETURNS setof diskquota.
 
 -- view part
 CREATE VIEW diskquota.show_fast_schema_quota_view AS
-select pgns.nspname as schema_name, pgc.relnamespace as schema_oid, qc.quotalimitMB as quota_in_mb, sum(ts.size) as nspsize_in_bytes
-from diskquota.table_size as ts,
-        pg_class as pgc,
-        diskquota.quota_config as qc,
-        pg_namespace as pgns
-where ts.tableid = pgc.oid and qc.targetoid = pgc.relnamespace and pgns.oid = pgc.relnamespace and qc.quotatype=0 and ts.segid=-1
+SELECT pgns.nspname AS schema_name, pgc.relnamespace AS schema_oid, qc.quotalimitMB AS quota_in_mb, SUM(ts.size) AS nspsize_in_bytes
+FROM diskquota.table_size AS ts,
+        pg_class AS pgc,
+        diskquota.quota_config AS qc,
+        pg_namespace AS pgns
+WHERE ts.tableid = pgc.oid AND qc.targetoid = pgc.relnamespace AND pgns.oid = pgc.relnamespace AND qc.quotatype=0 AND ts.segid=-1
 group by relnamespace, qc.quotalimitMB, pgns.nspname
 order by pgns.nspname;
 
 CREATE VIEW diskquota.show_fast_role_quota_view AS
-select pgr.rolname as role_name, pgc.relowner as role_oid, qc.quotalimitMB as quota_in_mb, sum(ts.size) as rolsize_in_bytes
-from diskquota.table_size as ts,
-        pg_class as pgc,
-        diskquota.quota_config as qc,
-        pg_roles as pgr
-WHERE pgc.relowner = qc.targetoid and pgc.relowner = pgr.oid and ts.tableid = pgc.oid and qc.quotatype=1 and ts.segid=-1
+SELECT pgr.rolname AS role_name, pgc.relowner AS role_oid, qc.quotalimitMB AS quota_in_mb, SUM(ts.size) AS rolsize_in_bytes
+FROM diskquota.table_size AS ts,
+        pg_class AS pgc,
+        diskquota.quota_config AS qc,
+        pg_roles AS pgr
+WHERE pgc.relowner = qc.targetoid AND pgc.relowner = pgr.oid AND ts.tableid = pgc.oid AND qc.quotatype=1 AND ts.segid=-1
 GROUP BY pgc.relowner, pgr.rolname, qc.quotalimitMB;
 
 CREATE VIEW diskquota.show_fast_database_size_view AS
-select (
-    (select sum(pg_relation_size(oid)) from pg_class where oid <= 16384)
+SELECT (
+    (SELECT SUM(pg_relation_size(oid)) FROM pg_class WHERE oid <= 16384)
         +
-    (select sum(size) from diskquota.table_size where segid = -1)
+    (SELECT SUM(size) FROM diskquota.table_size WHERE segid = -1)
 ) AS dbsize;
 
 CREATE VIEW diskquota.blackmap AS SELECT * FROM diskquota.show_blackmap() AS BM;
 
 CREATE VIEW diskquota.show_fast_schema_tablespace_quota_view AS
-select pgns.nspname as schema_name, pgc.relnamespace as schema_oid, pgsp.spcname as tablespace_name, pgc.reltablespace as tablespace_oid, qc.quotalimitMB as quota_in_mb, sum(ts.size) as nspsize_tablespace_in_bytes
-from diskquota.table_size as ts,
-	pg_class as pgc,
-	diskquota.quota_config as qc,
-	pg_namespace as pgns,
-	pg_tablespace as pgsp,
-	diskquota.target as t
-where ts.tableid = pgc.oid and qc.targetoid = pgc.relnamespace and pgns.oid = pgc.relnamespace and pgsp.oid = pgc.reltablespace and qc.quotatype=2 and qc.targetoid=t.primaryoid and t.tablespaceoid=pgc.reltablespace and ts.segid=-1
+SELECT pgns.nspname AS schema_name, pgc.relnamespace AS schema_oid, pgsp.spcname AS tablespace_name, pgc.reltablespace AS tablespace_oid, qc.quotalimitMB AS quota_in_mb, SUM(ts.size) AS nspsize_tablespace_in_bytes
+FROM diskquota.table_size AS ts,
+	pg_class AS pgc,
+	diskquota.quota_config AS qc,
+	pg_namespace AS pgns,
+	pg_tablespace AS pgsp,
+	diskquota.target AS t
+WHERE ts.tableid = pgc.oid AND qc.targetoid = pgc.relnamespace AND pgns.oid = pgc.relnamespace AND pgsp.oid = pgc.reltablespace AND qc.quotatype=2 AND qc.targetoid=t.primaryoid AND t.tablespaceoid=pgc.reltablespace AND ts.segid=-1
 group by relnamespace, reltablespace, qc.quotalimitMB, pgns.nspname, pgsp.spcname
 order by pgns.nspname, pgsp.spcname;
 
 CREATE VIEW diskquota.show_fast_role_tablespace_quota_view AS
-select pgr.rolname as role_name, pgc.relowner as role_oid, pgsp.spcname as tablespace_name, pgc.reltablespace as tablespace_oid, qc.quotalimitMB as quota_in_mb, sum(ts.size) as rolsize_tablespace_in_bytes
-from diskquota.table_size as ts,
-	pg_class as pgc,
-	diskquota.quota_config as qc,
-	pg_roles as pgr,
-	pg_tablespace as pgsp,
-	diskquota.target as t
-WHERE pgc.relowner = qc.targetoid and pgc.relowner = pgr.oid and ts.tableid = pgc.oid and pgsp.oid = pgc.reltablespace and qc.quotatype=3 and qc.targetoid=t.primaryoid and t.tablespaceoid=pgc.reltablespace and ts.segid=-1
+SELECT pgr.rolname AS role_name, pgc.relowner AS role_oid, pgsp.spcname AS tablespace_name, pgc.reltablespace AS tablespace_oid, qc.quotalimitMB AS quota_in_mb, SUM(ts.size) AS rolsize_tablespace_in_bytes
+FROM diskquota.table_size AS ts,
+	pg_class AS pgc,
+	diskquota.quota_config AS qc,
+	pg_roles AS pgr,
+	pg_tablespace AS pgsp,
+	diskquota.target AS t
+WHERE pgc.relowner = qc.targetoid AND pgc.relowner = pgr.oid AND ts.tableid = pgc.oid AND pgsp.oid = pgc.reltablespace AND qc.quotatype=3 AND qc.targetoid=t.primaryoid AND t.tablespaceoid=pgc.reltablespace AND ts.segid=-1
 GROUP BY pgc.relowner, reltablespace, pgr.rolname, pgsp.spcname, qc.quotalimitMB;
 -- view end
 
 -- prepare to boot
-INSERT INTO diskquota.state SELECT (count(relname) = 0)::int  FROM pg_class AS c, pg_namespace AS n WHERE c.oid > 16384 and relnamespace = n.oid and nspname != 'diskquota';
+INSERT INTO diskquota.state SELECT (count(relname) = 0)::int  FROM pg_class AS c, pg_namespace AS n WHERE c.oid > 16384 AND relnamespace = n.oid AND nspname != 'diskquota';
 
 CREATE FUNCTION diskquota.diskquota_start_worker() RETURNS void STRICT AS '$libdir/diskquota-2.0.so' LANGUAGE C;
 SELECT diskquota.diskquota_start_worker();
@@ -177,4 +177,4 @@ DROP FUNCTION diskquota.diskquota_start_worker();
 
 -- re-dispatch pause status to false. in case user pause-drop-recreate.
 -- refer to see test case 'test_drop_after_pause'
-SELECT from diskquota.resume();
+SELECT FROM diskquota.resume();
