@@ -643,7 +643,7 @@ dq_object_access_hook(ObjectAccessType access, Oid classId,
 		goto out;
 
 	if (get_extension_oid("diskquota", true) != objectId)
-		return;
+		goto out;
 
 	switch(access) {
 		case OAT_DROP:

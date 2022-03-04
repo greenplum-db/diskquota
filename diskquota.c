@@ -46,7 +46,7 @@ PG_MODULE_MAGIC;
 	!defined(DISKQUOTA_PATCH_VERSION) || \
 	!defined(DISKQUOTA_MINOR_VERSION) || \
 	!defined(DISKQUOTA_BINARY_NAME)
-	#error version define is not passed in, check the build system
+	#error Version not found. Please check if the VERSION file exists.
 #endif
 
 #include <unistd.h> // for useconds_t
