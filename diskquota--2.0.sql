@@ -116,7 +116,7 @@ CREATE FUNCTION diskquota.show_relation_cache_all_seg() RETURNS setof diskquota.
 	SELECT (a).* FROM relation_cache; $$ LANGUAGE SQL;
 
 -- view part
-CREATE OR REPLACE VIEW diskquota.show_fast_schema_quota_view AS
+CREATE VIEW diskquota.show_fast_schema_quota_view AS
 WITH 
   quota_usage AS (
     SELECT 
@@ -228,7 +228,7 @@ SELECT
 FROM 
   full_quota_config JOIN 
   pg_namespace ON targetoid = pg_namespace.oid JOIN 
-  pg_tablespace on tablespaceoid = pg_tablespace.oid LEFT OUTER JOIN 
+  pg_tablespace ON tablespaceoid = pg_tablespace.oid LEFT OUTER JOIN 
   quota_usage ON pg_namespace.oid = relnamespace AND pg_tablespace.oid = reltablespace;
 
 CREATE OR REPLACE VIEW diskquota.show_fast_role_tablespace_quota_view AS
@@ -264,10 +264,10 @@ WITH
       quotalimitMB
     FROM 
       diskquota.quota_config AS config, 
-      diskquota.target AS tgt
+      diskquota.target AS target
     WHERE
-      config.targetOid = tgt.primaryOid AND 
-      config.quotaType = tgt.quotaType AND
+      config.targetOid = target.primaryOid AND 
+      config.quotaType = target.quotaType AND
       config.quotaType = 3 -- ROLE_TABLESPACE_QUOTA
   )
 SELECT 
