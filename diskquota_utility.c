@@ -1235,19 +1235,34 @@ int worker_spi_get_extension_version(int *major, int *minor)
 		goto out;
 	}
 
-	ereportif(ret != SPI_OK_SELECT || SPI_processed != 1,
-			ERROR,
-			(errmsg("[diskquota] when reading installed version lines %ld code = %d",
-					SPI_processed, ret)));
+	if(ret != SPI_OK_SELECT || SPI_processed != 1) {
+		ereport(WARNING,
+				(errmsg("[diskquota] when reading installed version lines %ld code = %d",
+						SPI_processed, ret)));
+		return -1;
+	}
 
 	bool is_null = false;
 	Datum v = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &is_null);
 	Assert(is_null == false);
 
 	char *version =  TextDatumGetCString(v);
-	ereportif(version == NULL, ERROR, (errmsg("[diskquota] when reading installed version: old version should is empty")));
+	if (version == NULL) {
+		ereport(WARNING,
+				(errmsg("[diskquota] 'extversion' is empty in pg_class.pg_extension. may catalog corrupted")));
+		return -1;
+	}
 
-	sscanf(version, "%d.%d", major, minor);
+	ret = sscanf(version, "%d.%d", major, minor);
+
+	if (ret != 2) {
+		ereport(WARNING,
+				(errmsg("[diskquota] 'extversion' is '%s' in pg_class.pg_extension which is not valid format. "
+						"may catalog corrupted",
+						version)));
+		return -1;
+	}
+
 	ret = 0;
 
 out:

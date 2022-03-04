@@ -327,16 +327,25 @@ disk_quota_worker_main(Datum main_arg)
 		CHECK_FOR_INTERRUPTS();
 
 		int major = -1, minor = -1;
-		int new_create = worker_spi_get_extension_version(&major, &minor) == -1;
+		int has_error = worker_spi_get_extension_version(&major, &minor) != 0;
 
 		if (major == DISKQUOTA_MAJOR_VERSION && minor == DISKQUOTA_MINOR_VERSION)
 			break;
 
-		init_ps_display("bgworker:", "[diskquota]", dbname,
-				new_create ? "creating" : "v" DISKQUOTA_VERSION " is not match with current SQL. stop working");
+		if (has_error) {
+			static char _errfmt[] = "find issues in pg_class.pg_extension check server log. waited %d seconds",
+						_errmsg[sizeof(_errfmt) + 65] = {};
+			snprintf(_errmsg, sizeof(_errmsg), _errfmt, times * diskquota_naptime);
+
+			init_ps_display("bgworker:", "[diskquota]", dbname, _errmsg);
+		} else {
+			init_ps_display("bgworker:", "[diskquota]", dbname,
+					"v" DISKQUOTA_VERSION " is not matching with current SQL. stop working");
+		}
 
 		ereportif(
-			times > 0 && !new_create,
+			!has_error &&
+			times == 1,   // basically, the first time always fail. print log in second time
 			WARNING,
 			(errmsg("[diskquota] worker for '%s' detected the installed version is %d.%d, "
 					"but current version is %s. abort due to version not match", dbname, major, minor, DISKQUOTA_VERSION),
@@ -345,8 +354,11 @@ disk_quota_worker_main(Datum main_arg)
 
 		int rc = WaitLatch(&MyProc->procLatch, WL_LATCH_SET|WL_TIMEOUT|WL_POSTMASTER_DEATH, diskquota_naptime * 1000L);
 		ResetLatch(&MyProc->procLatch);
-		if (rc & WL_POSTMASTER_DEATH)
-			break;
+		if (rc & WL_POSTMASTER_DEATH) {
+			ereport(LOG,
+					(errmsg("[diskquota] bgworker for '%s' is being terminated by postmaster death.", dbname)));
+			proc_exit(-1);
+		}
 
 		times++;
 	}
