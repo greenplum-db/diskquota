@@ -142,8 +142,8 @@ function create_fake_gpdb_src() {
         --disable-orca --disable-gpcloud --enable-debug-extensions
     popd
 
-    mkdir -p "${FAKE_GPDB_SRC}"
-    ln -s /home/gpadmin/gpdb_src "${FAKE_GPDB_SRC}/gpdb_src"
+    mkdir -p "${fake_gpdb_src}"
+    ln -s /home/gpadmin/gpdb_src "${fake_gpdb_src}/gpdb_src"
 }
 
 # Setup common environment
