@@ -80,6 +80,7 @@ set_target_properties(
 
 # Add installcheck targets
 add_subdirectory(tests)
+add_subdirectory(upgrade_test)
 
 # packing part, move to a separate file if this part is too large
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Distro.cmake)
