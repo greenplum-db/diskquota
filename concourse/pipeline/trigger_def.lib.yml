@@ -3,11 +3,6 @@
 #! PR trigger. For pull request pipelines
 #@ def pr_trigger(res_map):
 #@   add_res_by_name(res_map, "diskquota_pr")
-to_get_gate:
-  - get: diskquota_src
-    resource: diskquota_pr
-    params:
-      fetch_tags: true
 to_get:
   - get: diskquota_src
     resource: diskquota_pr
