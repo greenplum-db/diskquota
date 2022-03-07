@@ -137,9 +137,9 @@ SELECT
   quotalimitMB AS quota_in_mb, 
   COALESCE(total_size, 0) AS nspsize_in_bytes
 FROM 
-  diskquota.quota_config 
-  JOIN pg_namespace ON targetoid = pg_namespace.oid 
-  LEFT OUTER JOIN quota_usage ON pg_namespace.oid = relnamespace
+  diskquota.quota_config JOIN 
+  pg_namespace ON targetoid = pg_namespace.oid LEFT OUTER JOIN 
+  quota_usage ON pg_namespace.oid = relnamespace
 WHERE
   quotaType = 0; -- NAMESPACE_QUOTA
 
@@ -231,7 +231,7 @@ FROM
   pg_tablespace ON tablespaceoid = pg_tablespace.oid LEFT OUTER JOIN 
   quota_usage ON pg_namespace.oid = relnamespace AND pg_tablespace.oid = reltablespace;
 
-CREATE OR REPLACE VIEW diskquota.show_fast_role_tablespace_quota_view AS
+CREATE VIEW diskquota.show_fast_role_tablespace_quota_view AS
 WITH
   default_tablespace AS (
     SELECT dattablespace FROM pg_database
