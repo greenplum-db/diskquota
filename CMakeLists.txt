@@ -85,7 +85,7 @@ add_subdirectory(tests)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Distro.cmake)
 
 if(DEFINED DISKQUOTA_LAST_RELEASE_PATH)
-    message(STATUS "Copy pervious installer from ${DISKQUOTA_LAST_RELEASE_PATH}")
+  message(STATUS "Copy pervious installer from ${DISKQUOTA_LAST_RELEASE_PATH}")
   file(ARCHIVE_EXTRACT INPUT ${DISKQUOTA_LAST_RELEASE_PATH} PATTERNS "*.so")
   file(GLOB DISKQUOTA_PREVIOUS_LIBRARY
        "${CMAKE_BINARY_DIR}/lib/postgresql/*.so")
