@@ -11,9 +11,9 @@ function pkg() {
     fi
 
     pushd /home/gpadmin/diskquota_artifacts
-    local last_release_diskquota
-    last_release_diskquota=$(readlink -e /home/gpadmin/last_released_diskquota_bin/diskquota-*.tar.gz)
-    cmake /home/gpadmin/diskquota_src -DDISKQUOTA_PREVIOUS_INSTALLER="${last_release_diskquota}"
+    local last_release_path
+    last_release_path=$(readlink -e /home/gpadmin/last_released_diskquota_bin/diskquota-*.tar.gz)
+    cmake /home/gpadmin/diskquota_src -DDISKQUOTA_LAST_RELEASE_PATH="${last_release_path}"
     cmake --build . --target package
     popd
 }
