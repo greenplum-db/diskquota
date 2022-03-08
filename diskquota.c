@@ -344,8 +344,7 @@ disk_quota_worker_main(Datum main_arg)
 		}
 
 		ereportif(
-			!has_error &&
-			times == 1,   // basically, the first time always fail. print log in second time
+			!has_error && times == 0,
 			WARNING,
 			(errmsg("[diskquota] worker for '%s' detected the installed version is %d.%d, "
 					"but current version is %s. abort due to version not match", dbname, major, minor, DISKQUOTA_VERSION),
