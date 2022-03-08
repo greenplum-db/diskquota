@@ -75,7 +75,7 @@ FROM
 WHERE
     schemaname = 'diskquota'
 ORDER by
-    schemaname;
+    schemaname, viewname;
 -- views end
 
 DROP FUNCTION typeid_to_name (oid[]);
