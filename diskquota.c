@@ -334,7 +334,7 @@ disk_quota_worker_main(Datum main_arg)
 
 		if (has_error) {
 			static char _errfmt[] = "find issues in pg_class.pg_extension check server log. waited %d seconds",
-						_errmsg[sizeof(_errfmt) + 65] = {};
+						_errmsg[sizeof(_errfmt) + sizeof("2147483647" /* INT_MAX */) + 1] = {};
 			snprintf(_errmsg, sizeof(_errmsg), _errfmt, times * diskquota_naptime);
 
 			init_ps_display("bgworker:", "[diskquota]", dbname, _errmsg);
