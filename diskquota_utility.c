@@ -1249,7 +1249,7 @@ int worker_spi_get_extension_version(int *major, int *minor)
 	char *version =  TextDatumGetCString(v);
 	if (version == NULL) {
 		ereport(WARNING,
-				(errmsg("[diskquota] 'extversion' is empty in pg_class.pg_extension. may catalog corrupted")));
+				(errmsg("[diskquota] 'extversion' is empty in pg_class.pg_extension. catalog might be corrupted")));
 		return -1;
 	}
 
@@ -1258,7 +1258,7 @@ int worker_spi_get_extension_version(int *major, int *minor)
 	if (ret != 2) {
 		ereport(WARNING,
 				(errmsg("[diskquota] 'extversion' is '%s' in pg_class.pg_extension which is not valid format. "
-						"may catalog corrupted",
+						"catalog might be corrupted",
 						version)));
 		return -1;
 	}
