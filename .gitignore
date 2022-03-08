@@ -11,3 +11,5 @@ tags
 cscope*
 .ccls-cache/
 compile_commands.json
+
+__pycache__
