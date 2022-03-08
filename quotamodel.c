@@ -2116,16 +2116,16 @@ show_blackmap(PG_FUNCTION_ARGS)
 			StrNCpy(targettype_str, "ROLE_QUOTA", _TARGETTYPE_STR_SIZE);
 			break;
 		case NAMESPACE_QUOTA:
-			strncpy(targettype_str, "NAMESPACE_QUOTA", _TARGETTYPE_STR_SIZE);
+			StrNCpy(targettype_str, "NAMESPACE_QUOTA", _TARGETTYPE_STR_SIZE);
 			break;
 		case ROLE_TABLESPACE_QUOTA:
-			strncpy(targettype_str, "ROLE_TABLESPACE_QUOTA", _TARGETTYPE_STR_SIZE);
+			StrNCpy(targettype_str, "ROLE_TABLESPACE_QUOTA", _TARGETTYPE_STR_SIZE);
 			break;
 		case NAMESPACE_TABLESPACE_QUOTA:
-			strncpy(targettype_str, "NAMESPACE_TABLESPACE_QUOTA", _TARGETTYPE_STR_SIZE);
+			StrNCpy(targettype_str, "NAMESPACE_TABLESPACE_QUOTA", _TARGETTYPE_STR_SIZE);
 			break;
 		default:
-			strncpy(targettype_str, "UNKNOWN", _TARGETTYPE_STR_SIZE);
+			StrNCpy(targettype_str, "UNKNOWN", _TARGETTYPE_STR_SIZE);
 			break;
 		}
 
