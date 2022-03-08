@@ -5,5 +5,6 @@
 
 \c
 alter extension diskquota update to '1.0';
--- 2.0 to 1.0 need reboot
+-- downgrade to 1.0 need reboot, the version check is not in 1.0
+-- worker status is undefined at just downgrade
 \! gpstop -arf > /dev/null
