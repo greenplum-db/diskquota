@@ -32,7 +32,9 @@ typedef enum
 typedef enum
 {
 	FETCH_ACTIVE_OID,			/* fetch active table list */
-	FETCH_ACTIVE_SIZE			/* fetch size for active tables */
+	FETCH_ACTIVE_SIZE,			/* fetch size for active tables */
+	ADD_DB_TO_MONITOR,
+	REMOVE_DB_FROM_BEING_MONITORED,
 }			FetchTableStatType;
 
 typedef enum
@@ -106,7 +108,6 @@ typedef enum MessageResult MessageResult;
 
 extern DiskQuotaLocks diskquota_locks;
 extern ExtensionDDLMessage *extension_ddl_message;
-extern pg_atomic_uint32 *diskquota_hardlimit;
 
 typedef struct DiskQuotaWorkerEntry DiskQuotaWorkerEntry;
 
@@ -114,9 +115,10 @@ typedef struct DiskQuotaWorkerEntry DiskQuotaWorkerEntry;
 struct DiskQuotaWorkerEntry
 {
 	Oid			dbid;
-	pid_t		pid;			/* worker pid */
-	unsigned int epoch; 		/* this counter will be increased after each worker loop */
+	pg_atomic_uint32 epoch; 		/* this counter will be increased after each worker loop */
 	bool is_paused; 			/* true if this worker is paused */
+
+	// NOTE: this field only can access in diskquota launcher, in other process it is dangling pointer
 	BackgroundWorkerHandle *handle;
 };
 
@@ -142,8 +144,10 @@ extern void init_disk_quota_hook(void);
 extern Datum diskquota_fetch_table_stat(PG_FUNCTION_ARGS);
 extern int	diskquota_naptime;
 extern int	diskquota_max_active_tables;
+extern bool	diskquota_hardlimit;
 
 extern int 	SEGCOUNT;
+extern int worker_spi_get_extension_version(int *major, int *minor);
 extern int  get_ext_major_version(void);
 extern void truncateStringInfo(StringInfo str, int nchars);
 extern List *get_rel_oid_list(void);

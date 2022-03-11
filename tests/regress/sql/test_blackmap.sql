@@ -19,12 +19,34 @@ CREATE OR REPLACE FUNCTION replace_oid_with_relname(given_name text)
   END;
 $$ LANGUAGE plpgsql;
 
+-- this function return valid tablespaceoid.
+-- For role/namespace quota, return as it is.
+-- For namespace_tablespace/role_tablespace quota, return non-zero tablespaceoid.
+CREATE OR REPLACE FUNCTION get_real_tablespace_oid(block_type text, tablespaceoid oid)
+	RETURNS oid AS
+$$
+BEGIN
+	CASE
+		WHEN (block_type = 'NAMESPACE') OR (block_type = 'ROLE') THEN RETURN tablespaceoid;
+		ELSE RETURN (
+			CASE tablespaceoid
+				WHEN 0 THEN (SELECT dattablespace FROM pg_database WHERE datname = CURRENT_DATABASE())
+				ELSE
+					tablespaceoid
+				END
+			);
+		END CASE;
+END;
+$$ LANGUAGE plpgsql;
+
 CREATE OR REPLACE FUNCTION block_relation_on_seg0(rel regclass, block_type text)
   RETURNS void AS $$
   DECLARE
     bt        int;
     targetoid oid;
+    tablespaceoid oid;
   BEGIN
+    SELECT reltablespace INTO tablespaceoid FROM pg_class WHERE relname=rel::text;
     CASE block_type
       WHEN 'NAMESPACE' THEN
         bt = 0;
@@ -42,12 +64,12 @@ CREATE OR REPLACE FUNCTION block_relation_on_seg0(rel regclass, block_type text)
         bt = 3;
         SELECT relowner INTO targetoid
           FROM pg_class WHERE relname=rel::text;
-    END CASE;
+	END CASE;
     PERFORM diskquota.refresh_blackmap(
     ARRAY[
       ROW(targetoid,
           (SELECT oid FROM pg_database WHERE datname=current_database()),
-          (SELECT reltablespace FROM pg_class WHERE relname=rel::text),
+          (SELECT get_real_tablespace_oid(block_type, tablespaceoid)),
           bt,
           false)
       ]::diskquota.blackmap_entry[],
@@ -58,9 +80,9 @@ LANGUAGE 'plpgsql';
 
 --
 -- 1. Create an ordinary table and add its oid to blackmap on seg0.
---    Check that it's relfilenode is blocked on seg0 by variouts conditions.
+--    Check that it's relfilenode is blocked on seg0 by various conditions.
 --
-CREATE TABLE blocked_t1(i int);
+CREATE TABLE blocked_t1(i int) DISTRIBUTED BY (i);
 
 -- Insert an entry for blocked_t1 to blackmap on seg0.
 SELECT block_relation_on_seg0('blocked_t1'::regclass, 'NAMESPACE'::text);
@@ -111,7 +133,7 @@ SELECT rel.relname, be.target_type,
 -- 2. Test that the relfilenodes of toast relation together with its
 --    index are blocked on seg0.
 --
-CREATE TABLE blocked_t2(i text);
+CREATE TABLE blocked_t2(i text) DISTRIBUTED BY (i);
 -- Insert an entry for blocked_t2 to blackmap on seg0.
 SELECT block_relation_on_seg0('blocked_t2'::regclass, 'NAMESPACE'::text);
 
@@ -129,7 +151,7 @@ SELECT replace_oid_with_relname(rel.relname),
 -- 3. Test that the relfilenodes of appendonly relation (row oriented) together with its
 --    auxiliary relations are blocked on seg0.
 --
-CREATE TABLE blocked_t3(i int) WITH (appendonly=true);
+CREATE TABLE blocked_t3(i int) WITH (appendonly=true) DISTRIBUTED BY (i);
 CREATE INDEX blocked_t3_index ON blocked_t3(i);
 -- Insert an entry for blocked_t3 to blackmap on seg0.
 SELECT block_relation_on_seg0('blocked_t3'::regclass, 'NAMESPACE'::text);
@@ -148,7 +170,7 @@ SELECT replace_oid_with_relname(rel.relname),
 -- 4. Test that the relfilenodes of appendonly relation (column oriented) together with its
 --    auxiliary relations are blocked on seg0.
 --
-CREATE TABLE blocked_t4(i int) WITH (appendonly=true, orientation=column);
+CREATE TABLE blocked_t4(i int) WITH (appendonly=true, orientation=column) DISTRIBUTED BY (i);
 CREATE INDEX blocked_t4_index ON blocked_t4(i);
 -- Insert an entry for blocked_t4 to blackmap on seg0.
 SELECT block_relation_on_seg0('blocked_t4'::regclass, 'NAMESPACE'::text);
@@ -167,7 +189,7 @@ SELECT replace_oid_with_relname(rel.relname),
 -- 5. Test that the relfilenodes of toast appendonly relation (row oriented) together with its
 --    auxiliary relations are blocked on seg0.
 --
-CREATE TABLE blocked_t5(i text) WITH (appendonly=true, orientation=column);
+CREATE TABLE blocked_t5(i text) WITH (appendonly=true, orientation=column) DISTRIBUTED BY (i);
 CREATE INDEX blocked_t5_index ON blocked_t5(i);
 -- Insert an entry for blocked_t5 to blackmap on seg0.
 SELECT block_relation_on_seg0('blocked_t5'::regclass, 'NAMESPACE'::text);
@@ -185,6 +207,7 @@ SELECT replace_oid_with_relname(rel.relname),
 -- Do some clean-ups.
 DROP FUNCTION replace_oid_with_relname(text);
 DROP FUNCTION block_relation_on_seg0(regclass, text);
+DROP FUNCTION get_real_tablespace_oid(text, oid);
 DROP TABLE blocked_t1;
 DROP TABLE blocked_t2;
 DROP TABLE blocked_t3;

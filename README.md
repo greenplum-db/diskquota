@@ -83,11 +83,33 @@ That is to say, a role may have different quota limit on different databases
 and their disk usage is isolated between databases.
 
 # Install
-1. Compile disk quota with pgxs.
+
+(cmake)[https://cmake.org] (>= 3.18) needs to be installed.
+
+1. Build & install disk quota
 ```
-cd $diskquota_src; 
-make; 
-make install;
+mkdir -p <diskquota_src>/build
+cd <diskquota_src>/build
+```
+
+If the `greenplum_path.sh` has been source:
+
+```
+cmake ..
+```
+
+Otherwise:
+
+```
+# Without source greenplum_path.sh
+cmake .. --DPG_CONFIG=<gpdb_installation_dir>/bin/pg_config
+#
+```
+
+Build and install:
+
+```
+make install
 ```
 
 2. Create database to store global information.
@@ -98,7 +120,7 @@ create database diskquota;
 3. Enable diskquota as preload library 
 ```
 # enable diskquota in preload library.
-gpconfig -c shared_preload_libraries -v 'diskquota'
+gpconfig -c shared_preload_libraries -v 'diskquota-<major.minor>'
 # restart database.
 gpstop -ar
 ```
@@ -126,7 +148,7 @@ create schema s1;
 select diskquota.set_schema_quota('s1', '1 MB');
 set search_path to s1;
 
-create table a(i int);
+create table a(i int) DISTRIBUTED BY (i);
 # insert small data succeeded
 insert into a select generate_series(1,100);
 # insert large data failed
@@ -145,7 +167,7 @@ reset search_path;
 2. Set/update/delete role quota limit using diskquota.set_role_quota
 ```
 create role u1 nologin;
-create table b (i int);
+create table b (i int) DISTRIBUTED BY (i);
 alter table b owner to u1;
 select diskquota.set_role_quota('u1', '1 MB');
 
@@ -171,10 +193,18 @@ select * from diskquota.show_fast_schema_quota_view;
 
 
 # Test
-Run regression tests.
+Run regression tests:
 ```
-cd diskquota_src;
+cd <diskquota_src>/build;
 make installcheck
+```
+Show quick diff of regress results:
+```
+make diff_<test_target>_<case_name>
+```
+Show all build target:
+```
+make help
 ```
 
 # HA
@@ -214,9 +244,9 @@ and do enfocement accordingly in later queries.
 ```
 # suppose quota of schema s1 is 1MB.
 set search_path to s1;
-create table b;
+create table b (i int) DISTRIBUTED BY (i);
 BEGIN;
-create table a;
+create table a (i int) DISTRIBUTED BY (i);
 # Issue: quota enforcement doesn't work on table a
 insert into a select generate_series(1,200000);
 # quota enforcement works on table b

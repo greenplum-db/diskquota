@@ -11,8 +11,8 @@ DROP ROLE IF EXISTS rolespcu1;
 DROP ROLE IF EXISTS rolespcu2;
 CREATE ROLE rolespcu1 NOLOGIN;
 CREATE ROLE rolespcu2 NOLOGIN;
-CREATE TABLE b (t TEXT) TABLESPACE rolespc;
-CREATE TABLE b2 (t TEXT) TABLESPACE rolespc;
+CREATE TABLE b (t TEXT) TABLESPACE rolespc DISTRIBUTED BY (t);
+CREATE TABLE b2 (t TEXT) TABLESPACE rolespc DISTRIBUTED BY (t);
 ALTER TABLE b2 OWNER TO rolespcu1;
 
 INSERT INTO b SELECT generate_series(1,100);
@@ -29,7 +29,7 @@ INSERT INTO b SELECT generate_series(1,100);
 -- expect insert fail
 INSERT INTO b2 SELECT generate_series(1,100);
 
--- Test show_fast_schema_tablespace_quota_view
+-- Test show_fast_role_tablespace_quota_view
 SELECT role_name, tablespace_name, quota_in_mb, rolsize_tablespace_in_bytes FROM diskquota.show_fast_role_tablespace_quota_view WHERE role_name = 'rolespcu1' and tablespace_name = 'rolespc';
 
 -- Test alter owner

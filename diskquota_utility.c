@@ -20,6 +20,7 @@
 #include <sys/stat.h>
 
 #include "access/aomd.h"
+#include "access/xact.h"
 #include "catalog/namespace.h"
 #include "catalog/objectaccess.h"
 #include "catalog/pg_collation.h"
@@ -32,12 +33,14 @@
 #include "executor/spi.h"
 #include "nodes/makefuncs.h"
 #include "storage/proc.h"
+#include "utils/snapmgr.h"
 #include "utils/builtins.h"
 #include "utils/faultinjector.h"
 #include "utils/fmgroids.h"
 #include "utils/formatting.h"
 #include "utils/numeric.h"
 #include "libpq-fe.h"
+#include "funcapi.h"
 
 #include <cdb/cdbvars.h>
 #include <cdb/cdbdisp_query.h>
@@ -56,9 +59,9 @@ PG_FUNCTION_INFO_V1(set_schema_quota);
 PG_FUNCTION_INFO_V1(set_role_quota);
 PG_FUNCTION_INFO_V1(set_schema_tablespace_quota);
 PG_FUNCTION_INFO_V1(set_role_tablespace_quota);
-PG_FUNCTION_INFO_V1(update_diskquota_db_list);
 PG_FUNCTION_INFO_V1(set_per_segment_quota);
 PG_FUNCTION_INFO_V1(relation_size_local);
+PG_FUNCTION_INFO_V1(pull_all_table_size);
 
 /* timeout count to wait response from launcher process, in 1/10 sec */
 #define WAIT_TIME_COUNT  1200
@@ -71,8 +74,6 @@ static const char *ddl_err_code_to_err_message(MessageResult code);
 static int64 get_size_in_mb(char *str);
 static void set_quota_config_internal(Oid targetoid, int64 quota_limit_mb, QuotaType type);
 static void set_target_internal(Oid primaryoid, Oid spcoid, int64 quota_limit_mb, QuotaType type);
-static bool generate_insert_table_size_sql(StringInfoData *buf, int extMajorVersion);
-static char *convert_oidlist_to_string(List *oidlist);
 
 int get_ext_major_version(void);
 List *get_rel_oid_list(void);
@@ -89,12 +90,10 @@ init_table_size_table(PG_FUNCTION_ARGS)
 {
 	int		ret;
 	StringInfoData	buf;
-	StringInfoData	insert_buf;
 
 	RangeVar   	*rv;
 	Relation	rel;
 	int 		extMajorVersion;
-	bool		insert_flag;
 	/*
 	 * If error happens in init_table_size_table, just return error messages
 	 * to the client side. So there is no need to catch the error.
@@ -126,51 +125,44 @@ init_table_size_table(PG_FUNCTION_ARGS)
 	 */
 	SPI_connect();
 	extMajorVersion = get_ext_major_version();
-	char *oids = convert_oidlist_to_string(get_rel_oid_list());
 
 	/* delete all the table size info in table_size if exist. */
 	initStringInfo(&buf);
-	initStringInfo(&insert_buf);
-	appendStringInfo(&buf, "delete from diskquota.table_size;");
+	appendStringInfo(&buf, "truncate table diskquota.table_size;");
 	ret = SPI_execute(buf.data, false, 0);
-	if (ret != SPI_OK_DELETE)
-		elog(ERROR, "cannot delete table_size table: error code %d", ret);
+	if (ret != SPI_OK_UTILITY)
+		elog(ERROR, "cannot truncate table_size table: error code %d", ret);
 
-	/* fetch table size for master*/
-	resetStringInfo(&buf);
-	appendStringInfo(&buf,
-					 "select oid, pg_table_size(oid), -1"
-					 " from pg_class"
-					 " where oid in (%s);",
-					 oids);
-	ret = SPI_execute(buf.data, false, 0);
-	if (ret != SPI_OK_SELECT)
-		elog(ERROR, "cannot fetch in pg_table_size. error code %d", ret);
-
-	/* fill table_size table with table oid and size info for master. */
-	appendStringInfo(&insert_buf,
-	                 "insert into diskquota.table_size values");
-	insert_flag = generate_insert_table_size_sql(&insert_buf, extMajorVersion);
-	/* fetch table size on segments*/
-	resetStringInfo(&buf);
-	appendStringInfo(&buf,
-			"select oid, pg_table_size(oid), gp_segment_id"
-			" from gp_dist_random('pg_class')"
-			" where oid in (%s);",
-			oids);
-	ret = SPI_execute(buf.data, false, 0);
-	if (ret != SPI_OK_SELECT)
-		elog(ERROR, "cannot fetch in pg_table_size. error code %d", ret);
-
-	/* fill table_size table with table oid and size info for segments. */
-	insert_flag = insert_flag | generate_insert_table_size_sql(&insert_buf, extMajorVersion);
-	if (insert_flag)
+	if (extMajorVersion == 1)
 	{
-		truncateStringInfo(&insert_buf, insert_buf.len - strlen(","));
-		appendStringInfo(&insert_buf, ";");
-		ret = SPI_execute(insert_buf.data, false, 0);
+		resetStringInfo(&buf);
+		appendStringInfo(&buf, "INSERT INTO diskquota.table_size WITH all_size AS "
+								"(SELECT diskquota.pull_all_table_size() as a FROM gp_dist_random('gp_id') "	
+								"UNION ALL SELECT diskquota.pull_all_table_size()) "	
+								"SELECT (a).tableid, sum((a).size) FROM all_size GROUP BY (a).tableid;");
+		ret = SPI_execute(buf.data, false, 0);
 		if (ret != SPI_OK_INSERT)
-			elog(ERROR, "cannot insert table_size_per_segment table: error code %d", ret);
+			elog(ERROR, "cannot insert into table_size table: error code %d", ret);
+	}
+	else
+	{
+		resetStringInfo(&buf);
+		appendStringInfo(&buf, "INSERT INTO diskquota.table_size WITH all_size AS "
+								"(SELECT diskquota.pull_all_table_size() as a FROM gp_dist_random('gp_id')) "	
+								"SELECT (a).* FROM all_size;");
+		ret = SPI_execute(buf.data, false, 0);
+		if (ret != SPI_OK_INSERT)
+			elog(ERROR, "cannot insert into table_size table: error code %d", ret);
+
+		resetStringInfo(&buf);
+        /* size is the sum of size on master and on all segments when segid == -1. */
+		appendStringInfo(&buf, "INSERT INTO diskquota.table_size WITH total_size AS "
+								"(SELECT * from diskquota.pull_all_table_size() "
+								"UNION ALL SELECT tableid, size, segid FROM diskquota.table_size) "	
+								"SELECT tableid, sum(size) as size, -1 as segid FROM total_size GROUP BY tableid;");
+		ret = SPI_execute(buf.data, false, 0);
+		if (ret != SPI_OK_INSERT)
+			elog(ERROR, "cannot insert into table_size table: error code %d", ret);
 	}
 
 	/* set diskquota state to ready. */
@@ -186,46 +178,138 @@ init_table_size_table(PG_FUNCTION_ARGS)
 	PG_RETURN_VOID();
 }
 
-/* last_part is true means there is no other set of values to be inserted to table_size */
-static bool
-generate_insert_table_size_sql(StringInfoData *insert_buf, int extMajorVersion)
+static HTAB*
+calculate_all_table_size()
 {
-	TupleDesc tupdesc = SPI_tuptable->tupdesc;
-	bool insert_flag = false;
-	for(int i = 0; i < SPI_processed; i++)
+	Relation classRel;
+	HeapTuple tuple;
+	HeapScanDesc relScan;
+	Oid relid;
+	Oid prelid;
+	Size tablesize;
+	RelFileNodeBackend rnode;
+	TableEntryKey keyitem;
+	HTAB *local_table_size_map;
+	HASHCTL	hashctl;
+	DiskQuotaActiveTableEntry *entry;
+	bool found;
+
+	memset(&hashctl, 0, sizeof(hashctl));
+	hashctl.keysize = sizeof(TableEntryKey);
+	hashctl.entrysize = sizeof(DiskQuotaActiveTableEntry);
+	hashctl.hcxt = CurrentMemoryContext;
+	hashctl.hash = tag_hash;
+
+	local_table_size_map = hash_create("local_table_size_map",
+										1024, &hashctl,
+										HASH_ELEM | HASH_CONTEXT | HASH_FUNCTION);
+
+	classRel = heap_open(RelationRelationId, AccessShareLock);
+	relScan = heap_beginscan_catalog(classRel, 0, NULL);
+	while ((tuple = heap_getnext(relScan, ForwardScanDirection)) != NULL)
 	{
-		HeapTuple	tup;
-		bool        	isnull;
-		Oid         	oid;
-		int64       	sz;
-		int16		segid;
+		Form_pg_class classForm = (Form_pg_class) GETSTRUCT(tuple);
+		if (classForm->relkind != RELKIND_RELATION &&
+			classForm->relkind != RELKIND_MATVIEW &&
+			classForm->relkind != RELKIND_INDEX &&
+			classForm->relkind != RELKIND_AOSEGMENTS &&
+			classForm->relkind != RELKIND_AOBLOCKDIR &&
+			classForm->relkind != RELKIND_AOVISIMAP &&
+			classForm->relkind != RELKIND_TOASTVALUE)
+			continue;
 
-		tup = SPI_tuptable->vals[i];
-		oid = SPI_getbinval(tup,tupdesc, 1, &isnull);
-		sz = SPI_getbinval(tup,tupdesc, 2, &isnull);
-		segid = SPI_getbinval(tup,tupdesc, 3, &isnull);
-		switch (extMajorVersion)
+		relid = HeapTupleGetOid(tuple);
+		/* ignore system table */
+		if (relid < FirstNormalObjectId)
+			continue;
+
+		rnode.node.dbNode = MyDatabaseId;
+		rnode.node.relNode = classForm->relfilenode;
+		rnode.node.spcNode = OidIsValid(classForm->reltablespace) ? classForm->reltablespace : MyDatabaseTableSpace;
+		rnode.backend = classForm->relpersistence == RELPERSISTENCE_TEMP ? TempRelBackendId : InvalidBackendId;
+		tablesize = calculate_relation_size_all_forks(&rnode, classForm->relstorage);
+
+		keyitem.reloid = relid;
+		keyitem.segid = GpIdentity.segindex;
+
+		prelid = diskquota_parse_primary_table_oid(classForm->relnamespace, classForm->relname.data);
+		if (OidIsValid(prelid))
 		{
-			case 1:
-				/* for version 1.0, only insert the values from master */
-				if (segid == -1)
-				{
-					appendStringInfo(insert_buf, " ( %u, %ld),", oid, sz);
-					insert_flag = true;
-				}
-				break;
-			case 2:
-				appendStringInfo(insert_buf, " ( %u, %ld, %d),", oid, sz, segid);
-				insert_flag = true;
-				break;
-			default:
-				ereport(ERROR,
-						(errcode(ERRCODE_INTERNAL_ERROR),
-						 errmsg("[diskquota] unknown diskquota extension version: %d", extMajorVersion)));
-
+			keyitem.reloid = prelid;
 		}
+
+		entry = hash_search(local_table_size_map, &keyitem, HASH_ENTER, &found);
+		if (!found)
+		{
+			entry->tablesize = 0;
+		}
+		entry->tablesize += tablesize;
 	}
-	return insert_flag;
+	heap_endscan(relScan);
+	heap_close(classRel, AccessShareLock);
+
+	return local_table_size_map;
+}
+
+Datum
+pull_all_table_size(PG_FUNCTION_ARGS)
+{
+	DiskQuotaActiveTableEntry *entry;
+	FuncCallContext	*funcctx;
+	struct PullAllTableSizeCtx {
+		HASH_SEQ_STATUS			iter;
+		HTAB				   *local_table_size_map;
+	} *table_size_ctx;
+
+	if (SRF_IS_FIRSTCALL())
+	{
+		TupleDesc			tupdesc;
+		MemoryContext		oldcontext;
+
+		/* Create a function context for cross-call persistence. */
+		funcctx = SRF_FIRSTCALL_INIT();
+
+		/* Switch to memory context appropriate for multiple function calls */
+		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+
+		tupdesc = CreateTemplateTupleDesc(3, false /*hasoid*/);
+		TupleDescInitEntry(tupdesc, (AttrNumber) 1, "TABLEID", OIDOID, -1 /*typmod*/, 0 /*attdim*/);
+		TupleDescInitEntry(tupdesc, (AttrNumber) 2, "SIZE", INT8OID, -1 /*typmod*/, 0 /*attdim*/);
+		TupleDescInitEntry(tupdesc, (AttrNumber) 3, "SEGID", INT2OID, -1 /*typmod*/, 0 /*attdim*/);
+		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
+
+		/* Create a local hash table and fill it with entries from shared memory. */
+		table_size_ctx = (struct PullAllTableSizeCtx *) palloc(sizeof(struct PullAllTableSizeCtx));
+		table_size_ctx->local_table_size_map = calculate_all_table_size();
+
+		/* Setup first calling context. */
+		hash_seq_init(&(table_size_ctx->iter), table_size_ctx->local_table_size_map);
+		funcctx->user_fctx = (void *) table_size_ctx;
+		MemoryContextSwitchTo(oldcontext);
+	}
+
+	funcctx = SRF_PERCALL_SETUP();
+	table_size_ctx = (struct PullAllTableSizeCtx *) funcctx->user_fctx;
+	
+	while ((entry = hash_seq_search(&(table_size_ctx->iter))) != NULL)
+	{
+		Datum		result;
+		Datum		values[3];
+		bool		nulls[3];
+		HeapTuple	tuple;
+
+		values[0] = ObjectIdGetDatum(entry->reloid);
+		values[1] = Int64GetDatum(entry->tablesize);
+		values[2] = Int16GetDatum(entry->segid);
+
+		memset(nulls, false, sizeof(nulls));
+		tuple = heap_form_tuple(funcctx->tuple_desc, values, nulls);
+		result = HeapTupleGetDatum(tuple);
+
+		SRF_RETURN_NEXT(funcctx, result);
+	}
+
+	SRF_RETURN_DONE(funcctx);
 }
 /*
  * Trigger to start diskquota worker when create extension diskquota.
@@ -481,24 +565,20 @@ register_diskquota_object_access_hook(void)
 	object_access_hook = dq_object_access_hook;
 }
 
-/*
- * This hook is used to handle drop extension diskquota event
- * It will send CMD_DROP_EXTENSION message to diskquota laucher.
- * Laucher will terminate the corresponding worker process and
- * remove the dbOid from the database_list table.
- */
-static void
-dq_object_access_hook(ObjectAccessType access, Oid classId,
-					  Oid objectId, int subId, void *arg)
+static void dq_object_access_hook_on_drop(void)
 {
-	Oid			oid;
-	int			rc, launcher_pid;
+	int rc, launcher_pid;
 
-	if (access != OAT_DROP || classId != ExtensionRelationId)
-		goto out;
-	oid = get_extension_oid("diskquota", true);
-	if (oid != objectId)
-		goto out;
+	/*
+	 * Remove the current database from monitored db cache
+	 * on all segments and on coordinator.
+	 */
+	update_diskquota_db_list(MyDatabaseId, HASH_REMOVE);
+
+	if (!IS_QUERY_DISPATCHER())
+	{
+		return;
+	}
 
 	/*
 	 * Lock on extension_ddl_lock to avoid multiple backend create diskquota
@@ -549,6 +629,33 @@ dq_object_access_hook(ObjectAccessType access, Oid classId,
 	}
 	LWLockRelease(diskquota_locks.extension_ddl_message_lock);
 	LWLockRelease(diskquota_locks.extension_ddl_lock);
+}
+
+/*
+ * listening on any modify on pg_extension table when:
+ * 		DROP:       will send CMD_DROP_EXTENSION to diskquota laucher
+ */
+static void
+dq_object_access_hook(ObjectAccessType access, Oid classId,
+					  Oid objectId, int subId, void *arg)
+{
+	if (classId != ExtensionRelationId)
+		goto out;
+
+	if (get_extension_oid("diskquota", true) != objectId)
+		goto out;
+
+	switch(access) {
+		case OAT_DROP:
+			dq_object_access_hook_on_drop();
+			break;
+		case OAT_POST_ALTER:
+		case OAT_FUNCTION_EXECUTE:
+		case OAT_POST_CREATE:
+		case OAT_NAMESPACE_SEARCH:
+			break;
+	}
+
 out:
 	if (next_object_access_hook)
 		(*next_object_access_hook) (access, classId, objectId,
@@ -1013,38 +1120,29 @@ get_size_in_mb(char *str)
 
 /*
  * Function to update the db list on each segment
+ * Will print a WARNING to log if out of memory
  */
-Datum
-update_diskquota_db_list(PG_FUNCTION_ARGS)
+void
+update_diskquota_db_list(Oid dbid, HASHACTION action)
 {
-	Oid	dbid = PG_GETARG_OID(0);
-	int	mode = PG_GETARG_INT32(1);
 	bool	found = false;
-
-	if (!superuser())
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("must be superuser to update db list")));
-	}
 
 	/* add/remove the dbid to monitoring database cache to filter out table not under
 	* monitoring in hook functions
 	*/
 
 	LWLockAcquire(diskquota_locks.monitoring_dbid_cache_lock, LW_EXCLUSIVE);
-	if (mode == 0)
+	if (action == HASH_ENTER)
 	{	
 		Oid *entry = NULL;
-		entry = hash_search(monitoring_dbid_cache, &dbid, HASH_ENTER, &found);
-		elog(WARNING, "add dbid %u into SHM", dbid);
-		if (!found && entry == NULL)
+		entry = hash_search(monitoring_dbid_cache, &dbid, HASH_ENTER_NULL, &found);
+		if (entry == NULL)
 		{
 			ereport(WARNING,
 				(errmsg("can't alloc memory on dbid cache, there ary too many databases to monitor")));
 		}
 	}
-	else if (mode == 1)
+	else if (action == HASH_REMOVE)
 	{
 		hash_search(monitoring_dbid_cache, &dbid, HASH_REMOVE, &found);
 		if (!found)
@@ -1054,9 +1152,6 @@ update_diskquota_db_list(PG_FUNCTION_ARGS)
 		}
 	}
 	LWLockRelease(diskquota_locks.monitoring_dbid_cache_lock);
-
-	PG_RETURN_VOID();
-
 }
 
 /*
@@ -1126,6 +1221,58 @@ set_per_segment_quota(PG_FUNCTION_ARGS)
 	PG_RETURN_VOID();
 }
 
+int worker_spi_get_extension_version(int *major, int *minor)
+{
+	StartTransactionCommand();
+	int ret = SPI_connect();
+	Assert(ret = SPI_OK_CONNECT);
+	PushActiveSnapshot(GetTransactionSnapshot());
+
+	ret = SPI_execute("select extversion from pg_extension where extname = 'diskquota'", true, 0);
+
+	if (SPI_processed == 0) {
+		ret = -1;
+		goto out;
+	}
+
+	if(ret != SPI_OK_SELECT || SPI_processed != 1) {
+		ereport(WARNING,
+				(errmsg("[diskquota] when reading installed version lines %ld code = %d",
+						SPI_processed, ret)));
+		return -1;
+	}
+
+	bool is_null = false;
+	Datum v = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &is_null);
+	Assert(is_null == false);
+
+	char *version =  TextDatumGetCString(v);
+	if (version == NULL) {
+		ereport(WARNING,
+				(errmsg("[diskquota] 'extversion' is empty in pg_class.pg_extension. catalog might be corrupted")));
+		return -1;
+	}
+
+	ret = sscanf(version, "%d.%d", major, minor);
+
+	if (ret != 2) {
+		ereport(WARNING,
+				(errmsg("[diskquota] 'extversion' is '%s' in pg_class.pg_extension which is not valid format. "
+						"catalog might be corrupted",
+						version)));
+		return -1;
+	}
+
+	ret = 0;
+
+out:
+	SPI_finish();
+	PopActiveSnapshot();
+	CommitTransactionCommand();
+
+	return ret;
+}
+
 /*
  * Get major version from extversion, and convert it to int
  * 0 means an invalid major version.
@@ -1167,25 +1314,6 @@ get_ext_major_version(void)
 		return (int)strtol(extversion, (char **) NULL, 10);
 	}
 	return 0;
-}
-
-static char *
-convert_oidlist_to_string(List *oidlist)
-{
-	StringInfoData 	buf;
-	bool		hasOid = false;
-	ListCell   *l;
-	initStringInfo(&buf);
-
-	foreach(l, oidlist)
-	{
-		Oid	oid = lfirst_oid(l);
-		appendStringInfo(&buf, "%u, ", oid);
-		hasOid = true;
-	}
-	if (hasOid)
-		truncateStringInfo(&buf, buf.len - strlen(", "));
-	return buf.data;
 }
 
 /*
@@ -1357,6 +1485,7 @@ diskquota_relation_open(Oid relid, LOCKMODE mode)
 		RESUME_INTERRUPTS();
 	}
 	PG_END_TRY();
+
 	return success_open ? rel : NULL;
 }
 

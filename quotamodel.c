@@ -26,6 +26,7 @@
 #include "executor/spi.h"
 #include "funcapi.h"
 #include "storage/ipc.h"
+#include "port/atomics.h"
 #include "utils/builtins.h"
 #include "utils/guc.h"
 #include "utils/faultinjector.h"
@@ -165,8 +166,6 @@ static HTAB *table_size_map = NULL;
 static HTAB *disk_quota_black_map = NULL;
 static HTAB *local_disk_quota_black_map = NULL;
 
-pg_atomic_uint32 *diskquota_hardlimit = NULL;
-
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 
 /* functions to maintain the quota maps */
@@ -299,7 +298,7 @@ add_quota_to_blacklist(QuotaType type, Oid targetOid, Oid tablespaceoid, bool se
 }
 
 /*
- * Check the quota map, if the entry doesn't exist any more,
+ * Check the quota map, if the entry doesn't exist anymore,
  * remove it from the map. Otherwise, check if it has hit
  * the quota limit, if it does, add it to the black list.
  */
@@ -331,11 +330,12 @@ check_quota_map(QuotaType type)
 			if (entry->size >= entry->limit)
 			{
 				Oid targetOid = entry->keys[0];
-				Oid tablespaceoid =
-					(type == NAMESPACE_TABLESPACE_QUOTA) || (type == ROLE_TABLESPACE_QUOTA) ? entry->keys[1] : InvalidOid;
 				/* when quota type is not NAMESPACE_TABLESPACE_QUOTA or ROLE_TABLESPACE_QUOTA, the tablespaceoid
 				 * is set to be InvalidOid, so when we get it from map, also set it to be InvalidOid
 				 */
+				Oid tablespaceoid =
+						(type == NAMESPACE_TABLESPACE_QUOTA) || (type == ROLE_TABLESPACE_QUOTA) ? entry->keys[1] : InvalidOid;
+
 				bool segmentExceeded = entry->segid == -1 ? false : true;
 				add_quota_to_blacklist(type, targetOid, tablespaceoid, segmentExceeded);
 			}
@@ -444,12 +444,6 @@ disk_quota_shmem_startup(void)
 			&hash_ctl,
 			HASH_ELEM | HASH_FUNCTION);
 
-	diskquota_hardlimit = ShmemInitStruct("diskquota_hardlimit",
-										  sizeof(pg_atomic_uint32),
-										  &found);
-	if (!found)
-		memset((void *) diskquota_hardlimit, 0, sizeof(pg_atomic_uint32));
-
 	/* use disk_quota_worker_map to manage diskquota worker processes. */
 	memset(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize = sizeof(Oid);
@@ -505,7 +499,6 @@ DiskQuotaShmemSize(void)
 	size = add_size(size, hash_estimate_size(MAX_NUM_MONITORED_DB, sizeof(Oid)));
 	size = add_size(size, hash_estimate_size(MAX_NUM_MONITORED_DB, sizeof(DiskQuotaWorkerEntry)));
 	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(Oid)));
-	size += sizeof(bool); /* sizeof(*diskquota_hardlimit) */
 	return size;
 }
 
@@ -620,15 +613,20 @@ do_check_diskquota_state_is_ready(void)
 	int			i;
 	StringInfoData sql_command;
 
-	/* Add the dbid to watching list, so the hook can catch the table change*/
 	initStringInfo(&sql_command);
-	appendStringInfo(&sql_command, "select gp_segment_id, diskquota.update_diskquota_db_list(%u, 0) from gp_dist_random('gp_id')  UNION ALL select -1, diskquota.update_diskquota_db_list(%u, 0);",
-				MyDatabaseId, MyDatabaseId);
+	/* Add current database to the monitored db cache on all segments */
+	appendStringInfo(&sql_command, 
+					"SELECT diskquota.diskquota_fetch_table_stat(%d, ARRAY[]::oid[]) "
+					"FROM gp_dist_random('gp_id');", ADD_DB_TO_MONITOR);
 	ret = SPI_execute(sql_command.data, true, 0);
-        if (ret != SPI_OK_SELECT)
-                ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-                                                errmsg("[diskquota] check diskquota state SPI_execute failed: error code %d", ret)));
+	if (ret != SPI_OK_SELECT) {
+		pfree(sql_command.data);
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+				errmsg("[diskquota] check diskquota state SPI_execute failed: error code %d", ret)));
+	}
 	pfree(sql_command.data);
+	/* Add current database to the monitored db cache on coordinator */
+	update_diskquota_db_list(MyDatabaseId, HASH_ENTER);
 	/*
 	 * check diskquota state from table diskquota.state errors will be catch
 	 * at upper level function.
@@ -744,7 +742,7 @@ refresh_disk_quota_usage(bool is_init)
 		/* copy local black map back to shared black map */
 		flush_local_black_map();
 		/* Dispatch blackmap entries to segments to perform hard-limit. */
-		if (pg_atomic_read_u32(diskquota_hardlimit))
+		if (diskquota_hardlimit)
 			dispatch_blackmap(local_active_table_stat_map);
 		hash_destroy(local_active_table_stat_map);
 	}
@@ -857,6 +855,11 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 			relnamespace = classForm->relnamespace;
 			relowner = classForm->relowner;
 			reltablespace = classForm->reltablespace;
+
+			if (!OidIsValid(reltablespace))
+			{
+				reltablespace = MyDatabaseTableSpace;
+			}
 		}
 		else
 		{
@@ -1452,6 +1455,12 @@ get_rel_owner_schema_tablespace(Oid relid, Oid *ownerOid, Oid *nsOid, Oid *table
 		*ownerOid = reltup->relowner;
 		*nsOid = reltup->relnamespace;
 		*tablespaceoid = reltup->reltablespace;
+
+		if (!OidIsValid(*tablespaceoid))
+		{
+			*tablespaceoid = MyDatabaseTableSpace;
+		}
+
 		ReleaseSysCache(tp);
 	}
 	return found;
@@ -1575,7 +1584,7 @@ quota_check_common(Oid reloid, RelFileNode *relfilenode)
 	if (OidIsValid(reloid))
 		return check_blackmap_by_reloid(reloid);
 
-	enable_hardlimit = pg_atomic_read_u32(diskquota_hardlimit);
+	enable_hardlimit = diskquota_hardlimit;
 
 #ifdef FAULT_INJECTOR
 	if (SIMPLE_FAULT_INJECTOR("enable_check_quota_by_relfilenode") == FaultInjectorTypeSkip)
@@ -1778,15 +1787,11 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 		keyitem.databaseoid   = DatumGetObjectId(GetAttributeByNum(lt, 2, &isnull));
 		keyitem.tablespaceoid = DatumGetObjectId(GetAttributeByNum(lt, 3, &isnull));
 		keyitem.targettype    = DatumGetInt32(GetAttributeByNum(lt, 4, &isnull));
-		/*
-		 * If the current quota limit type is NAMESPACE_TABLESPACE_QUOTA or
-		 * ROLE_TABLESPACE_QUOTA, we should explicitly set DEFAULTTABLESPACE_OID
-		 * for relations whose reltablespace is InvalidOid.
-		 */
-		if ((keyitem.targettype == NAMESPACE_TABLESPACE_QUOTA ||
-			 keyitem.targettype == ROLE_TABLESPACE_QUOTA) &&
-			!OidIsValid(keyitem.tablespaceoid))
-			keyitem.tablespaceoid = DEFAULTTABLESPACE_OID;
+		/* blackmap entries from QD should have the real tablespace oid */
+		if ((keyitem.targettype == NAMESPACE_TABLESPACE_QUOTA || keyitem.targettype == ROLE_TABLESPACE_QUOTA))
+		{
+			Assert(OidIsValid(keyitem.tablespaceoid));
+		}
 		segexceeded           = DatumGetBool(GetAttributeByNum(lt, 5, &isnull));
 
 		blackmapentry = hash_search(local_blackmap, &keyitem, HASH_ENTER_NULL, NULL);
@@ -1819,7 +1824,7 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 			Form_pg_class	form = (Form_pg_class) GETSTRUCT(tuple);
 			Oid				relnamespace = form->relnamespace;
 			Oid				reltablespace = OidIsValid(form->reltablespace) ?
-												form->reltablespace : DEFAULTTABLESPACE_OID;
+												form->reltablespace : MyDatabaseTableSpace;
 			Oid				relowner = form->relowner;
 			BlackMapEntry	keyitem;
 			bool			found;
@@ -1881,7 +1886,7 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 							Form_pg_class				curr_form = (Form_pg_class) GETSTRUCT(curr_tuple);
 							Oid							curr_reltablespace =
 								OidIsValid(curr_form->reltablespace) ?
-								curr_form->reltablespace : DEFAULTTABLESPACE_OID;
+								curr_form->reltablespace : MyDatabaseTableSpace;
 							RelFileNode					relfilenode =
 								{ .dbNode = MyDatabaseId,
 								  .relNode = curr_form->relfilenode,
@@ -2084,12 +2089,13 @@ show_blackmap(PG_FUNCTION_ARGS)
 
 	while ((blackmap_entry = hash_seq_search(&(blackmap_ctx->blackmap_seq))) != NULL)
 	{
+#define _TARGETTYPE_STR_SIZE 32
 		Datum			result;
 		Datum			values[9];
 		bool			nulls[9];
 		HeapTuple		tuple;
 		BlackMapEntry	keyitem;
-		char			targettype_str[32];
+		char			targettype_str[_TARGETTYPE_STR_SIZE];
 		RelFileNode		blocked_relfilenode;
 
 		memcpy(&blocked_relfilenode,
@@ -2107,19 +2113,19 @@ show_blackmap(PG_FUNCTION_ARGS)
 		switch ((QuotaType) keyitem.targettype)
 		{
 		case ROLE_QUOTA:
-			strncpy(targettype_str, "ROLE_QUOTA", 10);
+			StrNCpy(targettype_str, "ROLE_QUOTA", _TARGETTYPE_STR_SIZE);
 			break;
 		case NAMESPACE_QUOTA:
-			strncpy(targettype_str, "NAMESPACE_QUOTA", 15);
+			StrNCpy(targettype_str, "NAMESPACE_QUOTA", _TARGETTYPE_STR_SIZE);
 			break;
 		case ROLE_TABLESPACE_QUOTA:
-			strncpy(targettype_str, "ROLE_TABLESPACE_QUOTA", 21);
+			StrNCpy(targettype_str, "ROLE_TABLESPACE_QUOTA", _TARGETTYPE_STR_SIZE);
 			break;
 		case NAMESPACE_TABLESPACE_QUOTA:
-			strncpy(targettype_str, "NAMESPACE_TABLESPACE_QUOTA", 26);
+			StrNCpy(targettype_str, "NAMESPACE_TABLESPACE_QUOTA", _TARGETTYPE_STR_SIZE);
 			break;
 		default:
-			strncpy(targettype_str, "UNKNOWN", 7);
+			StrNCpy(targettype_str, "UNKNOWN", _TARGETTYPE_STR_SIZE);
 			break;
 		}
 
@@ -2141,81 +2147,4 @@ show_blackmap(PG_FUNCTION_ARGS)
 	}
 
 	SRF_RETURN_DONE(funcctx);
-}
-
-static void
-dispatch_hardlimit_flag(bool enable_hardlimit)
-{
-	CdbPgResults		cdb_pgresults = {NULL, 0};
-	int					i;
-	StringInfoData		sql;
-
-	initStringInfo(&sql);
-	appendStringInfo(&sql, "SELECT diskquota.%s",
-					 enable_hardlimit ? "enable_hardlimit()" : "disable_hardlimit()");
-	CdbDispatchCommand(sql.data, DF_NONE, &cdb_pgresults);
-
-	for (i = 0; i < cdb_pgresults.numResults; ++i)
-	{
-		PGresult *pgresult = cdb_pgresults.pg_results[i];
-		if (PQresultStatus(pgresult) != PGRES_TUPLES_OK)
-		{
-			cdbdisp_clearCdbPgResults(&cdb_pgresults);
-			ereport(ERROR,
-					(errmsg("[diskquota] cannot %s hardlimit on segments, encounter unexpected result from segment: %d",
-							enable_hardlimit ? "enable" : "disable",
-							PQresultStatus(pgresult))));
-		}
-	}
-	cdbdisp_clearCdbPgResults(&cdb_pgresults);
-}
-
-PG_FUNCTION_INFO_V1(diskquota_enable_hardlimit);
-Datum
-diskquota_enable_hardlimit(PG_FUNCTION_ARGS)
-{
-	if (!superuser())
-		ereport(ERROR,
-				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("must be superuser to enable hardlimit")));
-
-	/*
-	 * If this UDF is executed on segment servers, we should clear
-	 * the blackmap firstly, or the relation may be blocked by the
-	 * blackmap dispatched by the previous iteration.
-	 */
-	if (!IS_QUERY_DISPATCHER())
-	{
-		HASH_SEQ_STATUS			hash_seq;
-		GlobalBlackMapEntry	   *blackmapentry;
-		LWLockAcquire(diskquota_locks.black_map_lock, LW_EXCLUSIVE);
-		hash_seq_init(&hash_seq, disk_quota_black_map);
-		while ((blackmapentry = hash_seq_search(&hash_seq)) != NULL)
-			hash_search(disk_quota_black_map, &blackmapentry->keyitem, HASH_REMOVE, NULL);
-		LWLockRelease(diskquota_locks.black_map_lock);
-	}
-
-	pg_atomic_write_u32(diskquota_hardlimit, true);
-
-	if (IS_QUERY_DISPATCHER())
-		dispatch_hardlimit_flag(true /*enable_hardlimit*/);
-
-	PG_RETURN_VOID();
-}
-
-PG_FUNCTION_INFO_V1(diskquota_disable_hardlimit);
-Datum
-diskquota_disable_hardlimit(PG_FUNCTION_ARGS)
-{
-	if (!superuser())
-		ereport(ERROR,
-				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("must be superuser to disable hardlimit")));
-
-	pg_atomic_write_u32(diskquota_hardlimit, false);
-
-	if (IS_QUERY_DISPATCHER())
-		dispatch_hardlimit_flag(false /*enable_hardlimit*/);
-
-	PG_RETURN_VOID();
 }

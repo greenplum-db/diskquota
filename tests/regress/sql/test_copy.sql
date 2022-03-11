@@ -3,7 +3,9 @@ CREATE SCHEMA s3;
 SELECT diskquota.set_schema_quota('s3', '1 MB');
 SET search_path TO s3;
 
-CREATE TABLE c (i int);
+\! seq 100 > /tmp/csmall.txt
+
+CREATE TABLE c (i int) DISTRIBUTED BY (i);
 COPY c FROM '/tmp/csmall.txt';
 -- expect failed 
 INSERT INTO c SELECT generate_series(1,100000);
