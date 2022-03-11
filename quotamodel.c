@@ -298,7 +298,7 @@ add_quota_to_blacklist(QuotaType type, Oid targetOid, Oid tablespaceoid, bool se
 }
 
 /*
- * Check the quota map, if the entry doesn't exist any more,
+ * Check the quota map, if the entry doesn't exist anymore,
  * remove it from the map. Otherwise, check if it has hit
  * the quota limit, if it does, add it to the black list.
  */
@@ -330,11 +330,12 @@ check_quota_map(QuotaType type)
 			if (entry->size >= entry->limit)
 			{
 				Oid targetOid = entry->keys[0];
-				Oid tablespaceoid =
-					(type == NAMESPACE_TABLESPACE_QUOTA) || (type == ROLE_TABLESPACE_QUOTA) ? entry->keys[1] : InvalidOid;
 				/* when quota type is not NAMESPACE_TABLESPACE_QUOTA or ROLE_TABLESPACE_QUOTA, the tablespaceoid
 				 * is set to be InvalidOid, so when we get it from map, also set it to be InvalidOid
 				 */
+				Oid tablespaceoid =
+						(type == NAMESPACE_TABLESPACE_QUOTA) || (type == ROLE_TABLESPACE_QUOTA) ? entry->keys[1] : InvalidOid;
+
 				bool segmentExceeded = entry->segid == -1 ? false : true;
 				add_quota_to_blacklist(type, targetOid, tablespaceoid, segmentExceeded);
 			}
@@ -854,6 +855,11 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 			relnamespace = classForm->relnamespace;
 			relowner = classForm->relowner;
 			reltablespace = classForm->reltablespace;
+
+			if (!OidIsValid(reltablespace))
+			{
+				reltablespace = MyDatabaseTableSpace;
+			}
 		}
 		else
 		{
@@ -1451,6 +1457,12 @@ get_rel_owner_schema_tablespace(Oid relid, Oid *ownerOid, Oid *nsOid, Oid *table
 		*ownerOid = reltup->relowner;
 		*nsOid = reltup->relnamespace;
 		*tablespaceoid = reltup->reltablespace;
+
+		if (!OidIsValid(*tablespaceoid))
+		{
+			*tablespaceoid = MyDatabaseTableSpace;
+		}
+
 		ReleaseSysCache(tp);
 	}
 	return found;
@@ -1779,15 +1791,11 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 		keyitem.databaseoid   = DatumGetObjectId(GetAttributeByNum(lt, 2, &isnull));
 		keyitem.tablespaceoid = DatumGetObjectId(GetAttributeByNum(lt, 3, &isnull));
 		keyitem.targettype    = DatumGetInt32(GetAttributeByNum(lt, 4, &isnull));
-		/*
-		 * If the current quota limit type is NAMESPACE_TABLESPACE_QUOTA or
-		 * ROLE_TABLESPACE_QUOTA, we should explicitly set DEFAULTTABLESPACE_OID
-		 * for relations whose reltablespace is InvalidOid.
-		 */
-		if ((keyitem.targettype == NAMESPACE_TABLESPACE_QUOTA ||
-			 keyitem.targettype == ROLE_TABLESPACE_QUOTA) &&
-			!OidIsValid(keyitem.tablespaceoid))
-			keyitem.tablespaceoid = DEFAULTTABLESPACE_OID;
+		/* blackmap entries from QD should have the real tablespace oid */
+		if ((keyitem.targettype == NAMESPACE_TABLESPACE_QUOTA || keyitem.targettype == ROLE_TABLESPACE_QUOTA))
+		{
+			Assert(OidIsValid(keyitem.tablespaceoid));
+		}
 		segexceeded           = DatumGetBool(GetAttributeByNum(lt, 5, &isnull));
 
 		blackmapentry = hash_search(local_blackmap, &keyitem, HASH_ENTER_NULL, NULL);
@@ -1820,7 +1828,7 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 			Form_pg_class	form = (Form_pg_class) GETSTRUCT(tuple);
 			Oid				relnamespace = form->relnamespace;
 			Oid				reltablespace = OidIsValid(form->reltablespace) ?
-												form->reltablespace : DEFAULTTABLESPACE_OID;
+												form->reltablespace : MyDatabaseTableSpace;
 			Oid				relowner = form->relowner;
 			BlackMapEntry	keyitem;
 			bool			found;
@@ -1882,7 +1890,7 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 							Form_pg_class				curr_form = (Form_pg_class) GETSTRUCT(curr_tuple);
 							Oid							curr_reltablespace =
 								OidIsValid(curr_form->reltablespace) ?
-								curr_form->reltablespace : DEFAULTTABLESPACE_OID;
+								curr_form->reltablespace : MyDatabaseTableSpace;
 							RelFileNode					relfilenode =
 								{ .dbNode = MyDatabaseId,
 								  .relNode = curr_form->relfilenode,
@@ -2085,12 +2093,13 @@ show_blackmap(PG_FUNCTION_ARGS)
 
 	while ((blackmap_entry = hash_seq_search(&(blackmap_ctx->blackmap_seq))) != NULL)
 	{
+#define _TARGETTYPE_STR_SIZE 32
 		Datum			result;
 		Datum			values[9];
 		bool			nulls[9];
 		HeapTuple		tuple;
 		BlackMapEntry	keyitem;
-		char			targettype_str[32];
+		char			targettype_str[_TARGETTYPE_STR_SIZE];
 		RelFileNode		blocked_relfilenode;
 
 		memcpy(&blocked_relfilenode,
@@ -2108,19 +2117,19 @@ show_blackmap(PG_FUNCTION_ARGS)
 		switch ((QuotaType) keyitem.targettype)
 		{
 		case ROLE_QUOTA:
-			strncpy(targettype_str, "ROLE_QUOTA", 10);
+			StrNCpy(targettype_str, "ROLE_QUOTA", _TARGETTYPE_STR_SIZE);
 			break;
 		case NAMESPACE_QUOTA:
-			strncpy(targettype_str, "NAMESPACE_QUOTA", 15);
+			StrNCpy(targettype_str, "NAMESPACE_QUOTA", _TARGETTYPE_STR_SIZE);
 			break;
 		case ROLE_TABLESPACE_QUOTA:
-			strncpy(targettype_str, "ROLE_TABLESPACE_QUOTA", 21);
+			StrNCpy(targettype_str, "ROLE_TABLESPACE_QUOTA", _TARGETTYPE_STR_SIZE);
 			break;
 		case NAMESPACE_TABLESPACE_QUOTA:
-			strncpy(targettype_str, "NAMESPACE_TABLESPACE_QUOTA", 26);
+			StrNCpy(targettype_str, "NAMESPACE_TABLESPACE_QUOTA", _TARGETTYPE_STR_SIZE);
 			break;
 		default:
-			strncpy(targettype_str, "UNKNOWN", 7);
+			StrNCpy(targettype_str, "UNKNOWN", _TARGETTYPE_STR_SIZE);
 			break;
 		}
 

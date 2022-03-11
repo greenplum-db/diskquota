@@ -41,6 +41,15 @@ PG_MODULE_MAGIC;
 #define DISKQUOTA_DB	"diskquota"
 #define DISKQUOTA_APPLICATION_NAME  "gp_reserved_gpdiskquota"
 
+#if !defined(DISKQUOTA_VERSION) || \
+	!defined(DISKQUOTA_MAJOR_VERSION) || \
+	!defined(DISKQUOTA_PATCH_VERSION) || \
+	!defined(DISKQUOTA_MINOR_VERSION) || \
+	!defined(DISKQUOTA_BINARY_NAME)
+	#error Version not found. Please check if the VERSION file exists.
+#endif
+
+#include <unistd.h> // for useconds_t
 extern int usleep(useconds_t usec); // in <unistd.h>
 
 /* flags set by signal handlers */
@@ -117,13 +126,18 @@ extern void invalidate_database_blackmap(Oid dbid);
 void
 _PG_init(void)
 {
-	BackgroundWorker worker;
-
-	memset(&worker, 0, sizeof(BackgroundWorker));
-
 	/* diskquota.so must be in shared_preload_libraries to init SHM. */
-	if (!process_shared_preload_libraries_in_progress)
-		ereport(ERROR, (errmsg("[diskquota] diskquota.so not in shared_preload_libraries.")));
+	if (!process_shared_preload_libraries_in_progress) {
+		ereport(ERROR, (
+				errmsg("[diskquota] booting " DISKQUOTA_VERSION ", but "
+						DISKQUOTA_BINARY_NAME " not in shared_preload_libraries. abort.")
+		));
+	} else {
+		ereport(INFO, (errmsg("booting diskquota-"DISKQUOTA_VERSION)));
+	}
+
+	BackgroundWorker worker;
+	memset(&worker, 0, sizeof(BackgroundWorker));
 
 	/* values are used in later calls */
 	define_guc_variables();
@@ -147,7 +161,7 @@ _PG_init(void)
 	worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
 	/* launcher process should be restarted after pm reset. */
 	worker.bgw_restart_time = BGW_DEFAULT_RESTART_INTERVAL;
-	snprintf(worker.bgw_library_name, BGW_MAXLEN, "diskquota");
+	snprintf(worker.bgw_library_name, BGW_MAXLEN, DISKQUOTA_BINARY_NAME);
 	snprintf(worker.bgw_function_name, BGW_MAXLEN, "disk_quota_launcher_main");
 	worker.bgw_notify_pid = 0;
 
@@ -303,14 +317,6 @@ disk_quota_worker_main(Datum main_arg)
 	                  PGC_USERSET,PGC_S_SESSION,
 	                  GUC_ACTION_SAVE, true, 0);
 
-	/*
-	 * Set ps display name of the worker process of diskquota, so we can
-	 * distinguish them quickly. Note: never mind parameter name of the
-	 * function `init_ps_display`, we only want the ps name looks like
-	 * 'bgworker: [diskquota] <dbname> ...'
-	 */
-	init_ps_display("bgworker:", "[diskquota]", dbname, "");
-
 	/* diskquota worker should has Gp_role as dispatcher */
 	Gp_role = GP_ROLE_DISPATCH;
 
@@ -319,6 +325,55 @@ disk_quota_worker_main(Datum main_arg)
 	 * immediately
 	 */
 	init_disk_quota_model();
+
+	// check current binary version and SQL DLL version are matched
+	int times = 0;
+	while (!got_sigterm) {
+		CHECK_FOR_INTERRUPTS();
+
+		int major = -1, minor = -1;
+		int has_error = worker_spi_get_extension_version(&major, &minor) != 0;
+
+		if (major == DISKQUOTA_MAJOR_VERSION && minor == DISKQUOTA_MINOR_VERSION)
+			break;
+
+		if (has_error) {
+			static char _errfmt[] = "find issues in pg_class.pg_extension check server log. waited %d seconds",
+						_errmsg[sizeof(_errfmt) + sizeof("2147483647" /* INT_MAX */) + 1] = {};
+			snprintf(_errmsg, sizeof(_errmsg), _errfmt, times * diskquota_naptime);
+
+			init_ps_display("bgworker:", "[diskquota]", dbname, _errmsg);
+		} else {
+			init_ps_display("bgworker:", "[diskquota]", dbname,
+					"v" DISKQUOTA_VERSION " is not matching with current SQL. stop working");
+		}
+
+		ereportif(
+			!has_error && times == 0,
+			WARNING,
+			(errmsg("[diskquota] worker for '%s' detected the installed version is %d.%d, "
+					"but current version is %s. abort due to version not match", dbname, major, minor, DISKQUOTA_VERSION),
+			errhint("run alter extension diskquota update to '%d.%d'",
+					DISKQUOTA_MAJOR_VERSION, DISKQUOTA_MINOR_VERSION)));
+
+		int rc = WaitLatch(&MyProc->procLatch, WL_LATCH_SET|WL_TIMEOUT|WL_POSTMASTER_DEATH, diskquota_naptime * 1000L);
+		ResetLatch(&MyProc->procLatch);
+		if (rc & WL_POSTMASTER_DEATH) {
+			ereport(LOG,
+					(errmsg("[diskquota] bgworker for '%s' is being terminated by postmaster death.", dbname)));
+			proc_exit(-1);
+		}
+
+		times++;
+	}
+
+	/*
+	 * Set ps display name of the worker process of diskquota, so we can
+	 * distinguish them quickly. Note: never mind parameter name of the
+	 * function `init_ps_display`, we only want the ps name looks like
+	 * 'bgworker: [diskquota] <dbname> ...'
+	 */
+	init_ps_display("bgworker:", "[diskquota]", dbname, "");
 
 	/* Waiting for diskquota state become ready */
 	while (!got_sigterm)
@@ -473,7 +528,7 @@ disk_quota_launcher_main(Datum main_arg)
 
 	/* diskquota launcher should has Gp_role as dispatcher */
 	Gp_role = GP_ROLE_DISPATCH;
-	
+
 	/*
 	 * use table diskquota_namespace.database_list to store diskquota enabled
 	 * database.
@@ -853,7 +908,7 @@ on_add_db(Oid dbid, MessageResult * code)
 
 /*
  * Handle message: drop extension diskquota
- * do our best to:
+ * do:
  * 1. kill the associated worker process
  * 2. delete dbid from diskquota_namespace.database_list
  * 3. invalidate black-map entries and monitoring_dbid_cache from shared memory
@@ -1045,7 +1100,7 @@ worker_set_handle(Oid dbid, BackgroundWorkerHandle *handle)
 	if (!found)
 	{
 		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-						errmsg("[diskquota] worker not found for database '%s'",
+						errmsg("[diskquota] worker not found for database \"%s\"",
 							   get_database_name(dbid))));
 	}
 	return found;
@@ -1082,7 +1137,7 @@ start_worker_by_dboid(Oid dbid)
 	 * be started by launcher process again.
 	 */
 	worker.bgw_restart_time = BGW_NEVER_RESTART;
-	sprintf(worker.bgw_library_name, "diskquota");
+	sprintf(worker.bgw_library_name, DISKQUOTA_BINARY_NAME);
 	sprintf(worker.bgw_function_name, "disk_quota_worker_main");
 
 	dbname = get_database_name(dbid);
@@ -1175,6 +1230,10 @@ worker_get_epoch(Oid database_oid)
 	return epoch;
 }
 
+// Returns the worker epoch for the current database.
+// An epoch marks a new iteration of refreshing quota usage by a bgworker.
+// An epoch is a 32-bit unsigned integer and there is NO invalid value.
+// Therefore, the UDF must throw an error if something unexpected occurs.
 PG_FUNCTION_INFO_V1(show_worker_epoch);
 Datum
 show_worker_epoch(PG_FUNCTION_ARGS)
@@ -1235,6 +1294,50 @@ static const char* diskquota_status_check_hard_limit()
 	return hardlimit ? "enabled": "disabled";
 }
 
+static const char* diskquota_status_binary_version()
+{
+	return DISKQUOTA_VERSION;
+}
+
+static const char* diskquota_status_schema_version()
+{
+	static char version[64] = {0};
+	memset(version, 0, sizeof(version));
+
+	int ret = SPI_connect();
+	Assert(ret = SPI_OK_CONNECT);
+
+	ret = SPI_execute("select extversion from pg_extension where extname = 'diskquota'", true, 0);
+
+	if(ret != SPI_OK_SELECT || SPI_processed != 1) {
+		ereport(WARNING,
+				(errmsg("[diskquota] when reading installed version lines %ld code = %d",
+						SPI_processed, ret)));
+		goto out;
+	}
+
+	if (SPI_processed == 0) {
+		goto out;
+	}
+
+	bool is_null = false;
+	Datum v = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &is_null);
+	Assert(is_null == false);
+
+	char *vv = TextDatumGetCString(v);
+	if (vv == NULL) {
+		ereport(WARNING,
+				(errmsg("[diskquota] 'extversion' is empty in pg_class.pg_extension. may catalog corrupted")));
+		goto out;
+	}
+
+	StrNCpy(version, vv, sizeof(version));
+
+out:
+	SPI_finish();
+	return version;
+}
+
 PG_FUNCTION_INFO_V1(diskquota_status);
 Datum diskquota_status(PG_FUNCTION_ARGS)
 {
@@ -1250,6 +1353,8 @@ Datum diskquota_status(PG_FUNCTION_ARGS)
 	static const FeatureStatus fs[] = {
 		{.name = "soft limits", .status = diskquota_status_check_soft_limit},
 		{.name = "hard limits", .status = diskquota_status_check_hard_limit},
+		{.name = "current binary version", .status = diskquota_status_binary_version},
+		{.name = "current schema version", .status = diskquota_status_schema_version},
 	};
 
 	FuncCallContext *funcctx;
@@ -1305,6 +1410,10 @@ check_for_timeout(TimestampTz start_time)
 	return false;
 }
 
+// Checks if the bgworker for the current database works as expected.
+// 1. If it returns successfully in `diskquota.naptime`, the bgworker works as expected.
+// 2. If it does not terminate, there must be some issues with the bgworker.
+//    In this case, we must ensure this UDF can be interrupted by the user.
 PG_FUNCTION_INFO_V1(wait_for_worker_new_epoch);
 Datum
 wait_for_worker_new_epoch(PG_FUNCTION_ARGS)
