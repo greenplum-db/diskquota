@@ -31,15 +31,17 @@ ERROR:  schema's disk space quota exceeded with name:157893  (seg0 127.0.0.1:600
 1q: ... <quitting>
 
 -- launcher should exist
-!\retcode pgrep -a -f "postgres.*launcher";
+!\retcode pgrep -f "postgres.*launcher";
 -- start_ignore
-970694 postgres:  6000, bgworker: [diskquota] - launcher   cmd11                                              
+2774491
+
 -- end_ignore
 (exited with code 0)
 -- bgworker should exist
-!\retcode pgrep -a -f "postgres.*diskquota.*isolation2test";
+!\retcode pgrep -f "postgres.*diskquota.*isolation2test";
 -- start_ignore
-1017403 postgres:  6000, bgworker: [diskquota] isolation2test cmd22                                            
+2774659
+
 -- end_ignore
 (exited with code 0)
 
@@ -52,13 +54,15 @@ server stopped
 (exited with code 0)
 
 -- launcher should be terminated
-!\retcode pgrep -a -f "postgres.*launcher";
+!\retcode pgrep -f "postgres.*launcher";
 -- start_ignore
+
 -- end_ignore
 (exited with code 1)
 -- bgworker should be terminated
-!\retcode pgrep -a -f "postgres.*diskquota.*isolation2test";
+!\retcode pgrep -f "postgres.*diskquota.*isolation2test";
 -- start_ignore
+
 -- end_ignore
 (exited with code 1)
 
@@ -85,15 +89,17 @@ server started
 (exited with code 0)
 
 -- launcher should be restarted
-!\retcode pgrep -a -f "postgres.*launcher";
+!\retcode pgrep -f "postgres.*launcher";
 -- start_ignore
-1017591 postgres:  6000, bgworker: [diskquota] - launcher                                              
+2771049
+
 -- end_ignore
 (exited with code 0)
 -- bgworker should be restarted
-!\retcode pgrep -a -f "postgres.*diskquota.*isolation2test";
+!\retcode pgrep -f "postgres.*diskquota.*isolation2test";
 -- start_ignore
-1017606 postgres:  6000, bgworker: [diskquota] isolation2test                                          
+2771074
+
 -- end_ignore
 (exited with code 0)
 

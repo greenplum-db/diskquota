@@ -12,17 +12,17 @@
 1q:
 
 -- launcher should exist
-!\retcode pgrep -a -f "postgres.*launcher";
+!\retcode pgrep -f "postgres.*launcher";
 -- bgworker should exist
-!\retcode pgrep -a -f "postgres.*diskquota.*isolation2test";
+!\retcode pgrep -f "postgres.*diskquota.*isolation2test";
 
 -- stop postmaster
 !\retcode pg_ctl -D $MASTER_DATA_DIRECTORY -w stop;
 
 -- launcher should be terminated
-!\retcode pgrep -a -f "postgres.*launcher";
+!\retcode pgrep -f "postgres.*launcher";
 -- bgworker should be terminated
-!\retcode pgrep -a -f "postgres.*diskquota.*isolation2test";
+!\retcode pgrep -f "postgres.*diskquota.*isolation2test";
 
 -- start postmaster
 -- -E needs to be changed to "-c gp_role=dispatch" for GPDB7
@@ -32,9 +32,9 @@
 !\retcode sleep 5;
 
 -- launcher should be restarted
-!\retcode pgrep -a -f "postgres.*launcher";
+!\retcode pgrep -f "postgres.*launcher";
 -- bgworker should be restarted
-!\retcode pgrep -a -f "postgres.*diskquota.*isolation2test";
+!\retcode pgrep -f "postgres.*diskquota.*isolation2test";
 
 1: SET search_path TO postmaster_restart_s;
 1: SELECT diskquota.wait_for_worker_new_epoch();
