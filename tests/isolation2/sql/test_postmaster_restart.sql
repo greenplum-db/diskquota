@@ -19,6 +19,8 @@
 -- stop postmaster
 !\retcode pg_ctl -D $MASTER_DATA_DIRECTORY -w stop;
 
+-- bgworker was not terminated immediately
+!\retcode sleep 5;
 -- launcher should be terminated
 !\retcode pgrep -f "postgres.*launcher";
 -- bgworker should be terminated

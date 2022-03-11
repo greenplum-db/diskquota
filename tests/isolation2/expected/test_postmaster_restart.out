@@ -53,6 +53,12 @@ server stopped
 -- end_ignore
 (exited with code 0)
 
+-- bgworker was not terminated immediately
+!\retcode sleep 5;
+-- start_ignore
+
+-- end_ignore
+(exited with code 0)
 -- launcher should be terminated
 !\retcode pgrep -f "postgres.*launcher";
 -- start_ignore
