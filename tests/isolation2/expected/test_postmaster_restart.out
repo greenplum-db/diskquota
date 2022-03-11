@@ -1,13 +1,19 @@
+!\retcode gpconfig -c "diskquota.hard_limit" -v "on" > /dev/null;
+-- start_ignore
+
+-- end_ignore
+(exited with code 0)
+!\retcode gpstop -u > /dev/null;
+-- start_ignore
+
+-- end_ignore
+(exited with code 0)
+
 1: CREATE SCHEMA postmaster_restart_s;
 CREATE
 1: SET search_path TO postmaster_restart_s;
 SET
 
-1: SELECT diskquota.enable_hardlimit();
- enable_hardlimit 
-------------------
-                  
-(1 row)
 1: SELECT diskquota.set_schema_quota('postmaster_restart_s', '1 MB');
  set_schema_quota 
 ------------------
@@ -57,6 +63,8 @@ server stopped
 (exited with code 1)
 
 -- start postmaster
+-- -E needs to be changed to "-c gp_role=dispatch" for GPDB7
+-- See https://github.com/greenplum-db/gpdb/pull/9396
 !\retcode pg_ctl -D $MASTER_DATA_DIRECTORY -w -o "-E" start;
 -- start_ignore
 waiting for server to start....2022-02-14 21:41:39.147869 CST,,,p1017570,th1516906368,,,,0,,,seg-1,,,,,"LOG","00000","registering background worker ""ftsprobe process""",,,,,,,,"RegisterBackgroundWorker","bgworker.c",773,
@@ -66,6 +74,13 @@ waiting for server to start....2022-02-14 21:41:39.147869 CST,,,p1017570,th15169
 2022-02-14 21:41:39.272714 CST,,,p1017570,th1516906368,,,,0,,,seg-1,,,,,"LOG","00000","redirecting log output to logging collector process",,"Future log output will appear in directory ""pg_log"".",,,,,,"SysLogger_Start","syslogger.c",986,
  done
 server started
+
+-- end_ignore
+(exited with code 0)
+-- Hopefully the bgworker can be started in 5 seconds
+!\retcode sleep 5;
+-- start_ignore
+
 -- end_ignore
 (exited with code 0)
 
@@ -84,12 +99,6 @@ server started
 
 1: SET search_path TO postmaster_restart_s;
 SET
--- hardlimit needs to be re-enabled
-1: SELECT diskquota.enable_hardlimit();
- enable_hardlimit 
-------------------
-                  
-(1 row)
 1: SELECT diskquota.wait_for_worker_new_epoch();
  wait_for_worker_new_epoch 
 ---------------------------

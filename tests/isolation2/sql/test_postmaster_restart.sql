@@ -1,7 +1,9 @@
+!\retcode gpconfig -c "diskquota.hard_limit" -v "on" > /dev/null;
+!\retcode gpstop -u > /dev/null;
+
 1: CREATE SCHEMA postmaster_restart_s;
 1: SET search_path TO postmaster_restart_s;
 
-1: SELECT diskquota.enable_hardlimit();
 1: SELECT diskquota.set_schema_quota('postmaster_restart_s', '1 MB');
 1: SELECT diskquota.wait_for_worker_new_epoch();
 
@@ -23,7 +25,11 @@
 !\retcode pgrep -a -f "postgres.*diskquota.*isolation2test";
 
 -- start postmaster
+-- -E needs to be changed to "-c gp_role=dispatch" for GPDB7
+-- See https://github.com/greenplum-db/gpdb/pull/9396
 !\retcode pg_ctl -D $MASTER_DATA_DIRECTORY -w -o "-E" start;
+-- Hopefully the bgworker can be started in 5 seconds
+!\retcode sleep 5;
 
 -- launcher should be restarted
 !\retcode pgrep -a -f "postgres.*launcher";
@@ -31,8 +37,6 @@
 !\retcode pgrep -a -f "postgres.*diskquota.*isolation2test";
 
 1: SET search_path TO postmaster_restart_s;
--- hardlimit needs to be re-enabled
-1: SELECT diskquota.enable_hardlimit();
 1: SELECT diskquota.wait_for_worker_new_epoch();
 -- expect fail
 1: CREATE TABLE t2 AS SELECT generate_series(1,1000000);
