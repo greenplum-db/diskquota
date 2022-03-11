@@ -291,11 +291,6 @@ define_guc_variables(void)
 void
 disk_quota_worker_main(Datum main_arg)
 {
-	static const char* term_postmaster_msg =
-		"[diskquota] bgworker for '%s' is being terminated by postmaster death.";
-	static const char* term_sigterm_msg =
-		"[diskquota] bgworker for '%s' is being terminated by SIGTERM.";
-
 	char	   *dbname = MyBgworkerEntry->bgw_name;
 
 	ereport(LOG,
@@ -351,16 +346,16 @@ disk_quota_worker_main(Datum main_arg)
 		ereportif(
 			!has_error && times == 0,
 			WARNING,
-			(errmsg("[diskquota] worker for '%s' detected the installed version is %d.%d, "
+			(errmsg("[diskquota] worker for \"%s\" detected the installed version is \"%d.%d\", "
 					"but current version is %s. abort due to version not match", dbname, major, minor, DISKQUOTA_VERSION),
-			errhint("run alter extension diskquota update to '%d.%d'",
+			errhint("run alter extension diskquota update to \"%d.%d\"",
 					DISKQUOTA_MAJOR_VERSION, DISKQUOTA_MINOR_VERSION)));
 
 		int rc = WaitLatch(&MyProc->procLatch, WL_LATCH_SET|WL_TIMEOUT|WL_POSTMASTER_DEATH, diskquota_naptime * 1000L);
 		ResetLatch(&MyProc->procLatch);
 		if (rc & WL_POSTMASTER_DEATH) {
-			ereport(LOG,
-					(errmsg("[diskquota] bgworker for '%s' is being terminated by postmaster death.", dbname)));
+			ereport(LOG, (errmsg("[diskquota] bgworker for \"%s\" is being terminated by postmaster death.",
+							dbname)));
 			proc_exit(-1);
 		}
 
@@ -404,7 +399,8 @@ disk_quota_worker_main(Datum main_arg)
 		/* Emergency bailout if postmaster has died */
 		if (rc & WL_POSTMASTER_DEATH)
 		{
-			ereport(LOG, (errmsg(term_postmaster_msg, dbname)));
+			ereport(LOG, (errmsg("[diskquota] bgworker for \"%s\" is being terminated by postmaster death.",
+								 dbname)));
 			proc_exit(1);
 		}
 
@@ -419,7 +415,8 @@ disk_quota_worker_main(Datum main_arg)
 	/* if received sigterm, just exit the worker process */
 	if (got_sigterm)
 	{
-		ereport(LOG, (errmsg(term_sigterm_msg, dbname)));
+		ereport(LOG, (errmsg("[diskquota] bgworker for \"%s\" is being terminated by SIGTERM.",
+						dbname)));
 		/* clear the out-of-quota blacklist in shared memory */
 		invalidate_database_blackmap(MyDatabaseId);
 		proc_exit(0);
@@ -429,7 +426,7 @@ disk_quota_worker_main(Datum main_arg)
 	refresh_disk_quota_model(true);
 
 	ereport(LOG,
-			(errmsg("[diskquota] start bgworker loop for database:%s",
+			(errmsg("[diskquota] start bgworker loop for database: \"%s\"",
 					dbname)));
 	/*
 	 * Main loop: do this until the SIGTERM handler tells us to terminate
@@ -458,7 +455,7 @@ disk_quota_worker_main(Datum main_arg)
 		/* Emergency bailout if postmaster has died */
 		if (rc & WL_POSTMASTER_DEATH)
 		{
-			ereport(LOG, (errmsg(term_postmaster_msg, dbname)));
+			ereport(LOG, (errmsg("[diskquota] bgworker for \"%s\" is being terminated by postmaster death.", dbname)));
 			proc_exit(1);
 		}
 
@@ -478,8 +475,9 @@ disk_quota_worker_main(Datum main_arg)
 		worker_increase_epoch(MyDatabaseId);
 	}
 
+	ereport(LOG, (errmsg("[diskquota] bgworker for \"%s\" is being terminated by SIGTERM.",
+					dbname)));
 	/* clear the out-of-quota blacklist in shared memory */
-	ereport(LOG, (errmsg(term_sigterm_msg, dbname)));
 	invalidate_database_blackmap(MyDatabaseId);
 	proc_exit(0);
 }
@@ -654,7 +652,7 @@ create_monitor_db_table(void)
 		ret_code = SPI_execute(sql, false, 0);
 		if (ret_code != SPI_OK_UTILITY)
 		{
-			ereport(ERROR, (errmsg("[diskquota launcher] SPI_execute error, sql: '%s', errno: %d, ret_code: %d.", sql, errno, ret_code)));
+			ereport(ERROR, (errmsg("[diskquota launcher] SPI_execute error, sql: \"%s\", errno: %d, ret_code: %d.", sql, errno, ret_code)));
 		}
 	}
 	PG_CATCH();
@@ -1000,7 +998,7 @@ del_dbid_from_database_list(Oid dbid)
 	if (ret != SPI_OK_DELETE)
 	{
 		ereport(ERROR,
-				(errmsg("[diskquota launcher] SPI_execute sql: '%s', errno: %d, ret_code: %d.",
+				(errmsg("[diskquota launcher] SPI_execute sql: \"%s\", errno: %d, ret_code: %d.",
 						str.data, errno, ret)));
 	}
 	pfree(str.data);
