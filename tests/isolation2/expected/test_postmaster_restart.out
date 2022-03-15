@@ -31,14 +31,15 @@ ERROR:  schema's disk space quota exceeded with name:157893  (seg0 127.0.0.1:600
 1q: ... <quitting>
 
 -- launcher should exist
-!\retcode pgrep -f "postgres.*launcher";
+-- [p]ostgres is to filter out the pgrep itself
+!\retcode pgrep -f "[p]ostgres.*launcher";
 -- start_ignore
 2774491
 
 -- end_ignore
 (exited with code 0)
 -- bgworker should exist
-!\retcode pgrep -f "postgres.*diskquota.*isolation2test";
+!\retcode pgrep -f "[p]ostgres.*diskquota.*isolation2test";
 -- start_ignore
 2774659
 
@@ -53,20 +54,14 @@ server stopped
 -- end_ignore
 (exited with code 0)
 
--- bgworker was not terminated immediately
-!\retcode sleep 5;
--- start_ignore
-
--- end_ignore
-(exited with code 0)
 -- launcher should be terminated
-!\retcode pgrep -f "postgres.*launcher";
+!\retcode pgrep -f "[p]ostgres.*launcher";
 -- start_ignore
 
 -- end_ignore
 (exited with code 1)
 -- bgworker should be terminated
-!\retcode pgrep -f "postgres.*diskquota.*isolation2test";
+!\retcode pgrep -f "[p]ostgres.*diskquota.*isolation2test";
 -- start_ignore
 
 -- end_ignore
@@ -95,14 +90,14 @@ server started
 (exited with code 0)
 
 -- launcher should be restarted
-!\retcode pgrep -f "postgres.*launcher";
+!\retcode pgrep -f "[p]ostgres.*launcher";
 -- start_ignore
 2771049
 
 -- end_ignore
 (exited with code 0)
 -- bgworker should be restarted
-!\retcode pgrep -f "postgres.*diskquota.*isolation2test";
+!\retcode pgrep -f "[p]ostgres.*diskquota.*isolation2test";
 -- start_ignore
 2771074
 
