@@ -1,18 +1,20 @@
 #ifndef DISK_QUOTA_H
 #define DISK_QUOTA_H
 
-#include "postgres.h"
-#include <signal.h>
-
 #include "c.h"
-#include "fmgr.h"
+#include "postgres.h"
 #include "port/atomics.h"
-#include "postmaster/bgworker.h"
+
+#include "fmgr.h"
 #include "storage/lock.h"
 #include "storage/lwlock.h"
 #include "storage/relfilenode.h"
+#include "postmaster/bgworker.h"
+
 #include "utils/hsearch.h"
 #include "utils/relcache.h"
+
+#include <signal.h>
 
 /* max number of monitored database with diskquota enabled */
 #define MAX_NUM_MONITORED_DB 10
@@ -112,9 +114,8 @@ typedef struct DiskQuotaWorkerEntry DiskQuotaWorkerEntry;
 /* disk quota worker info used by launcher to manage the worker processes. */
 struct DiskQuotaWorkerEntry
 {
-	Oid dbid;
-	/* this counter will be increased after each worker loop */
-	pg_atomic_uint32 epoch;
+	Oid              dbid;
+	pg_atomic_uint32 epoch;     /* this counter will be increased after each worker loop */
 	bool             is_paused; /* true if this worker is paused */
 
 	// NOTE: this field only can access in diskquota launcher, in other process
@@ -151,13 +152,10 @@ extern int      worker_spi_get_extension_version(int *major, int *minor);
 extern int      get_ext_major_version(void);
 extern void     truncateStringInfo(StringInfo str, int nchars);
 extern List    *get_rel_oid_list(void);
-extern int64    calculate_relation_size_all_forks(RelFileNodeBackend *rnode,
-                                                  char                relstorage);
+extern int64    calculate_relation_size_all_forks(RelFileNodeBackend *rnode, char relstorage);
 extern Relation diskquota_relation_open(Oid relid, LOCKMODE mode);
 extern List    *diskquota_get_index_list(Oid relid);
-extern void     diskquota_get_appendonly_aux_oid_list(Oid reloid, Oid *segrelid,
-                                                      Oid *blkdirrelid,
-                                                      Oid *visimaprelid);
+extern void     diskquota_get_appendonly_aux_oid_list(Oid reloid, Oid *segrelid, Oid *blkdirrelid, Oid *visimaprelid);
 extern Oid      diskquota_parse_primary_table_oid(Oid namespace, char *relname);
 
 extern bool         worker_increase_epoch(Oid database_oid);

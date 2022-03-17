@@ -1,22 +1,23 @@
-#include "relation_cache.h"
+#include "postgres.h"
 
 #include "catalog/indexing.h"
-#include "catalog/objectaccess.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_tablespace.h"
-#include "diskquota.h"
-#include "funcapi.h"
-#include "utils/array.h"
+#include "catalog/objectaccess.h"
 #include "utils/relfilenodemap.h"
 #include "utils/syscache.h"
+#include "utils/array.h"
+#include "funcapi.h"
+
+#include "relation_cache.h"
+#include "diskquota.h"
 
 HTAB *relation_cache = NULL;
 HTAB *relid_cache    = NULL;
 
-static void update_relation_entry(Oid                          relid,
-                                  DiskQuotaRelationCacheEntry *relation_entry,
-                                  DiskQuotaRelidCacheEntry    *relid_entry);
+static void update_relation_entry(Oid relid, DiskQuotaRelationCacheEntry *relation_entry,
+                                  DiskQuotaRelidCacheEntry *relid_entry);
 
 PG_FUNCTION_INFO_V1(show_relation_cache);
 
@@ -31,9 +32,8 @@ init_shm_worker_relation_cache(void)
 	ctl.entrysize = sizeof(DiskQuotaRelationCacheEntry);
 	ctl.hash      = tag_hash;
 
-	relation_cache = ShmemInitHash(
-	        "relation_cache", diskquota_max_active_tables,
-	        diskquota_max_active_tables, &ctl, HASH_ELEM | HASH_FUNCTION);
+	relation_cache = ShmemInitHash("relation_cache", diskquota_max_active_tables, diskquota_max_active_tables, &ctl,
+	                               HASH_ELEM | HASH_FUNCTION);
 
 	memset(&ctl, 0, sizeof(ctl));
 
@@ -41,8 +41,7 @@ init_shm_worker_relation_cache(void)
 	ctl.entrysize = sizeof(DiskQuotaRelidCacheEntry);
 	ctl.hash      = tag_hash;
 
-	relid_cache = ShmemInitHash("relid_cache", diskquota_max_active_tables,
-	                            diskquota_max_active_tables, &ctl,
+	relid_cache = ShmemInitHash("relid_cache", diskquota_max_active_tables, diskquota_max_active_tables, &ctl,
 	                            HASH_ELEM | HASH_FUNCTION);
 }
 
@@ -74,8 +73,7 @@ remove_cache_entry(Oid relid, Oid relfilenode)
 		relation_entry = hash_search(relation_cache, &relid, HASH_FIND, NULL);
 		if (relation_entry)
 		{
-			hash_search(relid_cache, &relation_entry->rnode.node.relNode,
-			            HASH_REMOVE, NULL);
+			hash_search(relid_cache, &relation_entry->rnode.node.relNode, HASH_REMOVE, NULL);
 			hash_search(relation_cache, &relid, HASH_REMOVE, NULL);
 		}
 	}
@@ -125,8 +123,7 @@ add_auxrelid_to_relation_entry(DiskQuotaRelationCacheEntry *entry, Oid relid)
 }
 
 static void
-update_relation_entry(Oid relid, DiskQuotaRelationCacheEntry *relation_entry,
-                      DiskQuotaRelidCacheEntry *relid_entry)
+update_relation_entry(Oid relid, DiskQuotaRelationCacheEntry *relation_entry, DiskQuotaRelidCacheEntry *relid_entry)
 {
 	Relation rel;
 
@@ -169,13 +166,10 @@ update_relation_cache(Oid relid)
 	update_relation_entry(relid, &relation_entry_data, &relid_entry_data);
 
 	LWLockAcquire(diskquota_locks.relation_cache_lock, LW_EXCLUSIVE);
-	relation_entry = hash_search(relation_cache, &relation_entry_data.relid,
-	                             HASH_ENTER, NULL);
-	memcpy(relation_entry, &relation_entry_data,
-	       sizeof(DiskQuotaRelationCacheEntry));
+	relation_entry = hash_search(relation_cache, &relation_entry_data.relid, HASH_ENTER, NULL);
+	memcpy(relation_entry, &relation_entry_data, sizeof(DiskQuotaRelationCacheEntry));
 
-	relid_entry = hash_search(relid_cache, &relid_entry_data.relfilenode,
-	                          HASH_ENTER, NULL);
+	relid_entry = hash_search(relid_cache, &relid_entry_data.relfilenode, HASH_ENTER, NULL);
 	memcpy(relid_entry, &relid_entry_data, sizeof(DiskQuotaRelidCacheEntry));
 	LWLockRelease(diskquota_locks.relation_cache_lock);
 
@@ -184,7 +178,7 @@ update_relation_cache(Oid relid)
 	{
 		LWLockAcquire(diskquota_locks.relation_cache_lock, LW_EXCLUSIVE);
 		relation_entry->primary_table_relid = prelid;
-		relation_entry = hash_search(relation_cache, &prelid, HASH_FIND, NULL);
+		relation_entry                      = hash_search(relation_cache, &prelid, HASH_FIND, NULL);
 		if (relation_entry)
 		{
 			add_auxrelid_to_relation_entry(relation_entry, relid);
@@ -258,16 +252,13 @@ remove_committed_relation_from_cache(void)
 	ctl.hcxt      = CurrentMemoryContext;
 	ctl.hash      = oid_hash;
 
-	local_relation_cache =
-	        hash_create("local relation cache", 1024, &ctl,
-	                    HASH_ELEM | HASH_CONTEXT | HASH_FUNCTION);
+	local_relation_cache = hash_create("local relation cache", 1024, &ctl, HASH_ELEM | HASH_CONTEXT | HASH_FUNCTION);
 
 	LWLockAcquire(diskquota_locks.relation_cache_lock, LW_SHARED);
 	hash_seq_init(&iter, relation_cache);
 	while ((entry = hash_seq_search(&iter)) != NULL)
 	{
-		local_entry = hash_search(local_relation_cache, &entry->relid,
-		                          HASH_ENTER, NULL);
+		local_entry = hash_search(local_relation_cache, &entry->relid, HASH_ENTER, NULL);
 		memcpy(local_entry, entry, sizeof(DiskQuotaRelationCacheEntry));
 	}
 	LWLockRelease(diskquota_locks.relation_cache_lock);
@@ -281,8 +272,7 @@ remove_committed_relation_from_cache(void)
 		 * remains in relation_cache, the outdated relation_cache_entry should
 		 * be removed.
 		 */
-		if (OidIsValid(RelidByRelfilenode(local_entry->rnode.node.spcNode,
-		                                  local_entry->rnode.node.relNode)))
+		if (OidIsValid(RelidByRelfilenode(local_entry->rnode.node.spcNode, local_entry->rnode.node.relNode)))
 		{
 			remove_cache_entry(InvalidOid, local_entry->rnode.node.relNode);
 		}
@@ -315,28 +305,17 @@ show_relation_cache(PG_FUNCTION_ARGS)
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
 		tupdesc = CreateTemplateTupleDesc(11, false /*hasoid*/);
-		TupleDescInitEntry(tupdesc, (AttrNumber)1, "RELID", OIDOID,
-		                   -1 /*typmod*/, 0 /*attdim*/);
-		TupleDescInitEntry(tupdesc, (AttrNumber)2, "PRIMARY_TABLE_OID", OIDOID,
-		                   -1 /*typmod*/, 0 /*attdim*/);
-		TupleDescInitEntry(tupdesc, (AttrNumber)3, "AUXREL_NUM", INT4OID,
-		                   -1 /*typmod*/, 0 /*attdim*/);
-		TupleDescInitEntry(tupdesc, (AttrNumber)4, "OWNEROID", OIDOID,
-		                   -1 /*typmod*/, 0 /*attdim*/);
-		TupleDescInitEntry(tupdesc, (AttrNumber)5, "NAMESPACEOID", OIDOID,
-		                   -1 /*typmod*/, 0 /*attdim*/);
-		TupleDescInitEntry(tupdesc, (AttrNumber)6, "BACKENDID", INT4OID,
-		                   -1 /*typmod*/, 0 /*attdim*/);
-		TupleDescInitEntry(tupdesc, (AttrNumber)7, "SPCNODE", OIDOID,
-		                   -1 /*typmod*/, 0 /*attdim*/);
-		TupleDescInitEntry(tupdesc, (AttrNumber)8, "DBNODE", OIDOID,
-		                   -1 /*typmod*/, 0 /*attdim*/);
-		TupleDescInitEntry(tupdesc, (AttrNumber)9, "RELNODE", OIDOID,
-		                   -1 /*typmod*/, 0 /*attdim*/);
-		TupleDescInitEntry(tupdesc, (AttrNumber)10, "RELSTORAGE", CHAROID,
-		                   -1 /*typmod*/, 0 /*attdim*/);
-		TupleDescInitEntry(tupdesc, (AttrNumber)11, "AUXREL_OID", OIDARRAYOID,
-		                   -1 /*typmod*/, 0 /*attdim*/);
+		TupleDescInitEntry(tupdesc, (AttrNumber)1, "RELID", OIDOID, -1 /*typmod*/, 0 /*attdim*/);
+		TupleDescInitEntry(tupdesc, (AttrNumber)2, "PRIMARY_TABLE_OID", OIDOID, -1 /*typmod*/, 0 /*attdim*/);
+		TupleDescInitEntry(tupdesc, (AttrNumber)3, "AUXREL_NUM", INT4OID, -1 /*typmod*/, 0 /*attdim*/);
+		TupleDescInitEntry(tupdesc, (AttrNumber)4, "OWNEROID", OIDOID, -1 /*typmod*/, 0 /*attdim*/);
+		TupleDescInitEntry(tupdesc, (AttrNumber)5, "NAMESPACEOID", OIDOID, -1 /*typmod*/, 0 /*attdim*/);
+		TupleDescInitEntry(tupdesc, (AttrNumber)6, "BACKENDID", INT4OID, -1 /*typmod*/, 0 /*attdim*/);
+		TupleDescInitEntry(tupdesc, (AttrNumber)7, "SPCNODE", OIDOID, -1 /*typmod*/, 0 /*attdim*/);
+		TupleDescInitEntry(tupdesc, (AttrNumber)8, "DBNODE", OIDOID, -1 /*typmod*/, 0 /*attdim*/);
+		TupleDescInitEntry(tupdesc, (AttrNumber)9, "RELNODE", OIDOID, -1 /*typmod*/, 0 /*attdim*/);
+		TupleDescInitEntry(tupdesc, (AttrNumber)10, "RELSTORAGE", CHAROID, -1 /*typmod*/, 0 /*attdim*/);
+		TupleDescInitEntry(tupdesc, (AttrNumber)11, "AUXREL_OID", OIDARRAYOID, -1 /*typmod*/, 0 /*attdim*/);
 
 		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
 
@@ -348,20 +327,16 @@ show_relation_cache(PG_FUNCTION_ARGS)
 		hashctl.hcxt      = CurrentMemoryContext;
 		hashctl.hash      = tag_hash;
 
-		relation_cache_ctx = (struct RelationCacheCtx *)palloc(
-		        sizeof(struct RelationCacheCtx));
-		relation_cache_ctx->relation_cache =
-		        hash_create("relation_cache_ctx->relation_cache", 1024,
-		                    &hashctl, HASH_ELEM | HASH_CONTEXT | HASH_FUNCTION);
+		relation_cache_ctx                 = (struct RelationCacheCtx *)palloc(sizeof(struct RelationCacheCtx));
+		relation_cache_ctx->relation_cache = hash_create("relation_cache_ctx->relation_cache", 1024, &hashctl,
+		                                                 HASH_ELEM | HASH_CONTEXT | HASH_FUNCTION);
 
 		LWLockAcquire(diskquota_locks.relation_cache_lock, LW_SHARED);
 		hash_seq_init(&hash_seq, relation_cache);
-		while ((entry = (DiskQuotaRelationCacheEntry *)hash_seq_search(
-		                &hash_seq)) != NULL)
+		while ((entry = (DiskQuotaRelationCacheEntry *)hash_seq_search(&hash_seq)) != NULL)
 		{
 			DiskQuotaRelationCacheEntry *local_entry =
-			        hash_search(relation_cache_ctx->relation_cache,
-			                    &entry->relid, HASH_ENTER_NULL, NULL);
+			        hash_search(relation_cache_ctx->relation_cache, &entry->relid, HASH_ENTER_NULL, NULL);
 			if (local_entry)
 			{
 				memcpy(local_entry, entry, sizeof(DiskQuotaRelationCacheEntry));
@@ -370,8 +345,7 @@ show_relation_cache(PG_FUNCTION_ARGS)
 		LWLockRelease(diskquota_locks.relation_cache_lock);
 
 		/* Setup first calling context. */
-		hash_seq_init(&(relation_cache_ctx->iter),
-		              relation_cache_ctx->relation_cache);
+		hash_seq_init(&(relation_cache_ctx->iter), relation_cache_ctx->relation_cache);
 		funcctx->user_fctx = (void *)relation_cache_ctx;
 		MemoryContextSwitchTo(oldcontext);
 	}
@@ -379,8 +353,7 @@ show_relation_cache(PG_FUNCTION_ARGS)
 	funcctx            = SRF_PERCALL_SETUP();
 	relation_cache_ctx = (struct RelationCacheCtx *)funcctx->user_fctx;
 
-	while ((entry = (DiskQuotaRelationCacheEntry *)hash_seq_search(
-	                &(relation_cache_ctx->iter))) != NULL)
+	while ((entry = (DiskQuotaRelationCacheEntry *)hash_seq_search(&(relation_cache_ctx->iter))) != NULL)
 	{
 		Datum      result;
 		Datum      values[11];
@@ -394,8 +367,7 @@ show_relation_cache(PG_FUNCTION_ARGS)
 		{
 			auxrel_oid[i] = ObjectIdGetDatum(entry->auxrel_oid[i]);
 		}
-		array = construct_array(auxrel_oid, entry->auxrel_num, OIDOID,
-		                        sizeof(Oid), true, 'i');
+		array = construct_array(auxrel_oid, entry->auxrel_num, OIDOID, sizeof(Oid), true, 'i');
 
 		values[0]  = ObjectIdGetDatum(entry->relid);
 		values[1]  = ObjectIdGetDatum(entry->primary_table_relid);
@@ -420,8 +392,7 @@ show_relation_cache(PG_FUNCTION_ARGS)
 }
 
 static void
-add_auxrelation_to_relation_entry(Oid                          relid,
-                                  DiskQuotaRelationCacheEntry *pentry)
+add_auxrelation_to_relation_entry(Oid relid, DiskQuotaRelationCacheEntry *pentry)
 {
 	List     *index_oids;
 	ListCell *cell;
@@ -445,8 +416,7 @@ add_auxrelation_to_relation_entry(Oid                          relid,
  * then the caller will fetch blkdirrelid by traversing relation_cache.
  */
 static bool
-get_relation_entry_from_pg_class(Oid                          relid,
-                                 DiskQuotaRelationCacheEntry *relation_entry)
+get_relation_entry_from_pg_class(Oid relid, DiskQuotaRelationCacheEntry *relation_entry)
 {
 	HeapTuple     classTup;
 	Form_pg_class classForm;
@@ -468,24 +438,20 @@ get_relation_entry_from_pg_class(Oid                          relid,
 	relation_entry->owneroid            = classForm->relowner;
 	relation_entry->namespaceoid        = classForm->relnamespace;
 	relation_entry->relstorage          = classForm->relstorage;
-	relation_entry->rnode.node.spcNode  = OidIsValid(classForm->reltablespace)
-	                                              ? classForm->reltablespace
-	                                              : MyDatabaseTableSpace;
-	relation_entry->rnode.node.dbNode   = MyDatabaseId;
-	relation_entry->rnode.node.relNode  = classForm->relfilenode;
+	relation_entry->rnode.node.spcNode =
+	        OidIsValid(classForm->reltablespace) ? classForm->reltablespace : MyDatabaseTableSpace;
+	relation_entry->rnode.node.dbNode  = MyDatabaseId;
+	relation_entry->rnode.node.relNode = classForm->relfilenode;
 	relation_entry->rnode.backend =
-	        classForm->relpersistence == RELPERSISTENCE_TEMP ? TempRelBackendId
-	                                                         : InvalidBackendId;
+	        classForm->relpersistence == RELPERSISTENCE_TEMP ? TempRelBackendId : InvalidBackendId;
 
 	/* toast table */
 	if (OidIsValid(classForm->reltoastrelid))
 	{
-		add_auxrelation_to_relation_entry(classForm->reltoastrelid,
-		                                  relation_entry);
+		add_auxrelation_to_relation_entry(classForm->reltoastrelid, relation_entry);
 	}
 
-	if (classForm->relstorage == RELSTORAGE_AOROWS ||
-	    classForm->relstorage == RELSTORAGE_AOCOLS)
+	if (classForm->relstorage == RELSTORAGE_AOROWS || classForm->relstorage == RELSTORAGE_AOCOLS)
 	{
 		is_ao = true;
 	}
@@ -494,8 +460,7 @@ get_relation_entry_from_pg_class(Oid                          relid,
 	/* ao table */
 	if (is_ao)
 	{
-		diskquota_get_appendonly_aux_oid_list(relid, &segrelid, &blkdirrelid,
-		                                      &visimaprelid);
+		diskquota_get_appendonly_aux_oid_list(relid, &segrelid, &blkdirrelid, &visimaprelid);
 		if (OidIsValid(segrelid))
 		{
 			add_auxrelation_to_relation_entry(segrelid, relation_entry);
@@ -545,8 +510,7 @@ get_relation_entry(Oid relid, DiskQuotaRelationCacheEntry *entry)
 		{
 			if (relation_cache_entry->primary_table_relid == relid)
 			{
-				add_auxrelid_to_relation_entry(entry,
-				                               relation_cache_entry->relid);
+				add_auxrelid_to_relation_entry(entry, relation_cache_entry->relid);
 			}
 		}
 		LWLockRelease(diskquota_locks.relation_cache_lock);
@@ -565,14 +529,10 @@ get_relfilenode_by_relid(Oid relid, RelFileNodeBackend *rnode, char *relstorage)
 	if (HeapTupleIsValid(classTup))
 	{
 		classForm           = (Form_pg_class)GETSTRUCT(classTup);
-		rnode->node.spcNode = OidIsValid(classForm->reltablespace)
-		                              ? classForm->reltablespace
-		                              : MyDatabaseTableSpace;
+		rnode->node.spcNode = OidIsValid(classForm->reltablespace) ? classForm->reltablespace : MyDatabaseTableSpace;
 		rnode->node.dbNode  = MyDatabaseId;
 		rnode->node.relNode = classForm->relfilenode;
-		rnode->backend      = classForm->relpersistence == RELPERSISTENCE_TEMP
-		                              ? TempRelBackendId
-		                              : InvalidBackendId;
+		rnode->backend      = classForm->relpersistence == RELPERSISTENCE_TEMP ? TempRelBackendId : InvalidBackendId;
 		*relstorage         = classForm->relstorage;
 		heap_freetuple(classTup);
 		remove_cache_entry(relid, InvalidOid);

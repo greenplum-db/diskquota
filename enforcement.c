@@ -15,13 +15,13 @@
 #include "postgres.h"
 
 #include "cdb/cdbdisp.h"
-#include "diskquota.h"
 #include "executor/executor.h"
+
+#include "diskquota.h"
 
 #define CHECKED_OID_LIST_NUM 64
 
-static bool quota_check_ExecCheckRTPerms(List *rangeTable,
-                                         bool  ereport_on_violation);
+static bool quota_check_ExecCheckRTPerms(List *rangeTable, bool ereport_on_violation);
 
 static ExecutorCheckPerms_hook_type prev_ExecutorCheckPerms_hook;
 
@@ -59,9 +59,7 @@ quota_check_ExecCheckRTPerms(List *rangeTable, bool ereport_on_violation)
 		 * Only check quota on inserts. UPDATEs may well increase space usage
 		 * too, but we ignore that for now.
 		 */
-		if ((rte->requiredPerms & ACL_INSERT) == 0 &&
-		    (rte->requiredPerms & ACL_UPDATE) == 0)
-			continue;
+		if ((rte->requiredPerms & ACL_INSERT) == 0 && (rte->requiredPerms & ACL_UPDATE) == 0) continue;
 
 		/*
 		 * Given table oid, check whether the quota limit of table's schema or

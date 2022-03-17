@@ -1,8 +1,6 @@
 #ifndef ACTIVE_TABLE_H
 #define ACTIVE_TABLE_H
 
-#include "postgres.h"
-
 #include "c.h"
 #include "utils/hsearch.h"
 
