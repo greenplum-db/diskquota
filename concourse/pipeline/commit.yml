@@ -20,6 +20,11 @@
 #@   ubuntu18_gpdb6_conf()
 #@ ]
 jobs:
+#@ param = {
+#@     "res_map": res_map,
+#@     "trigger": trigger,
+#@ }
+- #@ entrance_job(param)
 #@ for conf in confs:
 #@   param = {
 #@     "res_map": res_map,
@@ -27,7 +32,6 @@ jobs:
 #@     "gpdb_src": "gpdb6_src",
 #@     "conf": conf
 #@   }
-- #@ entrance_job(param)
 - #@ build_test_job(param)
 #@ end
 
