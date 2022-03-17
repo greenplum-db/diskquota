@@ -118,8 +118,7 @@ struct DiskQuotaWorkerEntry
 	pg_atomic_uint32 epoch;     /* this counter will be increased after each worker loop */
 	bool             is_paused; /* true if this worker is paused */
 
-	// NOTE: this field only can access in diskquota launcher, in other process
-	// it is dangling pointer
+	// NOTE: this field only can access in diskquota launcher, in other process it is dangling pointer
 	BackgroundWorkerHandle *handle;
 };
 

@@ -38,8 +38,7 @@ init_disk_quota_enforcement(void)
 
 /*
  * Enforcement hook function before query is loading data. Throws an error if
- * you try to INSERT, UPDATE or COPY into a table, and the quota has been
- * exceeded.
+ * you try to INSERT, UPDATE or COPY into a table, and the quota has been exceeded.
  */
 static bool
 quota_check_ExecCheckRTPerms(List *rangeTable, bool ereport_on_violation)

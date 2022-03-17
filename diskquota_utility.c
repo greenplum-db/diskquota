@@ -112,13 +112,11 @@ init_table_size_table(PG_FUNCTION_ARGS)
 	heap_close(rel, NoLock);
 
 	/*
-	 * Why don't use insert into diskquota.table_size select from pg_table_size
-	 * here?
+	 * Why don't use insert into diskquota.table_size select from pg_table_size here?
 	 *
 	 * insert into foo select oid, pg_table_size(oid), -1 from pg_class where
 	 * oid >= 16384 and (relkind='r' or relkind='m');
-	 * ERROR:  This query is not currently supported by GPDB.  (entry db
-	 * 127.0.0.1:6000 pid=61114)
+	 * ERROR:  This query is not currently supported by GPDB.  (entry db 127.0.0.1:6000 pid=61114)
 	 *
 	 * Some functions are peculiar in that they do their own dispatching.
 	 * Such as pg_table_size.
@@ -139,11 +137,9 @@ init_table_size_table(PG_FUNCTION_ARGS)
 		resetStringInfo(&buf);
 		appendStringInfo(&buf,
 		                 "INSERT INTO diskquota.table_size WITH all_size AS "
-		                 "(SELECT diskquota.pull_all_table_size() as a FROM "
-		                 "gp_dist_random('gp_id') "
+		                 "(SELECT diskquota.pull_all_table_size() as a FROM gp_dist_random('gp_id') "
 		                 "UNION ALL SELECT diskquota.pull_all_table_size()) "
-		                 "SELECT (a).tableid, sum((a).size) FROM all_size "
-		                 "GROUP BY (a).tableid;");
+		                 "SELECT (a).tableid, sum((a).size) FROM all_size GROUP BY (a).tableid;");
 		ret = SPI_execute(buf.data, false, 0);
 		if (ret != SPI_OK_INSERT) elog(ERROR, "cannot insert into table_size table: error code %d", ret);
 	} else
@@ -151,22 +147,18 @@ init_table_size_table(PG_FUNCTION_ARGS)
 		resetStringInfo(&buf);
 		appendStringInfo(&buf,
 		                 "INSERT INTO diskquota.table_size WITH all_size AS "
-		                 "(SELECT diskquota.pull_all_table_size() as a FROM "
-		                 "gp_dist_random('gp_id')) "
+		                 "(SELECT diskquota.pull_all_table_size() as a FROM gp_dist_random('gp_id')) "
 		                 "SELECT (a).* FROM all_size;");
 		ret = SPI_execute(buf.data, false, 0);
 		if (ret != SPI_OK_INSERT) elog(ERROR, "cannot insert into table_size table: error code %d", ret);
 
 		resetStringInfo(&buf);
-		/* size is the sum of size on master and on all segments when segid ==
-		 * -1. */
+		/* size is the sum of size on master and on all segments when segid == -1. */
 		appendStringInfo(&buf,
 		                 "INSERT INTO diskquota.table_size WITH total_size AS "
 		                 "(SELECT * from diskquota.pull_all_table_size() "
-		                 "UNION ALL SELECT tableid, size, segid FROM "
-		                 "diskquota.table_size) "
-		                 "SELECT tableid, sum(size) as size, -1 as segid FROM "
-		                 "total_size GROUP BY tableid;");
+		                 "UNION ALL SELECT tableid, size, segid FROM diskquota.table_size) "
+		                 "SELECT tableid, sum(size) as size, -1 as segid FROM total_size GROUP BY tableid;");
 		ret = SPI_execute(buf.data, false, 0);
 		if (ret != SPI_OK_INSERT) elog(ERROR, "cannot insert into table_size table: error code %d", ret);
 	}
@@ -277,8 +269,7 @@ pull_all_table_size(PG_FUNCTION_ARGS)
 		TupleDescInitEntry(tupdesc, (AttrNumber)3, "SEGID", INT2OID, -1 /*typmod*/, 0 /*attdim*/);
 		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
 
-		/* Create a local hash table and fill it with entries from shared
-		 * memory. */
+		/* Create a local hash table and fill it with entries from shared memory. */
 		table_size_ctx                       = (struct PullAllTableSizeCtx *)palloc(sizeof(struct PullAllTableSizeCtx));
 		table_size_ctx->local_table_size_map = calculate_all_table_size();
 
@@ -348,10 +339,7 @@ diskquota_start_worker(PG_FUNCTION_ARGS)
 			ResetLatch(&MyProc->procLatch);
 
 			ereportif(kill(launcher_pid, 0) == -1 && errno == ESRCH, // do existence check
-			          ERROR,
-			          (errmsg("[diskquota] diskquota launcher pid = %d no "
-			                  "longer exists",
-			                  launcher_pid)));
+			          ERROR, (errmsg("[diskquota] diskquota launcher pid = %d no longer exists", launcher_pid)));
 
 			LWLockAcquire(diskquota_locks.extension_ddl_message_lock, LW_SHARED);
 			if (extension_ddl_message->result != ERR_PENDING)
@@ -376,11 +364,9 @@ diskquota_start_worker(PG_FUNCTION_ARGS)
 	/* notify DBA to run init_table_size_table() when db is not empty */
 	if (!is_database_empty())
 	{
-		ereport(WARNING, (errmsg("database is not empty, please run `select "
-		                         "diskquota.init_table_size_table()` to initialize "
-		                         "table_size information for diskquota extension. Note "
-		                         "that for large database, this function may take a "
-		                         "long time.")));
+		ereport(WARNING, (errmsg("database is not empty, please run `select diskquota.init_table_size_table()` to "
+		                         "initialize table_size information for diskquota extension. Note that for large "
+		                         "database, this function may take a long time.")));
 	}
 	PG_RETURN_VOID();
 }
@@ -412,8 +398,7 @@ dispatch_pause_or_resume_command(Oid dbid, bool pause_extension)
 		if (PQresultStatus(pgresult) != PGRES_TUPLES_OK)
 		{
 			cdbdisp_clearCdbPgResults(&cdb_pgresults);
-			ereport(ERROR, (errmsg("[diskquota] %s extension on segments, encounter "
-			                       "unexpected result from segment: %d",
+			ereport(ERROR, (errmsg("[diskquota] %s extension on segments, encounter unexpected result from segment: %d",
 			                       pause_extension ? "pausing" : "resuming", PQresultStatus(pgresult))));
 		}
 	}
@@ -423,8 +408,7 @@ dispatch_pause_or_resume_command(Oid dbid, bool pause_extension)
 /*
  * this function is called by user.
  * pause diskquota in current or specific database.
- * After this function being called, diskquota doesn't emit an error when the
- * disk usage limit is exceeded.
+ * After this function being called, diskquota doesn't emit an error when the disk usage limit is exceeded.
  */
 Datum
 diskquota_pause(PG_FUNCTION_ARGS)
@@ -520,9 +504,8 @@ is_database_empty(void)
 
 	initStringInfo(&buf);
 	appendStringInfo(&buf,
-	                 "SELECT (count(relname) = 0)  FROM pg_class AS c, "
-	                 "pg_namespace AS n WHERE c.oid > 16384 and relnamespace = "
-	                 "n.oid and nspname != 'diskquota'");
+	                 "SELECT (count(relname) = 0)  FROM pg_class AS c, pg_namespace AS n WHERE c.oid > 16384 and "
+	                 "relnamespace = n.oid and nspname != 'diskquota'");
 
 	/*
 	 * If error happens in is_database_empty, just return error messages to
@@ -606,10 +589,7 @@ dq_object_access_hook_on_drop(void)
 			ResetLatch(&MyProc->procLatch);
 
 			ereportif(kill(launcher_pid, 0) == -1 && errno == ESRCH, // do existence check
-			          ERROR,
-			          (errmsg("[diskquota] diskquota launcher pid = %d no "
-			                  "longer exists",
-			                  launcher_pid)));
+			          ERROR, (errmsg("[diskquota] diskquota launcher pid = %d no longer exists", launcher_pid)));
 
 			LWLockAcquire(diskquota_locks.extension_ddl_message_lock, LW_SHARED);
 			if (extension_ddl_message->result != ERR_PENDING)
@@ -670,8 +650,7 @@ ddl_err_code_to_err_message(MessageResult code)
 	switch (code)
 	{
 		case ERR_PENDING:
-			return "no response from diskquota launcher, check whether "
-			       "launcher process exists";
+			return "no response from diskquota launcher, check whether launcher process exists";
 		case ERR_OK:
 			return "succeeded";
 		case ERR_EXCEED:
@@ -852,8 +831,8 @@ set_quota_config_internal(Oid targetoid, int64 quota_limit_mb, QuotaType type)
 	                 targetoid, type);
 
 	/*
-	 * If error happens in set_quota_config_internal, just return error messages
-	 * to the client side. So there is no need to catch the error.
+	 * If error happens in set_quota_config_internal, just return error messages to
+	 * the client side. So there is no need to catch the error.
 	 */
 	SPI_connect();
 
@@ -881,8 +860,7 @@ set_quota_config_internal(Oid targetoid, int64 quota_limit_mb, QuotaType type)
 	{
 		resetStringInfo(&buf);
 		appendStringInfo(&buf,
-		                 "update diskquota.quota_config set quotalimitMB = %ld "
-		                 "where targetoid=%u"
+		                 "update diskquota.quota_config set quotalimitMB = %ld where targetoid=%u"
 		                 " and quotatype=%d;",
 		                 quota_limit_mb, targetoid, type);
 		ret = SPI_execute(buf.data, false, 0);
@@ -904,8 +882,7 @@ set_target_internal(Oid primaryoid, Oid spcoid, int64 quota_limit_mb, QuotaType 
 
 	initStringInfo(&buf);
 	appendStringInfo(&buf,
-	                 "select true from diskquota.quota_config as q, "
-	                 "diskquota.target as t"
+	                 "select true from diskquota.quota_config as q, diskquota.target as t"
 	                 " where t.primaryOid = %u"
 	                 " and t.tablespaceOid=%u"
 	                 " and t.quotaType=%d"
@@ -914,8 +891,8 @@ set_target_internal(Oid primaryoid, Oid spcoid, int64 quota_limit_mb, QuotaType 
 	                 primaryoid, spcoid, type);
 
 	/*
-	 * If error happens in set_quota_config_internal, just return error messages
-	 * to the client side. So there is no need to catch the error.
+	 * If error happens in set_quota_config_internal, just return error messages to
+	 * the client side. So there is no need to catch the error.
 	 */
 	SPI_connect();
 
@@ -1050,8 +1027,7 @@ get_size_in_mb(char *str)
 		else
 			ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("invalid size: \"%s\"", str),
 			                errdetail("Invalid size unit: \"%s\".", strptr),
-			                errhint("Valid units are \"MB\", \"GB\", \"TB\", "
-			                        "and \"PB\".")));
+			                errhint("Valid units are \"MB\", \"GB\", \"TB\", and \"PB\".")));
 
 		if (multiplier > 1)
 		{
@@ -1077,8 +1053,8 @@ update_diskquota_db_list(Oid dbid, HASHACTION action)
 {
 	bool found = false;
 
-	/* add/remove the dbid to monitoring database cache to filter out table not
-	 * under monitoring in hook functions
+	/* add/remove the dbid to monitoring database cache to filter out table not under
+	 * monitoring in hook functions
 	 */
 
 	LWLockAcquire(diskquota_locks.monitoring_dbid_cache_lock, LW_EXCLUSIVE);
@@ -1088,16 +1064,14 @@ update_diskquota_db_list(Oid dbid, HASHACTION action)
 		entry      = hash_search(monitoring_dbid_cache, &dbid, HASH_ENTER_NULL, &found);
 		if (entry == NULL)
 		{
-			ereport(WARNING, (errmsg("can't alloc memory on dbid cache, there "
-			                         "ary too many databases to monitor")));
+			ereport(WARNING, (errmsg("can't alloc memory on dbid cache, there ary too many databases to monitor")));
 		}
 	} else if (action == HASH_REMOVE)
 	{
 		hash_search(monitoring_dbid_cache, &dbid, HASH_REMOVE, &found);
 		if (!found)
 		{
-			ereport(WARNING, (errmsg("cannot remove the database from db list, "
-			                         "dbid not found")));
+			ereport(WARNING, (errmsg("cannot remove the database from db list, dbid not found")));
 		}
 	}
 	LWLockRelease(diskquota_locks.monitoring_dbid_cache_lock);
@@ -1136,33 +1110,30 @@ set_per_segment_quota(PG_FUNCTION_ARGS)
 		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("unable to connect to execute internal query")));
 	}
 
-	/* Get all targetOid which are related to this tablespace, and saved into
-	 * rowIds */
+	/* Get all targetOid which are related to this tablespace, and saved into rowIds */
 	initStringInfo(&buf);
-	appendStringInfo(&buf,
-	                 "SELECT true FROM diskquota.target as t, diskquota.quota_config as "
-	                 "q WHERE tablespaceOid = %u AND (t.quotaType = %d OR t.quotaType = "
-	                 "%d) AND t.primaryOid = q.targetOid AND t.quotaType = q.quotaType",
-	                 spcoid, NAMESPACE_TABLESPACE_QUOTA, ROLE_TABLESPACE_QUOTA);
+	appendStringInfo(
+	        &buf,
+	        "SELECT true FROM diskquota.target as t, diskquota.quota_config as q WHERE tablespaceOid = %u AND "
+	        "(t.quotaType = %d OR t.quotaType = %d) AND t.primaryOid = q.targetOid AND t.quotaType = q.quotaType",
+	        spcoid, NAMESPACE_TABLESPACE_QUOTA, ROLE_TABLESPACE_QUOTA);
 
 	ret = SPI_execute(buf.data, true, 0);
 	if (ret != SPI_OK_SELECT) elog(ERROR, "cannot select target and quota setting table: error code %d", ret);
 	if (SPI_processed <= 0)
 	{
-		ereport(ERROR, (errmsg("there are no roles or schema quota configed for this "
-		                       "tablespace: %s, can't config per segment ratio for it",
+		ereport(ERROR, (errmsg("there are no roles or schema quota configed for this tablespace: %s, can't config per "
+		                       "segment ratio for it",
 		                       spcname)));
 	}
 	resetStringInfo(&buf);
 	appendStringInfo(&buf,
-	                 "UPDATE diskquota.quota_config AS q set segratio = %f "
-	                 "FROM diskquota.target AS t WHERE q.targetOid = "
-	                 "t.primaryOid AND (t.quotaType = %d OR t.quotaType = %d) "
-	                 "AND t.quotaType = q.quotaType And t.tablespaceOid = %d",
+	                 "UPDATE diskquota.quota_config AS q set segratio = %f FROM diskquota.target AS t WHERE "
+	                 "q.targetOid = t.primaryOid AND (t.quotaType = %d OR t.quotaType = %d) AND t.quotaType = "
+	                 "q.quotaType And t.tablespaceOid = %d",
 	                 ratio, NAMESPACE_TABLESPACE_QUOTA, ROLE_TABLESPACE_QUOTA, spcoid);
 	/*
-	 * UPDATEA NAMESPACE_TABLESPACE_PERSEG_QUOTA AND
-	 * ROLE_TABLESPACE_PERSEG_QUOTA config for this tablespace
+	 * UPDATEA NAMESPACE_TABLESPACE_PERSEG_QUOTA AND ROLE_TABLESPACE_PERSEG_QUOTA config for this tablespace
 	 */
 	ret = SPI_execute(buf.data, false, 0);
 	if (ret != SPI_OK_UPDATE) elog(ERROR, "cannot update item from quota setting table, error code %d", ret);
@@ -1191,9 +1162,8 @@ worker_spi_get_extension_version(int *major, int *minor)
 
 	if (ret != SPI_OK_SELECT || SPI_processed != 1)
 	{
-		ereport(WARNING, (errmsg("[diskquota] when reading installed version "
-		                         "lines %ld code = %d",
-		                         SPI_processed, ret)));
+		ereport(WARNING,
+		        (errmsg("[diskquota] when reading installed version lines %ld code = %d", SPI_processed, ret)));
 		return -1;
 	}
 
@@ -1204,8 +1174,8 @@ worker_spi_get_extension_version(int *major, int *minor)
 	char *version = TextDatumGetCString(v);
 	if (version == NULL)
 	{
-		ereport(WARNING, (errmsg("[diskquota] 'extversion' is empty in "
-		                         "pg_class.pg_extension. catalog might be corrupted")));
+		ereport(WARNING,
+		        (errmsg("[diskquota] 'extversion' is empty in pg_class.pg_extension. catalog might be corrupted")));
 		return -1;
 	}
 
@@ -1213,8 +1183,7 @@ worker_spi_get_extension_version(int *major, int *minor)
 
 	if (ret != 2)
 	{
-		ereport(WARNING, (errmsg("[diskquota] 'extversion' is '%s' in "
-		                         "pg_class.pg_extension which is not valid format. "
+		ereport(WARNING, (errmsg("[diskquota] 'extversion' is '%s' in pg_class.pg_extension which is not valid format. "
 		                         "catalog might be corrupted",
 		                         version)));
 		return -1;
@@ -1244,14 +1213,10 @@ get_ext_major_version(void)
 	bool      isnull;
 	char     *extversion;
 
-	ret = SPI_execute(
-	        "select COALESCE(extversion,'') from pg_extension where extname = "
-	        "'diskquota'",
-	        true, 0);
+	ret = SPI_execute("select COALESCE(extversion,'') from pg_extension where extname = 'diskquota'", true, 0);
 	if (ret != SPI_OK_SELECT)
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] check diskquota state SPI_execute "
-		                                                        "failed: error code %d",
-		                                                        ret)));
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+		                errmsg("[diskquota] check diskquota state SPI_execute failed: error code %d", ret)));
 
 	tupdesc = SPI_tuptable->tupdesc;
 	if (tupdesc->natts != 1 || ((tupdesc)->attrs[0])->atttypid != TEXTOID || SPI_processed != 1)
@@ -1382,8 +1347,8 @@ calculate_relation_size_all_forks(RelFileNodeBackend *rnode, char relstorage)
 		ctx.size                = 0;
 		/*
 		 * Since the extension file with (segno=0, column=1) is not traversed by
-		 * ao_foreach_extent_file(), we need to handle the size of it
-		 * additionally. See comments in ao_foreach_extent_file() for details.
+		 * ao_foreach_extent_file(), we need to handle the size of it additionally.
+		 * See comments in ao_foreach_extent_file() for details.
 		 */
 		relation_file_stat(0, &ctx);
 		ao_foreach_extent_file(relation_file_stat, &ctx);

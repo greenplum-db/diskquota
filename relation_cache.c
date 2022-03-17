@@ -319,8 +319,7 @@ show_relation_cache(PG_FUNCTION_ARGS)
 
 		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
 
-		/* Create a local hash table and fill it with entries from shared
-		 * memory. */
+		/* Create a local hash table and fill it with entries from shared memory. */
 		memset(&hashctl, 0, sizeof(hashctl));
 		hashctl.keysize   = sizeof(Oid);
 		hashctl.entrysize = sizeof(DiskQuotaRelationCacheEntry);

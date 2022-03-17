@@ -220,9 +220,9 @@ report_relation_cache_helper(Oid relid)
 	}
 
 	/*
-	 * Do not collect active table info when the database is not under
-	 * monitoring. this operation is read-only and does not require absolutely
-	 * exact. read the cache with out shared lock.
+	 * Do not collect active table info when the database is not under monitoring.
+	 * this operation is read-only and does not require absolutely exact.
+	 * read the cache with out shared lock.
 	 */
 	hash_search(monitoring_dbid_cache, &MyDatabaseId, HASH_FIND, &found);
 	if (!found)
@@ -253,9 +253,9 @@ report_active_table_helper(const RelFileNodeBackend *relFileNode)
 		return;
 	}
 
-	/* do not collect active table info when the database is not under
-	 * monitoring. this operation is read-only and does not require absolutely
-	 * exact. read the cache with out shared lock */
+	/* do not collect active table info when the database is not under monitoring.
+	 * this operation is read-only and does not require absolutely exact.
+	 * read the cache with out shared lock */
 	hash_search(monitoring_dbid_cache, &dbid, HASH_FIND, &found);
 
 	if (!found)
@@ -369,9 +369,8 @@ diskquota_fetch_table_stat(PG_FUNCTION_ARGS)
 		int           ret_code = SPI_connect();
 		if (ret_code != SPI_OK_CONNECT)
 		{
-			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("unable to connect to execute internal "
-			                                                        "query. return code: %d.",
-			                                                        ret_code)));
+			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+			                errmsg("unable to connect to execute internal query. return code: %d.", ret_code)));
 		}
 		extMajorVersion = get_ext_major_version();
 		SPI_finish();
@@ -384,8 +383,7 @@ diskquota_fetch_table_stat(PG_FUNCTION_ARGS)
 
 		if (Gp_role == GP_ROLE_DISPATCH || Gp_role == GP_ROLE_UTILITY)
 		{
-			ereport(ERROR, (errmsg("This function must not be called on master "
-			                       "or by user")));
+			ereport(ERROR, (errmsg("This function must not be called on master or by user")));
 		}
 
 		switch (mode)
@@ -403,9 +401,7 @@ diskquota_fetch_table_stat(PG_FUNCTION_ARGS)
 				update_diskquota_db_list(MyDatabaseId, HASH_REMOVE);
 				break;
 			default:
-				ereport(ERROR, (errmsg("Unused mode number %d, transaction "
-				                       "will be aborted",
-				                       mode)));
+				ereport(ERROR, (errmsg("Unused mode number %d, transaction will be aborted", mode)));
 				break;
 		}
 
@@ -428,9 +424,8 @@ diskquota_fetch_table_stat(PG_FUNCTION_ARGS)
 				TupleDescInitEntry(tupdesc, (AttrNumber)3, "GP_SEGMENT_ID", INT2OID, -1, 0);
 				break;
 			default:
-				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] unknown diskquota "
-				                                                        "extension version: %d",
-				                                                        extMajorVersion)));
+				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+				                errmsg("[diskquota] unknown diskquota extension version: %d", extMajorVersion)));
 		}
 		TupleDescInitEntry(tupdesc, (AttrNumber)1, "TABLE_OID", OIDOID, -1, 0);
 		TupleDescInitEntry(tupdesc, (AttrNumber)2, "TABLE_SIZE", INT8OID, -1, 0);
@@ -714,8 +709,7 @@ get_active_tables_oid(void)
 	hash_seq_init(&iter, local_active_table_file_map);
 	while ((active_table_file_entry = (DiskQuotaActiveTableFileEntry *)hash_seq_search(&iter)) != NULL)
 	{
-		/* TODO: handle possible ERROR here so that the bgworker will not go
-		 * down. */
+		/* TODO: handle possible ERROR here so that the bgworker will not go down. */
 		hash_search(active_tables_map, active_table_file_entry, HASH_ENTER, NULL);
 	}
 	/* TODO: hash_seq_term(&iter); */
@@ -806,24 +800,18 @@ load_table_size(HTAB *local_table_stats_map)
 	switch (extMajorVersion)
 	{
 		case 1:
-			ret = SPI_execute(
-			        "select tableid, size, CAST(-1 AS smallint) from "
-			        "diskquota.table_size",
-			        true, 0);
+			ret = SPI_execute("select tableid, size, CAST(-1 AS smallint) from diskquota.table_size", true, 0);
 			break;
 		case 2:
 			ret = SPI_execute("select tableid, size, segid from diskquota.table_size", true, 0);
 			break;
 		default:
-			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] unknown diskquota extension "
-			                                                        "version: %d",
-			                                                        extMajorVersion)));
+			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+			                errmsg("[diskquota] unknown diskquota extension version: %d", extMajorVersion)));
 	}
 
 	if (ret != SPI_OK_SELECT)
-		ereport(ERROR, (errmsg("[diskquota] load_table_size SPI_execute "
-		                       "failed: return code %d, error: %m",
-		                       ret)));
+		ereport(ERROR, (errmsg("[diskquota] load_table_size SPI_execute failed: return code %d, error: %m", ret)));
 
 	tupdesc = SPI_tuptable->tupdesc;
 	if (tupdesc->natts != 3 || ((tupdesc)->attrs[0])->atttypid != OIDOID ||
@@ -837,8 +825,7 @@ load_table_size(HTAB *local_table_stats_map)
 			ereport(WARNING, (errmsg("[diskquota] attrs: %d, %d, %d", tupdesc->attrs[0]->atttypid,
 			                         tupdesc->attrs[1]->atttypid, tupdesc->attrs[2]->atttypid)));
 		}
-		ereport(ERROR, (errmsg("[diskquota] table \"table_size\" is corrupted "
-		                       "in database \"%s\","
+		ereport(ERROR, (errmsg("[diskquota] table \"table_size\" is corrupted in database \"%s\","
 		                       " please recreate diskquota extension",
 		                       get_database_name(MyDatabaseId))));
 	}
@@ -949,8 +936,7 @@ pull_active_list_from_seg(void)
 		if (PQresultStatus(pgresult) != PGRES_TUPLES_OK)
 		{
 			cdbdisp_clearCdbPgResults(&cdb_pgresults);
-			ereport(ERROR, (errmsg("[diskquota] fetching active tables, encounter "
-			                       "unexpected result from segment: %d",
+			ereport(ERROR, (errmsg("[diskquota] fetching active tables, encounter unexpected result from segment: %d",
 			                       PQresultStatus(pgresult))));
 		}
 
@@ -992,9 +978,7 @@ pull_active_table_size_from_seg(HTAB *local_table_stats_map, char *active_oid_ar
 	int            j;
 
 	initStringInfo(&sql_command);
-	appendStringInfo(&sql_command,
-	                 "select * from diskquota.diskquota_fetch_table_stat(1, "
-	                 "'%s'::oid[])",
+	appendStringInfo(&sql_command, "select * from diskquota.diskquota_fetch_table_stat(1, '%s'::oid[])",
 	                 active_oid_array);
 	CdbDispatchCommand(sql_command.data, DF_NONE, &cdb_pgresults);
 	pfree(sql_command.data);
@@ -1002,9 +986,7 @@ pull_active_table_size_from_seg(HTAB *local_table_stats_map, char *active_oid_ar
 	SEGCOUNT = cdb_pgresults.numResults;
 	if (SEGCOUNT <= 0)
 	{
-		ereport(ERROR, (errmsg("[diskquota] there is no active segment, "
-		                       "SEGCOUNT is %d",
-		                       SEGCOUNT)));
+		ereport(ERROR, (errmsg("[diskquota] there is no active segment, SEGCOUNT is %d", SEGCOUNT)));
 	}
 
 	/* sum table size from each segment into local_table_stats_map */
@@ -1022,8 +1004,7 @@ pull_active_table_size_from_seg(HTAB *local_table_stats_map, char *active_oid_ar
 		if (PQresultStatus(pgresult) != PGRES_TUPLES_OK)
 		{
 			cdbdisp_clearCdbPgResults(&cdb_pgresults);
-			ereport(ERROR, (errmsg("[diskquota] fetching active tables, encounter "
-			                       "unexpected result from segment: %d",
+			ereport(ERROR, (errmsg("[diskquota] fetching active tables, encounter unexpected result from segment: %d",
 			                       PQresultStatus(pgresult))));
 		}
 
@@ -1032,8 +1013,7 @@ pull_active_table_size_from_seg(HTAB *local_table_stats_map, char *active_oid_ar
 			reloid     = atooid(PQgetvalue(pgresult, j, 0));
 			tableSize  = (Size)atoll(PQgetvalue(pgresult, j, 1));
 			key.reloid = reloid;
-			/* for diskquota extension version is 1.0, pgresult doesn't contain
-			 * segid */
+			/* for diskquota extension version is 1.0, pgresult doesn't contain segid */
 			if (PQnfields(pgresult) == 3)
 			{
 				/* get the segid, tablesize for each table */
@@ -1051,8 +1031,7 @@ pull_active_table_size_from_seg(HTAB *local_table_stats_map, char *active_oid_ar
 				entry->tablesize = tableSize;
 			}
 
-			/* when segid is -1, the tablesize is the sum of tablesize of master
-			 * and all segments */
+			/* when segid is -1, the tablesize is the sum of tablesize of master and all segments */
 			key.segid = -1;
 			entry     = (DiskQuotaActiveTableEntry *)hash_search(local_table_stats_map, &key, HASH_ENTER, &found);
 

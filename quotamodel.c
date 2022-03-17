@@ -121,8 +121,8 @@ struct BlackMapEntry
 	Oid    tablespaceoid;
 	uint32 targettype;
 	/*
-	 * QD index the blackmap by (targetoid, databaseoid, tablespaceoid,
-	 * targettype). QE index the blackmap by (relfilenode).
+	 * QD index the blackmap by (targetoid, databaseoid, tablespaceoid, targettype).
+	 * QE index the blackmap by (relfilenode).
 	 */
 	RelFileNode relfilenode;
 };
@@ -313,10 +313,8 @@ check_quota_map(QuotaType type)
 			if (entry->size >= entry->limit)
 			{
 				Oid targetOid = entry->keys[0];
-				/* when quota type is not NAMESPACE_TABLESPACE_QUOTA or
-				 * ROLE_TABLESPACE_QUOTA, the tablespaceoid is set to be
-				 * InvalidOid, so when we get it from map, also set it to be
-				 * InvalidOid
+				/* when quota type is not NAMESPACE_TABLESPACE_QUOTA or ROLE_TABLESPACE_QUOTA, the tablespaceoid
+				 * is set to be InvalidOid, so when we get it from map, also set it to be InvalidOid
 				 */
 				Oid tablespaceoid = (type == NAMESPACE_TABLESPACE_QUOTA) || (type == ROLE_TABLESPACE_QUOTA)
 				                            ? entry->keys[1]
@@ -440,8 +438,7 @@ disk_quota_shmem_startup(void)
  * extension_ddl_message.
  * extension_ddl_lock is used to avoid concurrent diskquota
  * extension ddl(create/drop) command.
- * monitoring_dbid_cache_lock is used to shared `monitoring_dbid_cache` on
- * segment process.
+ * monitoring_dbid_cache_lock is used to shared `monitoring_dbid_cache` on segment process.
  */
 static void
 init_lwlocks(void)
@@ -533,8 +530,8 @@ check_diskquota_state_is_ready(void)
 	{
 		if (SPI_OK_CONNECT != SPI_connect())
 		{
-			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] unable to connect to execute "
-			                                                        "SPI query")));
+			ereport(ERROR,
+			        (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] unable to connect to execute SPI query")));
 		}
 		connected = true;
 		PushActiveSnapshot(GetTransactionSnapshot());
@@ -589,9 +586,8 @@ do_check_diskquota_state_is_ready(void)
 	if (ret != SPI_OK_SELECT)
 	{
 		pfree(sql_command.data);
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] check diskquota state SPI_execute "
-		                                                        "failed: error code %d",
-		                                                        ret)));
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+		                errmsg("[diskquota] check diskquota state SPI_execute failed: error code %d", ret)));
 	}
 	pfree(sql_command.data);
 	/* Add current database to the monitored db cache on coordinator */
@@ -602,17 +598,16 @@ do_check_diskquota_state_is_ready(void)
 	 */
 	ret = SPI_execute("select state from diskquota.state", true, 0);
 	if (ret != SPI_OK_SELECT)
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] check diskquota state SPI_execute "
-		                                                        "failed: error code %d",
-		                                                        ret)));
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+		                errmsg("[diskquota] check diskquota state SPI_execute failed: error code %d", ret)));
 
 	tupdesc = SPI_tuptable->tupdesc;
 	if (tupdesc->natts != 1 || ((tupdesc)->attrs[0])->atttypid != INT4OID)
 	{
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] table \"state\" is corrupted in "
-		                                                        "database \"%s\","
-		                                                        " please recreate diskquota extension",
-		                                                        get_database_name(MyDatabaseId))));
+		ereport(ERROR,
+		        (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] table \"state\" is corrupted in database \"%s\","
+		                                                 " please recreate diskquota extension",
+		                                                 get_database_name(MyDatabaseId))));
 	}
 
 	for (i = 0; i < SPI_processed; i++)
@@ -648,9 +643,7 @@ refresh_disk_quota_model(bool is_init)
 	SEGCOUNT = getgpsegmentCount();
 	if (SEGCOUNT <= 0)
 	{
-		ereport(ERROR, (errmsg("[diskquota] there is no active segment, "
-		                       "SEGCOUNT is %d",
-		                       SEGCOUNT)));
+		ereport(ERROR, (errmsg("[diskquota] there is no active segment, SEGCOUNT is %d", SEGCOUNT)));
 	}
 
 	if (is_init) ereport(LOG, (errmsg("[diskquota] initialize quota model started")));
@@ -687,8 +680,8 @@ refresh_disk_quota_usage(bool is_init)
 	{
 		if (SPI_OK_CONNECT != SPI_connect())
 		{
-			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] unable to connect to execute "
-			                                                        "SPI query")));
+			ereport(ERROR,
+			        (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] unable to connect to execute SPI query")));
 		}
 		connected = true;
 		PushActiveSnapshot(GetTransactionSnapshot());
@@ -872,8 +865,7 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 			{
 				if (key.segid == -1)
 				{
-					/* pretend process as utility mode, and append the table
-					 * size on master */
+					/* pretend process as utility mode, and append the table size on master */
 					Gp_role = GP_ROLE_UTILITY;
 
 					active_table_entry->tablesize += calculate_table_size(relOid);
@@ -887,9 +879,8 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 				tsentry->totalsize  = (int64)active_table_entry->tablesize;
 				tsentry->need_flush = true;
 
-				/* update the disk usage, there may be entries in the map whose
-				 * keys are InvlidOid as the tsentry does not exist in the
-				 * table_size_map */
+				/* update the disk usage, there may be entries in the map whose keys are InvlidOid as the tsentry does
+				 * not exist in the table_size_map */
 				update_size_for_quota(updated_total_size, NAMESPACE_QUOTA, (Oid[]){tsentry->namespaceoid}, key.segid);
 				update_size_for_quota(updated_total_size, ROLE_QUOTA, (Oid[]){tsentry->owneroid}, key.segid);
 				update_size_for_quota(updated_total_size, ROLE_TABLESPACE_QUOTA,
@@ -897,8 +888,7 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 				update_size_for_quota(updated_total_size, NAMESPACE_TABLESPACE_QUOTA,
 				                      (Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid}, key.segid);
 			}
-			/* table size info doesn't need to flush at init quota model stage
-			 */
+			/* table size info doesn't need to flush at init quota model stage */
 			if (is_init)
 			{
 				tsentry->need_flush = false;
@@ -982,8 +972,7 @@ flush_to_table_size(void)
 	int             ret;
 	int             extMajorVersion = get_ext_major_version();
 
-	/* TODO: Add flush_size_interval to avoid flushing size info in every loop
-	 */
+	/* TODO: Add flush_size_interval to avoid flushing size info in every loop */
 
 	/* Disable ORCA since it does not support non-scalar subqueries. */
 	bool old_optimizer = optimizer;
@@ -1009,9 +998,8 @@ flush_to_table_size(void)
 					appendStringInfo(&deleted_table_expr, "(%u,%d), ", tsentry->reloid, tsentry->segid);
 					break;
 				default:
-					ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] unknown diskquota "
-					                                                        "extension version: %d",
-					                                                        extMajorVersion)));
+					ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+					                errmsg("[diskquota] unknown diskquota extension version: %d", extMajorVersion)));
 			}
 			delete_statement_flag = true;
 
@@ -1040,9 +1028,8 @@ flush_to_table_size(void)
 					insert_statement_flag = true;
 					break;
 				default:
-					ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] unknown diskquota "
-					                                                        "extension version: %d",
-					                                                        extMajorVersion)));
+					ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+					                errmsg("[diskquota] unknown diskquota extension version: %d", extMajorVersion)));
 			}
 		}
 	}
@@ -1060,32 +1047,28 @@ flush_to_table_size(void)
 		{
 			case 1:
 				appendStringInfo(&delete_statement,
-				                 "delete from diskquota.table_size where "
-				                 "tableid in ( SELECT * FROM deleted_table );");
+				                 "delete from diskquota.table_size where tableid in ( SELECT * FROM deleted_table );");
 				break;
 			case 2:
-				appendStringInfo(&delete_statement,
-				                 "delete from diskquota.table_size where (tableid, "
-				                 "segid) in ( SELECT * FROM deleted_table );");
+				appendStringInfo(
+				        &delete_statement,
+				        "delete from diskquota.table_size where (tableid, segid) in ( SELECT * FROM deleted_table );");
 				break;
 			default:
-				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] unknown diskquota "
-				                                                        "extension version: %d",
-				                                                        extMajorVersion)));
+				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+				                errmsg("[diskquota] unknown diskquota extension version: %d", extMajorVersion)));
 		}
 		ret = SPI_execute(delete_statement.data, false, 0);
 		if (ret != SPI_OK_DELETE)
-			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] flush_to_table_size "
-			                                                        "SPI_execute failed: error code %d",
-			                                                        ret)));
+			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+			                errmsg("[diskquota] flush_to_table_size SPI_execute failed: error code %d", ret)));
 	}
 	if (insert_statement_flag)
 	{
 		ret = SPI_execute(insert_statement.data, false, 0);
 		if (ret != SPI_OK_INSERT)
-			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] flush_to_table_size "
-			                                                        "SPI_execute failed: error code %d",
-			                                                        ret)));
+			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+			                errmsg("[diskquota] flush_to_table_size SPI_execute failed: error code %d", ret)));
 	}
 
 	optimizer = old_optimizer;
@@ -1115,10 +1098,8 @@ flush_local_black_map(void)
 			                                                HASH_ENTER_NULL, &found);
 			if (blackentry == NULL)
 			{
-				ereport(WARNING, (errmsg("[diskquota] Shared disk quota black "
-				                         "map size limit reached."
-				                         "Some out-of-limit schemas or roles "
-				                         "will be lost"
+				ereport(WARNING, (errmsg("[diskquota] Shared disk quota black map size limit reached."
+				                         "Some out-of-limit schemas or roles will be lost"
 				                         "in blacklist.")));
 			} else
 			{
@@ -1235,9 +1216,8 @@ load_quotas(void)
 		int ret_code = SPI_connect();
 		if (ret_code != SPI_OK_CONNECT)
 		{
-			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] unable to connect to execute "
-			                                                        "SPI query, return code: %d",
-			                                                        ret_code)));
+			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+			                errmsg("[diskquota] unable to connect to execute SPI query, return code: %d", ret_code)));
 		}
 		connected = true;
 		PushActiveSnapshot(GetTransactionSnapshot());
@@ -1303,39 +1283,34 @@ do_load_quotas(void)
 	{
 		case 1:
 			ret = SPI_execute(
-			        "select targetoid, quotatype, quotalimitMB, 0 as segratio, "
-			        "0 as tablespaceoid from diskquota.quota_config",
+			        "select targetoid, quotatype, quotalimitMB, 0 as segratio, 0 as tablespaceoid from "
+			        "diskquota.quota_config",
 			        true, 0);
 			break;
 		case 2:
 			ret = SPI_execute(
-			        "SELECT c.targetOid, c.quotaType, c.quotalimitMB, "
-			        "COALESCE(c.segratio, 0) AS segratio, "
+			        "SELECT c.targetOid, c.quotaType, c.quotalimitMB, COALESCE(c.segratio, 0) AS segratio, "
 			        "COALESCE(t.tablespaceoid, 0) AS tablespaceoid "
-			        "FROM diskquota.quota_config AS c LEFT OUTER JOIN "
-			        "diskquota.target AS t "
-			        "ON c.targetOid = t.primaryOid and c.quotaType = "
-			        "t.quotaType",
+			        "FROM diskquota.quota_config AS c LEFT OUTER JOIN diskquota.target AS t "
+			        "ON c.targetOid = t.primaryOid and c.quotaType = t.quotaType",
 			        true, 0);
 			break;
 		default:
-			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] unknown diskquota extension "
-			                                                        "version: %d",
-			                                                        extMajorVersion)));
+			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+			                errmsg("[diskquota] unknown diskquota extension version: %d", extMajorVersion)));
 	}
 	if (ret != SPI_OK_SELECT)
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] load_quotas SPI_execute failed: "
-		                                                        "error code %d",
-		                                                        ret)));
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+		                errmsg("[diskquota] load_quotas SPI_execute failed: error code %d", ret)));
 
 	tupdesc = SPI_tuptable->tupdesc;
 	if (tupdesc->natts != NUM_QUOTA_CONFIG_ATTRS || ((tupdesc)->attrs[0])->atttypid != OIDOID ||
 	    ((tupdesc)->attrs[1])->atttypid != INT4OID || ((tupdesc)->attrs[2])->atttypid != INT8OID)
 	{
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] configuration table is corrupted "
-		                                                        "in database \"%s\","
-		                                                        " please recreate diskquota extension",
-		                                                        get_database_name(MyDatabaseId))));
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+		                errmsg("[diskquota] configuration table is corrupted in database \"%s\","
+		                       " please recreate diskquota extension",
+		                       get_database_name(MyDatabaseId))));
 	}
 
 	for (i = 0; i < SPI_processed; i++)
@@ -1349,8 +1324,8 @@ do_load_quotas(void)
 			vals[i] = SPI_getbinval(tup, tupdesc, i + 1, &(isnull[i]));
 			if (i <= 2 && isnull[i])
 			{
-				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] attibutes in configuration "
-				                                                        "table MUST NOT be NULL")));
+				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+				                errmsg("[diskquota] attibutes in configuration table MUST NOT be NULL")));
 			}
 		}
 
@@ -1364,9 +1339,9 @@ do_load_quotas(void)
 		{
 			if (quota_info[quotaType].num_keys != 1)
 			{
-				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] tablespace Oid MUST NOT be NULL "
-				                                                        "for quota type: %d. num_keys: %d",
-				                                                        quotaType, quota_info[quotaType].num_keys)));
+				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+				                errmsg("[diskquota] tablespace Oid MUST NOT be NULL for quota type: %d. num_keys: %d",
+				                       quotaType, quota_info[quotaType].num_keys)));
 			}
 			update_limit_for_quota(quota_limit_mb * (1 << 20), segratio, quotaType, (Oid[]){targetOid});
 		} else
@@ -1599,11 +1574,10 @@ export_exceeded_error(GlobalBlackMapEntry *entry, bool skip_name)
 			break;
 		case NAMESPACE_TABLESPACE_QUOTA:
 			if (entry->segexceeded)
-				ereport(ERROR,
-				        (errcode(ERRCODE_DISK_FULL), errmsg("tablespace:%s schema:%s diskquota exceeded "
-				                                            "per segment quota",
-				                                            GetTablespaceName(blackentry->tablespaceoid, skip_name),
-				                                            GetNamespaceName(blackentry->targetoid, skip_name))));
+				ereport(ERROR, (errcode(ERRCODE_DISK_FULL),
+				                errmsg("tablespace:%s schema:%s diskquota exceeded per segment quota",
+				                       GetTablespaceName(blackentry->tablespaceoid, skip_name),
+				                       GetNamespaceName(blackentry->targetoid, skip_name))));
 			else
 				ereport(ERROR,
 				        (errcode(ERRCODE_DISK_FULL), errmsg("tablespace:%s schema:%s diskquota exceeded",
@@ -1612,11 +1586,10 @@ export_exceeded_error(GlobalBlackMapEntry *entry, bool skip_name)
 			break;
 		case ROLE_TABLESPACE_QUOTA:
 			if (entry->segexceeded)
-				ereport(ERROR,
-				        (errcode(ERRCODE_DISK_FULL), errmsg("tablespace:%s role:%s diskquota exceeded per "
-				                                            "segment quota",
-				                                            GetTablespaceName(blackentry->tablespaceoid, skip_name),
-				                                            GetUserName(blackentry->targetoid, skip_name))));
+				ereport(ERROR, (errcode(ERRCODE_DISK_FULL),
+				                errmsg("tablespace:%s role:%s diskquota exceeded per segment quota",
+				                       GetTablespaceName(blackentry->tablespaceoid, skip_name),
+				                       GetUserName(blackentry->targetoid, skip_name))));
 			else
 				ereport(ERROR,
 				        (errcode(ERRCODE_DISK_FULL), errmsg("tablespace:%s role:%s diskquota exceeded",
@@ -1638,8 +1611,8 @@ export_exceeded_error(GlobalBlackMapEntry *entry, bool skip_name)
  * entries dispatched from diskquota worker from QD. If the relation should be
  * blocked, we then add its relfilenode together with the toast, toast index,
  * appendonly, appendonly index relations' relfilenodes to the global blackmap.
- * Note that, this UDF is called on segment servers by diskquota worker on QD
- * and the global blackmap on segment servers is indexed by relfilenode.
+ * Note that, this UDF is called on segment servers by diskquota worker on QD and
+ * the global blackmap on segment servers is indexed by relfilenode.
  */
 PG_FUNCTION_INFO_V1(refresh_blackmap);
 Datum
@@ -1677,15 +1650,13 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 
 	ret_code = SPI_connect();
 	if (ret_code != SPI_OK_CONNECT)
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("unable to connect to execute internal query, "
-		                                                        "return code: %d",
-		                                                        ret_code)));
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+		                errmsg("unable to connect to execute internal query, return code: %d", ret_code)));
 
 	/*
-	 * Secondly, iterate over blackmap entries and add these entries to the
-	 * local black map on segment servers so that we are able to check whether
-	 * the given relation (by oid) should be blacked in O(1) time complexity in
-	 * third step.
+	 * Secondly, iterate over blackmap entries and add these entries to the local black map
+	 * on segment servers so that we are able to check whether the given relation (by oid)
+	 * should be blacked in O(1) time complexity in third step.
 	 */
 	memset(&hashctl, 0, sizeof(hashctl));
 	hashctl.keysize   = sizeof(BlackMapEntry);
@@ -1695,11 +1666,10 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 
 	/*
 	 * Since uncommitted relations' information and the global blackmap entries
-	 * are cached in shared memory. The memory regions are guarded by
-	 * lightweight locks. In order not to hold multiple locks at the same time,
-	 * We add blackmap entries into the local_blackmap below and then flush the
-	 * content of the local_blackmap to the global blackmap at the end of this
-	 * UDF.
+	 * are cached in shared memory. The memory regions are guarded by lightweight
+	 * locks. In order not to hold multiple locks at the same time, We add blackmap
+	 * entries into the local_blackmap below and then flush the content of the
+	 * local_blackmap to the global blackmap at the end of this UDF.
 	 */
 	local_blackmap = hash_create("local_blackmap", 1024, &hashctl, HASH_ELEM | HASH_CONTEXT | HASH_FUNCTION);
 	get_typlenbyvalalign(blackmap_elem_type, &elem_width, &elem_type_by_val, &elem_alignment_code);
@@ -1730,10 +1700,9 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 	}
 
 	/*
-	 * Thirdly, iterate over the active oid list. Check that if the relation
-	 * should be blocked. If the relation should be blocked, we insert the
-	 * toast, toast index, appendonly, appendonly index relations to the global
-	 * black map.
+	 * Thirdly, iterate over the active oid list. Check that if the relation should be blocked.
+	 * If the relation should be blocked, we insert the toast, toast index, appendonly, appendonly
+	 * index relations to the global black map.
 	 */
 	get_typlenbyvalalign(active_oid_elem_type, &elem_width, &elem_type_by_val, &elem_alignment_code);
 	deconstruct_array(active_oid_array_type, active_oid_elem_type, elem_width, elem_type_by_val, elem_alignment_code,
@@ -1765,10 +1734,9 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 				if (found && blackmapentry)
 				{
 					/*
-					 * If the current relation is blocked, we should add the
-					 * relfilenode of itself together with the relfilenodes of
-					 * its toast relation and appendonly relations to the global
-					 * black map.
+					 * If the current relation is blocked, we should add the relfilenode
+					 * of itself together with the relfilenodes of its toast relation and
+					 * appendonly relations to the global black map.
 					 */
 					List     *oid_list       = NIL;
 					ListCell *cell           = NULL;
@@ -1778,16 +1746,14 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 					Oid       aovisimaprelid = InvalidOid;
 					oid_list                 = lappend_oid(oid_list, active_oid);
 
-					/* Append toast relation and toast index to the oid_list if
-					 * any. */
+					/* Append toast relation and toast index to the oid_list if any. */
 					if (OidIsValid(toastrelid))
 					{
 						oid_list = lappend_oid(oid_list, toastrelid);
 						oid_list = list_concat(oid_list, diskquota_get_index_list(toastrelid));
 					}
 
-					/* Append ao auxiliary relations and their indexes to the
-					 * oid_list if any. */
+					/* Append ao auxiliary relations and their indexes to the oid_list if any. */
 					diskquota_get_appendonly_aux_oid_list(active_oid, &aosegrelid, &aoblkdirrelid, &aovisimaprelid);
 					if (OidIsValid(aosegrelid))
 					{
@@ -1805,8 +1771,7 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 						oid_list = list_concat(oid_list, diskquota_get_index_list(aovisimaprelid));
 					}
 
-					/* Iterate over the oid_list and add their relfilenodes to
-					 * the blackmap. */
+					/* Iterate over the oid_list and add their relfilenodes to the blackmap. */
 					foreach (cell, oid_list)
 					{
 						Oid       curr_oid   = lfirst_oid(cell);
@@ -1836,8 +1801,8 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 						}
 					}
 					/*
-					 * The current relation may satisfy multiple blocking
-					 * conditions, we only add it once.
+					 * The current relation may satisfy multiple blocking conditions,
+					 * we only add it once.
 					 */
 					break;
 				}
@@ -1845,8 +1810,8 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 		} else
 		{
 			/*
-			 * We cannot fetch the relation from syscache. It may be an
-			 * uncommitted relation. Let's try to fetch it from relation_cache.
+			 * We cannot fetch the relation from syscache. It may be an uncommitted relation.
+			 * Let's try to fetch it from relation_cache.
 			 */
 			DiskQuotaRelationCacheEntry *relation_cache_entry;
 			bool                         found;
@@ -1869,8 +1834,7 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 						List     *oid_list = NIL;
 						ListCell *cell     = NULL;
 
-						/* Collect the relation oid together with its auxiliary
-						 * relations' oid. */
+						/* Collect the relation oid together with its auxiliary relations' oid. */
 						oid_list = lappend_oid(oid_list, active_oid);
 						for (int auxoidcnt = 0; auxoidcnt < relation_cache_entry->auxrel_num; ++auxoidcnt)
 							oid_list = lappend_oid(oid_list, relation_cache_entry->auxrel_oid[auxoidcnt]);
@@ -1915,8 +1879,8 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 		new_entry = hash_search(disk_quota_black_map, &blackmapentry->keyitem, HASH_ENTER_NULL, &found);
 		/*
 		 * We don't perform soft-limit on segment servers, so we don't flush the
-		 * blackmap entry with a valid targetoid to the global blackmap on
-		 * segment servers.
+		 * blackmap entry with a valid targetoid to the global blackmap on segment
+		 * servers.
 		 */
 		if (!found && new_entry && !OidIsValid(blackmapentry->keyitem.targetoid))
 			memcpy(new_entry, blackmapentry, sizeof(GlobalBlackMapEntry));
@@ -1970,8 +1934,7 @@ show_blackmap(PG_FUNCTION_ARGS)
 
 		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
 
-		/* Create a local hash table and fill it with entries from shared
-		 * memory. */
+		/* Create a local hash table and fill it with entries from shared memory. */
 		memset(&hashctl, 0, sizeof(hashctl));
 		hashctl.keysize   = sizeof(BlackMapEntry);
 		hashctl.entrysize = sizeof(GlobalBlackMapEntry);

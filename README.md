@@ -159,6 +159,19 @@ If you have `git-clang-format` installed, it can be as easy as:
 git clang-format <base-branch>
 ```
 
+To skip formatting a certain piece of code:
+
+```c
+/* clang-format off */
+#if SOME_MACRO
+#define DO_NOT_FORMAT_ME \
+    (1 \
+    + \
+    )\
+#endif
+/* clang-format on */
+```
+
 # Usage
 1. Set/update/delete schema quota limit using diskquota.set_schema_quota
 ```

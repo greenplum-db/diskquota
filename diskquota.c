@@ -249,9 +249,7 @@ disk_quota_worker_main(Datum main_arg)
 {
 	char *dbname = MyBgworkerEntry->bgw_name;
 
-	ereport(LOG, (errmsg("[diskquota] start disk quota worker process to "
-	                     "monitor database:%s",
-	                     dbname)));
+	ereport(LOG, (errmsg("[diskquota] start disk quota worker process to monitor database:%s", dbname)));
 
 	/* Establish signal handlers before unblocking signals. */
 	pqsignal(SIGHUP, disk_quota_sighup);
@@ -289,9 +287,7 @@ disk_quota_worker_main(Datum main_arg)
 
 		if (has_error)
 		{
-			static char _errfmt[] =
-			        "find issues in pg_class.pg_extension check server log. "
-			        "waited %d seconds",
+			static char _errfmt[] = "find issues in pg_class.pg_extension check server log. waited %d seconds",
 			            _errmsg[sizeof(_errfmt) + sizeof("2147483647" /* INT_MAX */) + 1] = {};
 			snprintf(_errmsg, sizeof(_errmsg), _errfmt, times * diskquota_naptime);
 
@@ -303,10 +299,8 @@ disk_quota_worker_main(Datum main_arg)
 		}
 
 		ereportif(!has_error && times == 0, WARNING,
-		          (errmsg("[diskquota] worker for \"%s\" detected the "
-		                  "installed version is \"%d.%d\", "
-		                  "but current version is %s. abort due to version not "
-		                  "match",
+		          (errmsg("[diskquota] worker for \"%s\" detected the installed version is \"%d.%d\", "
+		                  "but current version is %s. abort due to version not match",
 		                  dbname, major, minor, DISKQUOTA_VERSION),
 		           errhint("run alter extension diskquota update to \"%d.%d\"", DISKQUOTA_MAJOR_VERSION,
 		                   DISKQUOTA_MINOR_VERSION)));
@@ -316,9 +310,7 @@ disk_quota_worker_main(Datum main_arg)
 		ResetLatch(&MyProc->procLatch);
 		if (rc & WL_POSTMASTER_DEATH)
 		{
-			ereport(LOG, (errmsg("[diskquota] bgworker for \"%s\" is being "
-			                     "terminated by postmaster death.",
-			                     dbname)));
+			ereport(LOG, (errmsg("[diskquota] bgworker for \"%s\" is being terminated by postmaster death.", dbname)));
 			proc_exit(-1);
 		}
 
@@ -353,16 +345,13 @@ disk_quota_worker_main(Datum main_arg)
 		rc = WaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH, diskquota_naptime * 1000L);
 		ResetLatch(&MyProc->procLatch);
 
-		// be nice to scheduler when naptime == 0 and diskquota_is_paused() ==
-		// true
+		// be nice to scheduler when naptime == 0 and diskquota_is_paused() == true
 		if (!diskquota_naptime) usleep(1);
 
 		/* Emergency bailout if postmaster has died */
 		if (rc & WL_POSTMASTER_DEATH)
 		{
-			ereport(LOG, (errmsg("[diskquota] bgworker for \"%s\" is being "
-			                     "terminated by postmaster death.",
-			                     dbname)));
+			ereport(LOG, (errmsg("[diskquota] bgworker for \"%s\" is being terminated by postmaster death.", dbname)));
 			proc_exit(1);
 		}
 
@@ -377,9 +366,7 @@ disk_quota_worker_main(Datum main_arg)
 	/* if received sigterm, just exit the worker process */
 	if (got_sigterm)
 	{
-		ereport(LOG, (errmsg("[diskquota] bgworker for \"%s\" is being "
-		                     "terminated by SIGTERM.",
-		                     dbname)));
+		ereport(LOG, (errmsg("[diskquota] bgworker for \"%s\" is being terminated by SIGTERM.", dbname)));
 		/* clear the out-of-quota blacklist in shared memory */
 		invalidate_database_blackmap(MyDatabaseId);
 		proc_exit(0);
@@ -407,16 +394,13 @@ disk_quota_worker_main(Datum main_arg)
 		rc = WaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH, diskquota_naptime * 1000L);
 		ResetLatch(&MyProc->procLatch);
 
-		// be nice to scheduler when naptime == 0 and diskquota_is_paused() ==
-		// true
+		// be nice to scheduler when naptime == 0 and diskquota_is_paused() == true
 		if (!diskquota_naptime) usleep(1);
 
 		/* Emergency bailout if postmaster has died */
 		if (rc & WL_POSTMASTER_DEATH)
 		{
-			ereport(LOG, (errmsg("[diskquota] bgworker for \"%s\" is being "
-			                     "terminated by postmaster death.",
-			                     dbname)));
+			ereport(LOG, (errmsg("[diskquota] bgworker for \"%s\" is being terminated by postmaster death.", dbname)));
 			proc_exit(1);
 		}
 
@@ -435,9 +419,7 @@ disk_quota_worker_main(Datum main_arg)
 		worker_increase_epoch(MyDatabaseId);
 	}
 
-	ereport(LOG, (errmsg("[diskquota] bgworker for \"%s\" is being terminated "
-	                     "by SIGTERM.",
-	                     dbname)));
+	ereport(LOG, (errmsg("[diskquota] bgworker for \"%s\" is being terminated by SIGTERM.", dbname)));
 	/* clear the out-of-quota blacklist in shared memory */
 	invalidate_database_blackmap(MyDatabaseId);
 	proc_exit(0);
@@ -526,8 +508,7 @@ disk_quota_launcher_main(Datum main_arg)
 		/* Emergency bailout if postmaster has died */
 		if (rc & WL_POSTMASTER_DEATH)
 		{
-			ereport(LOG, (errmsg("[diskquota launcher] launcher is being "
-			                     "terminated by postmaster death.")));
+			ereport(LOG, (errmsg("[diskquota launcher] launcher is being terminated by postmaster death.")));
 			proc_exit(1);
 		}
 
@@ -552,15 +533,13 @@ disk_quota_launcher_main(Datum main_arg)
 		loop_end   = time(NULL);
 		if (isAbnormalLoopTime(loop_end - loop_begin))
 		{
-			ereport(WARNING, (errmsg("[diskquota launcher] loop takes too much time "
-			                         "%d/%d",
+			ereport(WARNING, (errmsg("[diskquota launcher] loop takes too much time %d/%d",
 			                         (int)(loop_end - loop_begin), diskquota_naptime)));
 		}
 	}
 
 	/* terminate all the diskquota worker processes before launcher exit */
-	ereport(LOG, (errmsg("[diskquota launcher] launcher is being terminated by "
-	                     "SIGTERM.")));
+	ereport(LOG, (errmsg("[diskquota launcher] launcher is being terminated by SIGTERM.")));
 	terminate_all_workers();
 	proc_exit(0);
 }
@@ -582,8 +561,7 @@ create_monitor_db_table(void)
 	bool        ret                = true;
 
 	sql = "create schema if not exists diskquota_namespace;"
-	      "create table if not exists diskquota_namespace.database_list(dbid "
-	      "oid not null unique);";
+	      "create table if not exists diskquota_namespace.database_list(dbid oid not null unique);";
 
 	StartTransactionCommand();
 
@@ -597,24 +575,22 @@ create_monitor_db_table(void)
 		int ret_code = SPI_connect();
 		if (ret_code != SPI_OK_CONNECT)
 		{
-			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota launcher] unable to connect to "
-			                                                        "execute internal query. return code: %d.",
-			                                                        ret_code)));
+			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+			                errmsg("[diskquota launcher] unable to connect to execute internal query. return code: %d.",
+			                       ret_code)));
 		}
 		connected = true;
 		PushActiveSnapshot(GetTransactionSnapshot());
 		pushed_active_snap = true;
 
-		/* debug_query_string need to be set for SPI_execute utility functions.
-		 */
+		/* debug_query_string need to be set for SPI_execute utility functions. */
 		debug_query_string = sql;
 
 		ret_code = SPI_execute(sql, false, 0);
 		if (ret_code != SPI_OK_UTILITY)
 		{
-			ereport(ERROR, (errmsg("[diskquota launcher] SPI_execute error, "
-			                       "sql: \"%s\", errno: %d, ret_code: %d.",
-			                       sql, errno, ret_code)));
+			ereport(ERROR, (errmsg("[diskquota launcher] SPI_execute error, sql: \"%s\", errno: %d, ret_code: %d.", sql,
+			                       errno, ret_code)));
 		}
 	}
 	PG_CATCH();
@@ -660,22 +636,18 @@ start_workers_from_dblist(void)
 	PushActiveSnapshot(GetTransactionSnapshot());
 	ret = SPI_connect();
 	if (ret != SPI_OK_CONNECT)
-		ereport(ERROR, (errmsg("[diskquota launcher] SPI connect error, errno: "
-		                       "%d, return code: %d.",
-		                       errno, ret)));
+		ereport(ERROR, (errmsg("[diskquota launcher] SPI connect error, errno: %d, return code: %d.", errno, ret)));
 	ret = SPI_execute("select dbid from diskquota_namespace.database_list;", true, 0);
 	if (ret != SPI_OK_SELECT)
-		ereport(ERROR, (errmsg("[diskquota launcher] 'select "
-		                       "diskquota_namespace.database_list', errno: %d, "
-		                       "return code: %d",
-		                       errno, ret)));
+		ereport(ERROR,
+		        (errmsg("[diskquota launcher] 'select diskquota_namespace.database_list', errno: %d, return code: %d",
+		                errno, ret)));
 	tupdesc = SPI_tuptable->tupdesc;
 	if (tupdesc->natts != 1 || tupdesc->attrs[0]->atttypid != OIDOID)
 	{
 		ereport(LOG, (errmsg("[diskquota launcher], natts/atttypid: %d.",
 		                     tupdesc->natts != 1 ? tupdesc->natts : tupdesc->attrs[0]->atttypid)));
-		ereport(ERROR, (errmsg("[diskquota launcher] table database_list "
-		                       "corrupt, laucher will exit. natts: ")));
+		ereport(ERROR, (errmsg("[diskquota launcher] table database_list corrupt, laucher will exit. natts: ")));
 	}
 
 	for (i = 0; i < SPI_processed; i++)
@@ -687,22 +659,17 @@ start_workers_from_dblist(void)
 
 		tup = SPI_tuptable->vals[i];
 		dat = SPI_getbinval(tup, tupdesc, 1, &isnull);
-		if (isnull)
-			ereport(ERROR, (errmsg("[diskquota launcher] dbid cann't be null "
-			                       "in table database_list")));
+		if (isnull) ereport(ERROR, (errmsg("[diskquota launcher] dbid cann't be null in table database_list")));
 		dbid = DatumGetObjectId(dat);
 		if (!is_valid_dbid(dbid))
 		{
-			ereport(LOG, (errmsg("[diskquota launcher] database(oid:%u) in "
-			                     "table database_list is not a valid database",
+			ereport(LOG, (errmsg("[diskquota launcher] database(oid:%u) in table database_list is not a valid database",
 			                     dbid)));
 			continue;
 		}
 		ereport(WARNING, (errmsg("[diskquota launcher] start workers")));
 		if (!start_worker_by_dboid(dbid))
-			ereport(ERROR, (errmsg("[diskquota launcher] start worker process "
-			                       "of database(oid:%u) failed",
-			                       dbid)));
+			ereport(ERROR, (errmsg("[diskquota launcher] start worker process of database(oid:%u) failed", dbid)));
 		num++;
 
 		/*
@@ -711,8 +678,7 @@ start_workers_from_dblist(void)
 		 */
 		if (num >= MAX_NUM_MONITORED_DB)
 		{
-			ereport(LOG, (errmsg("[diskquota launcher] diskquota monitored "
-			                     "database limit is reached, database(oid:%u) "
+			ereport(LOG, (errmsg("[diskquota launcher] diskquota monitored database limit is reached, database(oid:%u) "
 			                     "will not enable diskquota",
 			                     dbid)));
 			break;
@@ -727,9 +693,9 @@ start_workers_from_dblist(void)
 }
 
 /*
- * This function is called by launcher process to handle message from other
- * backend processes which call CREATE/DROP EXTENSION diskquota; It must be able
- * to catch errors, and return an error code back to the backend process.
+ * This function is called by launcher process to handle message from other backend
+ * processes which call CREATE/DROP EXTENSION diskquota; It must be able to catch errors,
+ * and return an error code back to the backend process.
  */
 static void
 process_extension_ddl_message()
@@ -744,8 +710,7 @@ process_extension_ddl_message()
 	/* create/drop extension message must be valid */
 	if (local_extension_ddl_message.req_pid == 0 || local_extension_ddl_message.launcher_pid != MyProcPid) return;
 
-	ereport(LOG, (errmsg("[diskquota launcher]: received create/drop extension "
-	                     "diskquota message")));
+	ereport(LOG, (errmsg("[diskquota launcher]: received create/drop extension diskquota message")));
 
 	do_process_extension_ddl_message(&code, local_extension_ddl_message);
 
@@ -784,9 +749,8 @@ do_process_extension_ddl_message(MessageResult *code, ExtensionDDLMessage local_
 		int ret_code = SPI_connect();
 		if (ret_code != SPI_OK_CONNECT)
 		{
-			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("unable to connect to execute internal "
-			                                                        "query. return code: %d.",
-			                                                        ret_code)));
+			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+			                errmsg("unable to connect to execute internal query. return code: %d.", ret_code)));
 		}
 		connected = true;
 		PushActiveSnapshot(GetTransactionSnapshot());
@@ -805,8 +769,7 @@ do_process_extension_ddl_message(MessageResult *code, ExtensionDDLMessage local_
 				*code = ERR_OK;
 				break;
 			default:
-				ereport(LOG, (errmsg("[diskquota launcher]:received "
-				                     "unsupported message cmd=%d",
+				ereport(LOG, (errmsg("[diskquota launcher]:received unsupported message cmd=%d",
 				                     local_extension_ddl_message.cmd)));
 				*code = ERR_UNKNOWN;
 				break;
@@ -925,15 +888,13 @@ add_dbid_to_database_list(Oid dbid)
 	                            true, 0);
 
 	if (ret != SPI_OK_SELECT)
-		ereport(ERROR, (errmsg("[diskquota launcher] error occured while "
-		                       "checking database_list, "
+		ereport(ERROR, (errmsg("[diskquota launcher] error occured while checking database_list, "
 		                       " code = %d errno = %d",
 		                       ret, errno)));
 
 	if (SPI_processed == 1)
 	{
-		ereport(WARNING, (errmsg("[diskquota launcher] database id %d is "
-		                         "already actived, "
+		ereport(WARNING, (errmsg("[diskquota launcher] database id %d is already actived, "
 		                         "skip database_list update",
 		                         dbid)));
 		return;
@@ -943,8 +904,7 @@ add_dbid_to_database_list(Oid dbid)
 	                            0);
 
 	if (ret != SPI_OK_INSERT || SPI_processed != 1)
-		ereport(ERROR, (errmsg("[diskquota launcher] error occured while "
-		                       "updating database_list, "
+		ereport(ERROR, (errmsg("[diskquota launcher] error occured while updating database_list, "
 		                       " code = %d errno = %d",
 		                       ret, errno)));
 
@@ -968,9 +928,8 @@ del_dbid_from_database_list(Oid dbid)
 	ret = SPI_execute(str.data, false, 0);
 	if (ret != SPI_OK_DELETE)
 	{
-		ereport(ERROR, (errmsg("[diskquota launcher] SPI_execute sql: \"%s\", "
-		                       "errno: %d, ret_code: %d.",
-		                       str.data, errno, ret)));
+		ereport(ERROR, (errmsg("[diskquota launcher] SPI_execute sql: \"%s\", errno: %d, ret_code: %d.", str.data,
+		                       errno, ret)));
 	}
 	pfree(str.data);
 }
@@ -1119,8 +1078,7 @@ start_worker_by_dboid(Oid dbid)
 	if (status == BGWH_POSTMASTER_DIED)
 		ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_RESOURCES),
 		                errmsg("cannot start background processes without postmaster"),
-		                errhint("Kill all remaining database processes and restart "
-		                        "the database.")));
+		                errhint("Kill all remaining database processes and restart the database.")));
 
 	Assert(status == BGWH_STARTED);
 
@@ -1212,8 +1170,7 @@ diskquota_status_check_soft_limit()
 	}
 	LWLockRelease(diskquota_locks.worker_map_lock);
 
-	// if worker no booted, aka 'CREATE EXTENSION' not called, diskquota is
-	// paused
+	// if worker no booted, aka 'CREATE EXTENSION' not called, diskquota is paused
 	if (!found) return "paused";
 
 	// if worker booted, check 'worker_map->is_paused'
@@ -1239,8 +1196,8 @@ diskquota_status_check_hard_limit()
 	}
 	LWLockRelease(diskquota_locks.worker_map_lock);
 
-	// if worker booted and 'worker_map->is_paused == true' and hardlimit is
-	// enabled hard limits should also paused
+	// if worker booted and 'worker_map->is_paused == true' and hardlimit is enabled
+	// hard limits should also paused
 	if (found && paused && hardlimit) return "paused";
 
 	return hardlimit ? "enabled" : "disabled";
@@ -1265,9 +1222,8 @@ diskquota_status_schema_version()
 
 	if (ret != SPI_OK_SELECT || SPI_processed != 1)
 	{
-		ereport(WARNING, (errmsg("[diskquota] when reading installed version "
-		                         "lines %ld code = %d",
-		                         SPI_processed, ret)));
+		ereport(WARNING,
+		        (errmsg("[diskquota] when reading installed version lines %ld code = %d", SPI_processed, ret)));
 		goto out;
 	}
 
@@ -1283,8 +1239,7 @@ diskquota_status_schema_version()
 	char *vv = TextDatumGetCString(v);
 	if (vv == NULL)
 	{
-		ereport(WARNING, (errmsg("[diskquota] 'extversion' is empty in "
-		                         "pg_class.pg_extension. may catalog corrupted")));
+		ereport(WARNING, (errmsg("[diskquota] 'extversion' is empty in pg_class.pg_extension. may catalog corrupted")));
 		goto out;
 	}
 
@@ -1372,8 +1327,7 @@ check_for_timeout(TimestampTz start_time)
 }
 
 // Checks if the bgworker for the current database works as expected.
-// 1. If it returns successfully in `diskquota.naptime`, the bgworker works as
-// expected.
+// 1. If it returns successfully in `diskquota.naptime`, the bgworker works as expected.
 // 2. If it does not terminate, there must be some issues with the bgworker.
 //    In this case, we must ensure this UDF can be interrupted by the user.
 PG_FUNCTION_INFO_V1(wait_for_worker_new_epoch);
