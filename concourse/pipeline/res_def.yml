@@ -150,13 +150,13 @@ resources:
   source:
     bucket: ((gcs-bucket))
     json_key: ((concourse-gcs-resources-service-account-key))
-    regexp: server/release-candidates/gpdb6/greenplum-db-server-(.*)-centos7.04.tar.gz
+    regexp: server/release-candidates/gpdb6/greenplum-db-server-(.*)-centos7.tar.gz
 - name: bin_gpdb6_rhel8
   type: gcs
   source:
     bucket: ((gcs-bucket))
     json_key: ((concourse-gcs-resources-service-account-key))
-    regexp: server/release-candidates/gpdb6/greenplum-db-server-(.*)-rhel8.04.tar.gz
+    regexp: server/release-candidates/gpdb6/greenplum-db-server-(.*)-rhel8.tar.gz
 - name: bin_gpdb6_ubuntu18
   type: gcs
   source:
