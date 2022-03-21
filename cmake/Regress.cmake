@@ -17,7 +17,7 @@
 # A bunch of diff targets will be created as well for comparing the regress results. The diff
 # target names like diff_<regress_target_name>_<casename>
 #
-# Use RUN_TIMES to specify how many time the regress tests should be executed. A negative RUN_TIMES
+# Use RUN_TIMES to specify how many times the regress tests should be executed. A negative RUN_TIMES
 # will run the test infinite times.
 #
 # NOTE: To use this cmake file in another project, below files needs to be placed alongside:
