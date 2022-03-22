@@ -1218,7 +1218,8 @@ worker_spi_get_extension_version(int *major, int *minor)
 	{
 		ereport(WARNING,
 		        (errmsg("[diskquota] when reading installed version lines %ld code = %d", SPI_processed, ret)));
-		return -1;
+		ret = -1;
+		goto out;
 	}
 
 	bool  is_null = false;
@@ -1230,7 +1231,8 @@ worker_spi_get_extension_version(int *major, int *minor)
 	{
 		ereport(WARNING,
 		        (errmsg("[diskquota] 'extversion' is empty in pg_class.pg_extension. catalog might be corrupted")));
-		return -1;
+		ret = -1;
+		goto out;
 	}
 
 	ret = sscanf(version, "%d.%d", major, minor);
@@ -1240,7 +1242,8 @@ worker_spi_get_extension_version(int *major, int *minor)
 		ereport(WARNING, (errmsg("[diskquota] 'extversion' is '%s' in pg_class.pg_extension which is not valid format. "
 		                         "catalog might be corrupted",
 		                         version)));
-		return -1;
+		ret = -1;
+		goto out;
 	}
 
 	ret = 0;
