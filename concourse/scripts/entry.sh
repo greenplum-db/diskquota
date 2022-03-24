@@ -168,6 +168,10 @@ case "$1" in
         ln -s /home/gpadmin/bin_diskquota /home/gpadmin/diskquota_artifacts
         create_fake_gpdb_src
         # Create GPDB cluster
+
+        export WITH_MIRRORS=false
+        export WITH_STANDBY=false
+        export BLDWRAP_POSTGRES_CONF_ADDONS=wal_level=minimal,max_wal_senders=0,gp_dispatch_keepalives_idle=30,gp_dispatch_keepalives_interval=10,gp_dispatch_keepalives_count=4
         source "/home/gpadmin/gpdb_src/concourse/scripts/common.bash"
         make_cluster
         # To make fly debug easier
