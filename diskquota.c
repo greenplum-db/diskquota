@@ -399,9 +399,13 @@ disk_quota_worker_main(Datum main_arg)
 		 */
 		rc = WaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH, diskquota_naptime * 1000L);
 		ResetLatch(&MyProc->procLatch);
+		static bool flag = false;
+		if (flag) {
+			palloc(1024);
+		}
 
 		// be nice to scheduler when naptime == 0 and diskquota_is_paused() == true
-		if (!diskquota_naptime) usleep(1);
+		//if (!diskquota_naptime) usleep(1);
 
 		/* Emergency bailout if postmaster has died */
 		if (rc & WL_POSTMASTER_DEATH)
@@ -420,9 +424,17 @@ disk_quota_worker_main(Datum main_arg)
 		SIMPLE_FAULT_INJECTOR("diskquota_worker_main");
 
 		/* Do the work */
-		if (!diskquota_is_paused()) refresh_disk_quota_model(false);
+
+		if (!diskquota_is_paused()) {
+			//START_MEMORY_ACCOUNT(MemoryAccounting_CreateAccount(0, MEMORY_OWNER_TYPE_Top));
+			{
+				refresh_disk_quota_model(false);
+			}
+			//END_MEMORY_ACCOUNT();
+		}
 
 		worker_increase_epoch(MyDatabaseId);
+		MemoryAccounting_Reset();
 	}
 
 	ereport(LOG, (errmsg("[diskquota] bgworker for \"%s\" is being terminated by SIGTERM.", dbname)));
