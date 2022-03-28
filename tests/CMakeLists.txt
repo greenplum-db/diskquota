@@ -12,8 +12,7 @@ list(APPEND exclude_isolation2_for_release
     test_truncate
     test_worker_timeout)
 else()
-    set(load_inject_fault_opts
-        --dbname=contrib_regression)
+    set(load_inject_fault_opts --load-extension=gp_inject_fault)
 endif()
 
 RegressTarget_Add(regress
