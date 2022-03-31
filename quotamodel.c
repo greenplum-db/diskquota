@@ -1221,7 +1221,7 @@ static void
 do_load_quotas(void)
 {
 	int       ret;
-	TupleDesc tupdesc;
+	TupleDesc tupdesc = NULL;
 	int       i;
 
 	/*
@@ -1243,10 +1243,10 @@ do_load_quotas(void)
 	if (ret != SPI_OK_SELECT)
 		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 		                errmsg("[diskquota] load_quotas SPI_execute failed: error code %d", ret)));
-
+	
 	tupdesc = SPI_tuptable->tupdesc;
-	if (tupdesc->natts != NUM_QUOTA_CONFIG_ATTRS || ((tupdesc)->attrs[0])->atttypid != OIDOID ||
-	    ((tupdesc)->attrs[1])->atttypid != INT4OID || ((tupdesc)->attrs[2])->atttypid != INT8OID)
+	if (tupdesc && (tupdesc->natts != NUM_QUOTA_CONFIG_ATTRS || ((tupdesc)->attrs[0])->atttypid != OIDOID ||
+	    ((tupdesc)->attrs[1])->atttypid != INT4OID || ((tupdesc)->attrs[2])->atttypid != INT8OID))
 	{
 		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
 		                errmsg("[diskquota] configuration table is corrupted in database \"%s\","

@@ -677,6 +677,8 @@ get_active_tables_oid(void)
 		rnode.spcNode = active_table_file_entry->tablespaceoid;
 		relOid        = get_relid_by_relfilenode(rnode);
 
+		elog(WARNING, "get_active_tables_oid: relfilenode = %u, relid = %u", relOid, rnode.relNode);
+
 		if (relOid != InvalidOid)
 		{
 			prelid             = get_primary_table_oid(relOid, true);
@@ -689,7 +691,10 @@ get_active_tables_oid(void)
 				active_table_entry->segid     = -1;
 			}
 			if (!is_relation_being_altered(relOid))
+			{
 				hash_search(local_active_table_file_map, active_table_file_entry, HASH_REMOVE, NULL);
+				elog(WARNING, "relation removed from active table map.");
+			}
 		}
 	}
 

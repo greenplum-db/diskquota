@@ -254,6 +254,7 @@ define_guc_variables(void)
 void
 disk_quota_worker_main(Datum main_arg)
 {
+	optimizer = false;
 	char *dbname = MyBgworkerEntry->bgw_name;
 
 	ereport(LOG, (errmsg("[diskquota] start disk quota worker process to monitor database:%s", dbname)));
@@ -425,6 +426,7 @@ disk_quota_worker_main(Datum main_arg)
 		if (!diskquota_is_paused()) refresh_disk_quota_model(false);
 
 		worker_increase_epoch(MyDatabaseId);
+		MemoryAccounting_Reset();
 	}
 
 	ereport(LOG, (errmsg("[diskquota] bgworker for \"%s\" is being terminated by SIGTERM.", dbname)));
