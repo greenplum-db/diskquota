@@ -1,3 +1,7 @@
+--start_ignore
+DROP SCHEMA s7 CASCADE;
+--end_ignore
+
 -- Test truncate
 CREATE SCHEMA s7;
 SELECT diskquota.set_schema_quota('s7', '1 MB');
@@ -15,7 +19,4 @@ SELECT diskquota.wait_for_worker_new_epoch();
 INSERT INTO a SELECT generate_series(1,30);
 INSERT INTO b SELECT generate_series(1,30);
 
-DROP TABLE a, b;
 RESET search_path;
-DROP SCHEMA s7;
-
