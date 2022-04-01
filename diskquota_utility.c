@@ -127,20 +127,20 @@ init_table_size_table(PG_FUNCTION_ARGS)
 	if (ret != SPI_OK_UTILITY) elog(ERROR, "cannot truncate table_size table: error code %d", ret);
 
 	ret = SPI_execute(
-	        "INSERT INTO "
-	        "  diskquota.table_size "
+	        // "INSERT INTO "
+	        // "  diskquota.table_size "
 	        "WITH all_size AS "
 	        "  ("
 	        "    SELECT diskquota.pull_all_table_size() AS a FROM gp_dist_random('gp_id')"
 	        "  ) "
 	        "SELECT (a).* FROM all_size",
 	        false, 0);
-	if (ret != SPI_OK_INSERT) elog(ERROR, "cannot insert into table_size table: error code %d", ret);
+	if (ret != SPI_OK_SELECT) elog(ERROR, "cannot insert into table_size table: error code %d", ret);
 
 	/* size is the sum of size on master and on all segments when segid == -1. */
 	ret = SPI_execute(
-	        "INSERT INTO "
-	        "  diskquota.table_size "
+	        // "INSERT INTO "
+	        // "  diskquota.table_size "
 	        "WITH total_size AS "
 	        "  ("
 	        "    SELECT * from diskquota.pull_all_table_size()"
@@ -149,7 +149,7 @@ init_table_size_table(PG_FUNCTION_ARGS)
 	        "  ) "
 	        "SELECT tableid, sum(size) as size, -1 as segid FROM total_size GROUP BY tableid;",
 	        false, 0);
-	if (ret != SPI_OK_INSERT) elog(ERROR, "cannot insert into table_size table: error code %d", ret);
+	if (ret != SPI_OK_SELECT) elog(ERROR, "cannot insert into table_size table: error code %d", ret);
 
 	/* set diskquota state to ready. */
 	ret = SPI_execute_with_args("update diskquota.state set state = $1", 1,
