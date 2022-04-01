@@ -1181,10 +1181,10 @@ diskquota_status_check_soft_limit()
 	LWLockRelease(diskquota_locks.worker_map_lock);
 
 	// if worker no booted, aka 'CREATE EXTENSION' not called, diskquota is paused
-	if (!found) return "off";
+	if (!found) return "paused";
 
 	// if worker booted, check 'worker_map->is_paused'
-	return paused ? "off" : "on";
+	return paused ? "paused" : "on";
 }
 
 static const char *
@@ -1208,9 +1208,9 @@ diskquota_status_check_hard_limit()
 
 	// if worker booted and 'worker_map->is_paused == true' and hardlimit is enabled
 	// hard limits should also paused
-	if (found && paused && hardlimit) return "off";
+	if (found && paused && hardlimit) return "paused";
 
-	return hardlimit ? "off" : "off";
+	return hardlimit ? "on" : "off";
 }
 
 static const char *

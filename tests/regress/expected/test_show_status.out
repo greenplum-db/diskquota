@@ -11,7 +11,7 @@ select * from diskquota.status() where name not like '%version';
     name     | status 
 -------------+--------
  soft limits | on
- hard limits | off
+ hard limits | on
 (2 rows)
 
 \! gpconfig -c "diskquota.hard_limit" -v "off" > /dev/null
@@ -30,7 +30,7 @@ select from diskquota.pause();
 select * from diskquota.status() where name not like '%version';
     name     | status 
 -------------+--------
- soft limits | off
+ soft limits | paused
  hard limits | off
 (2 rows)
 
@@ -39,8 +39,8 @@ select * from diskquota.status() where name not like '%version';
 select * from diskquota.status() where name not like '%version';
     name     | status 
 -------------+--------
- soft limits | off
- hard limits | off
+ soft limits | paused
+ hard limits | paused
 (2 rows)
 
 \! gpconfig -c "diskquota.hard_limit" -v "off" > /dev/null
@@ -48,7 +48,7 @@ select * from diskquota.status() where name not like '%version';
 select * from diskquota.status() where name not like '%version';
     name     | status 
 -------------+--------
- soft limits | off
+ soft limits | paused
  hard limits | off
 (2 rows)
 
