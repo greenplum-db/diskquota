@@ -321,6 +321,8 @@ gp_fetch_active_tables(bool is_init)
 		local_active_table_oid_maps = pull_active_list_from_seg();
 		active_oid_list             = convert_map_to_string(local_active_table_oid_maps);
 
+		elog(WARNING, "active_old_list = %s", active_oid_list.data);
+
 		/* step 2: fetch active table sizes based on active oids */
 		pull_active_table_size_from_seg(local_table_stats_map, active_oid_list.data);
 
@@ -677,7 +679,7 @@ get_active_tables_oid(void)
 		rnode.spcNode = active_table_file_entry->tablespaceoid;
 		relOid        = get_relid_by_relfilenode(rnode);
 
-		elog(WARNING, "get_active_tables_oid: relfilenode = %u, relid = %u", relOid, rnode.relNode);
+		elog(WARNING, "get_active_tables_oid: relfilenode = %u, relid = %u", rnode.relNode, relOid);
 
 		if (relOid != InvalidOid)
 		{

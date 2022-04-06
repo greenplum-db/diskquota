@@ -51,6 +51,9 @@ get_relid_by_relfilenode(RelFileNode relfilenode)
 	Oid relid;
 
 	relid = RelidByRelfilenode(relfilenode.spcNode, relfilenode.relNode);
+
+	elog(WARNING, "get_active_tables_oid committed: relfilenode = %u, relid = %u", relfilenode.relNode, relid);
+
 	if (OidIsValid(relid))
 	{
 		remove_cache_entry(InvalidOid, relfilenode.relNode);
