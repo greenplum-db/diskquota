@@ -579,6 +579,8 @@ do_calculate_table_size(DiskQuotaRelationCacheEntry *entry)
 	get_relfilenode_by_relid(entry->relid, &rnode, &relstorage);
 	tablesize += calculate_relation_size_all_forks(&rnode, relstorage);
 
+	elog(WARNING, "do_calculate_table_size: relid = %u, relfilenode = %u, size= %ld", entry->relid, rnode.node.relNode, tablesize);
+
 	for (i = 0; i < entry->auxrel_num; i++)
 	{
 		subrelid = entry->auxrel_oid[i];
