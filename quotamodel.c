@@ -112,7 +112,8 @@ struct QuotaInfo quota_info[NUM_QUOTA_TYPES] = {
                                         .num_keys  = 2,
                                         .sys_cache = (Oid[]){AUTHOID, TABLESPACEOID},
                                         .map       = NULL},
-        [TABLESPACE_QUOTA]           = {.map_name = "Tablespace map", .num_keys = 1, .sys_cache = (Oid[]){TABLESPACEOID}, .map = NULL}};
+        [TABLESPACE_QUOTA]           = {
+                          .map_name = "Tablespace map", .num_keys = 1, .sys_cache = (Oid[]){TABLESPACEOID}, .map = NULL}};
 
 /* global blacklist for which exceed their quota limit */
 struct BlackMapEntry
