@@ -833,7 +833,6 @@ static void
 set_quota_config_internal(Oid targetoid, int64 quota_limit_mb, QuotaType type, float4 segratio, Oid spcoid)
 {
 	int ret;
-	int rows;
 
 	/*
 	 * If error happens in set_quota_config_internal, just return error messages to
@@ -852,7 +851,6 @@ set_quota_config_internal(Oid targetoid, int64 quota_limit_mb, QuotaType type, f
 	                            },
 	                            NULL, true, 0);
 	if (ret != SPI_OK_SELECT) elog(ERROR, "cannot select quota setting table: error code %d", ret);
-	rows = SPI_processed;
 
 	if (to_delete_quota(type, quota_limit_mb, segratio))
 	{
@@ -875,9 +873,9 @@ set_quota_config_internal(Oid targetoid, int64 quota_limit_mb, QuotaType type, f
 	// to upsert quota_config
 	else
 	{
-		if (segratio == INVALID_SEGRATIO) segratio = get_per_segment_ratio(spcoid);
-		if (rows == 0)
+		if (SPI_processed == 0)
 		{
+			if (segratio == INVALID_SEGRATIO) segratio = get_per_segment_ratio(spcoid);
 			ret = SPI_execute_with_args("insert into diskquota.quota_config values($1, $2, $3, $4)", 4,
 			                            (Oid[]){
 			                                    OIDOID,
