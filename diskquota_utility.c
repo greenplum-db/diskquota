@@ -854,7 +854,7 @@ set_quota_config_internal(Oid targetoid, int64 quota_limit_mb, QuotaType type, f
 
 	if (to_delete_quota(type, quota_limit_mb, segratio))
 	{
-		if (rows > 0)
+		if (SPI_processed > 0)
 		{
 			ret = SPI_execute_with_args("delete from diskquota.quota_config where targetoid = $1 and quotatype = $2", 2,
 			                            (Oid[]){
