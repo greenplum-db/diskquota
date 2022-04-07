@@ -65,6 +65,15 @@ PG_FUNCTION_INFO_V1(pull_all_table_size);
 
 /* timeout count to wait response from launcher process, in 1/10 sec */
 #define WAIT_TIME_COUNT 1200
+/*
+ * three types values for "quota" column in "quota_config" table:
+ * 1) more than 0: valid value
+ * 2) equal to 0: meaningless value, rejected by diskquota UDF
+ * 3) less than 0: to delete the quota config in the table
+ *
+ * the values for segratio column are the same as quota column
+ *
+ */
 #define DEFAULT_SEGRATIO -1.0
 #define INVALID_SEGRATIO 0.0
 #define INVALID_QUOTA 0
