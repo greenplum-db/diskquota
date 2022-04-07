@@ -121,6 +121,6 @@ fi
 echo ""
 echo "================================================================================"
 echo "Remeber to set the the webhook URL on GitHub:"
-echo "https://extensions.ci.gpdb.pivotal.io/api/v1/teams/main/pipelines/${pipeline_name}/resources/${hook_res}/check/webhook?webhook_token=<hook_token>"
+echo "https://<target>.ci.gpdb.pivotal.io/api/v1/teams/main/pipelines/${pipeline_name}/resources/${hook_res}/check/webhook?webhook_token=<hook_token>"
 echo "You may need to change the base URL if a differnt concourse server is used."
 echo "================================================================================"
