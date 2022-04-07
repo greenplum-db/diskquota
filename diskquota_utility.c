@@ -699,7 +699,9 @@ set_role_quota(PG_FUNCTION_ARGS)
 	{
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("disk quota can not be set to 0 MB")));
 	}
+	SPI_connect();
 	set_quota_config_internal(roleoid, quota_limit_mb, ROLE_QUOTA, DEFAULT_SEGRATIO, InvalidOid);
+	SPI_finish();
 	PG_RETURN_VOID();
 }
 
@@ -731,7 +733,9 @@ set_schema_quota(PG_FUNCTION_ARGS)
 	{
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("disk quota can not be set to 0 MB")));
 	}
+	SPI_connect();
 	set_quota_config_internal(namespaceoid, quota_limit_mb, NAMESPACE_QUOTA, DEFAULT_SEGRATIO, InvalidOid);
+	SPI_finish();
 	PG_RETURN_VOID();
 }
 
@@ -773,8 +777,10 @@ set_role_tablespace_quota(PG_FUNCTION_ARGS)
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("disk quota can not be set to 0 MB")));
 	}
 
+	SPI_connect();
 	set_target_internal(roleoid, spcoid, quota_limit_mb, ROLE_TABLESPACE_QUOTA);
 	set_quota_config_internal(roleoid, quota_limit_mb, ROLE_TABLESPACE_QUOTA, INVALID_SEGRATIO, spcoid);
+	SPI_finish();
 	PG_RETURN_VOID();
 }
 
@@ -816,8 +822,10 @@ set_schema_tablespace_quota(PG_FUNCTION_ARGS)
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("disk quota can not be set to 0 MB")));
 	}
 
+	SPI_connect();
 	set_target_internal(namespaceoid, spcoid, quota_limit_mb, NAMESPACE_TABLESPACE_QUOTA);
 	set_quota_config_internal(namespaceoid, quota_limit_mb, NAMESPACE_TABLESPACE_QUOTA, INVALID_SEGRATIO, spcoid);
+	SPI_finish();
 	PG_RETURN_VOID();
 }
 
@@ -838,7 +846,6 @@ set_quota_config_internal(Oid targetoid, int64 quota_limit_mb, QuotaType type, f
 	 * If error happens in set_quota_config_internal, just return error messages to
 	 * the client side. So there is no need to catch the error.
 	 */
-	SPI_connect();
 
 	ret = SPI_execute_with_args("select true from diskquota.quota_config where targetoid = $1 and quotatype = $2", 2,
 	                            (Oid[]){
@@ -935,10 +942,6 @@ set_quota_config_internal(Oid targetoid, int64 quota_limit_mb, QuotaType type, f
 		}
 	}
 
-	/*
-	 * And finish our transaction.
-	 */
-	SPI_finish();
 	return;
 }
 
@@ -951,7 +954,6 @@ set_target_internal(Oid primaryoid, Oid spcoid, int64 quota_limit_mb, QuotaType 
 	 * If error happens in set_target_internal, just return error messages to
 	 * the client side. So there is no need to catch the error.
 	 */
-	SPI_connect();
 
 	ret = SPI_execute_with_args(
 	        "select true from diskquota.quota_config as q, diskquota.target as t"
@@ -1007,10 +1009,6 @@ set_target_internal(Oid primaryoid, Oid spcoid, int64 quota_limit_mb, QuotaType 
 	}
 	/* No need to update the target table */
 
-	/*
-	 * And finish our transaction.
-	 */
-	SPI_finish();
 	return;
 }
 
@@ -1197,6 +1195,22 @@ set_per_segment_quota(PG_FUNCTION_ARGS)
 		ratio = -1;
 	}
 
+	if (SPI_OK_CONNECT != SPI_connect())
+	{
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("unable to connect to execute internal query")));
+	}
+	/*
+	 * lock table quota_config table in exlusive mode
+	 *
+	 * Firstly insert the segratio with TABLESPACE_QUOTA
+	 * row into the table(ROWSHARE lock), then udpate the
+	 * segratio for TABLESPACE_SHCEMA/ROLE_QUOTA rows
+	 * (EXLUSIZE lock), if we don't lock the table in
+	 * exlusive mode first, deadlock will heappen.
+	 */
+	ret = SPI_execute("LOCK TABLE diskquota.quota_config IN MODE EXLUSIVE", false, 0);
+	if (ret != SPI_OK_UTILITY) elog(ERROR, "cannot lock quota_config table, error code %d", ret);
+
 	/*
 	 * insert/update/detele tablespace ratio config in the quota_config table
 	 * for TABLESPACE_QUOTA, it doesn't store any quota info, just used to
@@ -1204,10 +1218,6 @@ set_per_segment_quota(PG_FUNCTION_ARGS)
 	 */
 	set_quota_config_internal(spcoid, INVALID_QUOTA, TABLESPACE_QUOTA, ratio, InvalidOid);
 
-	if (SPI_OK_CONNECT != SPI_connect())
-	{
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("unable to connect to execute internal query")));
-	}
 	/*
 	 * UPDATEA NAMESPACE_TABLESPACE_PERSEG_QUOTA AND ROLE_TABLESPACE_PERSEG_QUOTA config for this tablespace
 	 */
