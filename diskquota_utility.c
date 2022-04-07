@@ -1208,7 +1208,7 @@ set_per_segment_quota(PG_FUNCTION_ARGS)
 	 * (EXLUSIZE lock), if we don't lock the table in
 	 * exlusive mode first, deadlock will heappen.
 	 */
-	ret = SPI_execute("LOCK TABLE diskquota.quota_config IN MODE EXLUSIVE", false, 0);
+	ret = SPI_execute("LOCK TABLE diskquota.quota_config IN EXCLUSIVE MODE", false, 0);
 	if (ret != SPI_OK_UTILITY) elog(ERROR, "cannot lock quota_config table, error code %d", ret);
 
 	/*
