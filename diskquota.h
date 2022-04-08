@@ -21,7 +21,7 @@
 /* TABLESPACE_QUOTA
  * used to store the tablespace segratio value in quota_config
  * table. It doesn't store valid disk quota.
- * When set_per_segment_quota("xx","1.0) is called, a new
+ * When set_per_segment_quota("xx",1.0) is called, a new
  * config will be added like:
  *
  *  97103 |         4 |            0 |        1
