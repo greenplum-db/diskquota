@@ -211,7 +211,7 @@ COMMIT
 SELECT segratio from diskquota.quota_config, pg_namespace where targetoid = oid and nspname = 's101';
  segratio 
 ----------
- -1.0     
+ 0.0      
 (1 row)
 SELECT segratio from diskquota.quota_config, pg_tablespace where targetoid = oid and spcname = 'spc101';
  segratio 
@@ -252,7 +252,7 @@ COMMIT
 SELECT segratio from diskquota.quota_config, pg_namespace where targetoid = oid and nspname = 's101';
  segratio 
 ----------
- -1.0     
+ 0.0      
 (1 row)
 SELECT segratio from diskquota.quota_config, pg_tablespace where targetoid = oid and spcname = 'spc101';
  segratio 

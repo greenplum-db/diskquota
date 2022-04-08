@@ -68,13 +68,20 @@ PG_FUNCTION_INFO_V1(pull_all_table_size);
 /*
  * three types values for "quota" column in "quota_config" table:
  * 1) more than 0: valid value
- * 2) equal to 0: meaningless value, rejected by diskquota UDF
+ * 2) 0: meaningless value, rejected by diskquota UDF
  * 3) less than 0: to delete the quota config in the table
  *
  * the values for segratio column are the same as quota column
  *
+ * In quota_config table,
+ * 1) when quota type is "TABLESPACE_QUOTA",
+ *    the quota column value is always INVALID_QUOTA
+ * 2) when quota type is "NAMESPACE_TABLESPACE_QUOTA" or "ROLE_TABLESPACE_QUOTA"
+ *    and no segratio configed for the tablespace, the segratio value is
+ *    INVALID_SEGRATIO.
+ * 3) when quota type is "NAMESPACE_QUOTA" or "ROLE_QUOTA", the segratio is
+ *    always INVALID_SEGRATIO.
  */
-#define DEFAULT_SEGRATIO -1.0
 #define INVALID_SEGRATIO 0.0
 #define INVALID_QUOTA 0
 
@@ -709,7 +716,7 @@ set_role_quota(PG_FUNCTION_ARGS)
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("disk quota can not be set to 0 MB")));
 	}
 	SPI_connect();
-	set_quota_config_internal(roleoid, quota_limit_mb, ROLE_QUOTA, DEFAULT_SEGRATIO, InvalidOid);
+	set_quota_config_internal(roleoid, quota_limit_mb, ROLE_QUOTA, INVALID_SEGRATIO, InvalidOid);
 	SPI_finish();
 	PG_RETURN_VOID();
 }
@@ -743,7 +750,7 @@ set_schema_quota(PG_FUNCTION_ARGS)
 		ereport(ERROR, (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("disk quota can not be set to 0 MB")));
 	}
 	SPI_connect();
-	set_quota_config_internal(namespaceoid, quota_limit_mb, NAMESPACE_QUOTA, DEFAULT_SEGRATIO, InvalidOid);
+	set_quota_config_internal(namespaceoid, quota_limit_mb, NAMESPACE_QUOTA, INVALID_SEGRATIO, InvalidOid);
 	SPI_finish();
 	PG_RETURN_VOID();
 }
@@ -891,7 +898,7 @@ set_quota_config_internal(Oid targetoid, int64 quota_limit_mb, QuotaType type, f
 	{
 		if (SPI_processed == 0)
 		{
-			if (segratio == INVALID_SEGRATIO) segratio = get_per_segment_ratio(spcoid);
+			if (segratio == INVALID_SEGRATIO && !(type == ROLE_QUOTA || type == NAMESPACE_QUOTA)) segratio = get_per_segment_ratio(spcoid);
 			ret = SPI_execute_with_args("insert into diskquota.quota_config values($1, $2, $3, $4)", 4,
 			                            (Oid[]){
 			                                    OIDOID,
@@ -1198,12 +1205,6 @@ set_per_segment_quota(PG_FUNCTION_ARGS)
 	ereportif(ratio == 0, ERROR,
 	          (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("per segment quota ratio can not be set to 0")));
 
-	/* set to default ratio value */
-	if (ratio < 0)
-	{
-		ratio = -1;
-	}
-
 	if (SPI_OK_CONNECT != SPI_connect())
 	{
 		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("unable to connect to execute internal query")));
@@ -1230,6 +1231,13 @@ set_per_segment_quota(PG_FUNCTION_ARGS)
 	/*
 	 * UPDATEA NAMESPACE_TABLESPACE_PERSEG_QUOTA AND ROLE_TABLESPACE_PERSEG_QUOTA config for this tablespace
 	 */
+
+	/* set to invalid ratio value if the tablespace per segment quota deleted */
+	if (ratio < 0)
+	{
+		ratio = INVALID_SEGRATIO;
+	}
+
 	ret = SPI_execute_with_args(
 	        "UPDATE diskquota.quota_config AS q set segratio = $1 FROM diskquota.target AS t WHERE "
 	        "q.targetOid = t.primaryOid AND (t.quotaType = $2 OR t.quotaType = $3) AND t.quotaType = "
@@ -1593,7 +1601,7 @@ static float4
 get_per_segment_ratio(Oid spcoid)
 {
 	int    ret;
-	float4 segratio = DEFAULT_SEGRATIO;
+	float4 segratio = INVALID_SEGRATIO;
 
 	if (!OidIsValid(spcoid)) return segratio;
 
