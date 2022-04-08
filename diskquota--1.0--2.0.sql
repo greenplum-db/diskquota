@@ -11,7 +11,7 @@ CREATE TABLE diskquota.target (
 );
 -- TODO ALTER TABLE diskquota.target SET DEPENDS ON EXTENSION diskquota;
 
-ALTER TABLE diskquota.table_size ADD COLUMN segid smallint DEFAULT 0; -- segid = coordinator means table size in cluster level
+ALTER TABLE diskquota.table_size ADD COLUMN segid smallint DEFAULT -1; -- segid = coordinator means table size in cluster level
 ALTER TABLE diskquota.table_size DROP CONSTRAINT table_size_pkey;
 ALTER TABLE diskquota.table_size ADD PRIMARY KEY (tableid, segid);
 ALTER TABLE diskquota.table_size SET WITH (REORGANIZE=true) DISTRIBUTED BY (tableid, segid);
