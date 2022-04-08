@@ -898,7 +898,8 @@ set_quota_config_internal(Oid targetoid, int64 quota_limit_mb, QuotaType type, f
 	{
 		if (SPI_processed == 0)
 		{
-			if (segratio == INVALID_SEGRATIO && !(type == ROLE_QUOTA || type == NAMESPACE_QUOTA)) segratio = get_per_segment_ratio(spcoid);
+			if (segratio == INVALID_SEGRATIO && !(type == ROLE_QUOTA || type == NAMESPACE_QUOTA))
+				segratio = get_per_segment_ratio(spcoid);
 			ret = SPI_execute_with_args("insert into diskquota.quota_config values($1, $2, $3, $4)", 4,
 			                            (Oid[]){
 			                                    OIDOID,
