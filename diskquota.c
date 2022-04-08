@@ -27,6 +27,7 @@
 #include "port/atomics.h"
 #include "storage/ipc.h"
 #include "storage/proc.h"
+#include "storage/sinval.h"
 #include "tcop/idle_resource_cleaner.h"
 #include "tcop/utility.h"
 #include "utils/builtins.h"
@@ -394,6 +395,9 @@ disk_quota_worker_main(Datum main_arg)
 
 		CHECK_FOR_INTERRUPTS();
 
+		/* Allow sinval catchup interrupts while sleeping */
+		EnableCatchupInterrupt();
+
 		/*
 		 * Background workers mustn't call usleep() or any direct equivalent:
 		 * instead, they may wait on their process latch, which sleeps as
@@ -402,6 +406,8 @@ disk_quota_worker_main(Datum main_arg)
 		 */
 		rc = WaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH, diskquota_naptime * 1000L);
 		ResetLatch(&MyProc->procLatch);
+
+		DisableCatchupInterrupt();
 
 		// be nice to scheduler when naptime == 0 and diskquota_is_paused() == true
 		if (!diskquota_naptime) usleep(1);

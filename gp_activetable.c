@@ -28,6 +28,8 @@
 #include "libpq-fe.h"
 #include "utils/faultinjector.h"
 #include "utils/lsyscache.h"
+#include "utils/syscache.h"
+#include "utils/inval.h"
 
 #include "gp_activetable.h"
 #include "diskquota.h"
@@ -387,6 +389,8 @@ diskquota_fetch_table_stat(PG_FUNCTION_ARGS)
 			ereport(ERROR, (errmsg("This function must not be called on master or by user")));
 		}
 
+		AcceptInvalidationMessages();
+
 		switch (mode)
 		{
 			case FETCH_ACTIVE_OID:
@@ -680,9 +684,20 @@ get_active_tables_oid(void)
 		relOid        = get_relid_by_relfilenode(rnode);
 
 		elog(WARNING, "get_active_tables_oid: relfilenode = %u, relid = %u", rnode.relNode, relOid);
+		HeapTuple tp;
 
 		if (relOid != InvalidOid)
 		{
+			tp         = SearchSysCache1(RELOID, ObjectIdGetDatum(relOid));
+			if (HeapTupleIsValid(tp))
+			{
+				Form_pg_class reltup = (Form_pg_class)GETSTRUCT(tp);
+				if (reltup->relfilenode != rnode.relNode)
+				{
+					elog(WARNING, "get_active_tables_oid cache inconsistent: relfilenode = %u", reltup->relfilenode);
+				}
+				ReleaseSysCache(tp);
+			}
 			prelid             = get_primary_table_oid(relOid, true);
 			active_table_entry = hash_search(local_active_table_stats_map, &prelid, HASH_ENTER, &found);
 			if (active_table_entry && !found)
