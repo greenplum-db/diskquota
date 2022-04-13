@@ -8,10 +8,9 @@ CREATE EXTENSION diskquota;
 
 CREATE ROLE r;
 SELECT diskquota.set_role_quota('r', '1MB');
-SELECT diskquota.wait_for_worker_new_epoch();
-
 CREATE TABLE b (t TEXT) DISTRIBUTED BY (t);
 ALTER TABLE b OWNER TO r;
+SELECT diskquota.wait_for_worker_new_epoch();
 
 INSERT INTO b SELECT generate_series(1, 100000); -- fail
 
