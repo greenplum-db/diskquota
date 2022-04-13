@@ -104,7 +104,6 @@ SELECT distinct(segratio) FROM diskquota.quota_config, pg_namespace, diskquota.t
 SELECT diskquota.set_per_segment_quota('schemaspc_perseg2','3');
 
 SELECT distinct(segratio) from diskquota.quota_config, pg_tablespace where targetoid = oid and spcname = 'schemaspc_perseg2';
-<<<<<<< HEAD
 
 SELECT distinct(segratio) FROM diskquota.quota_config, pg_namespace, diskquota.target
  WHERE diskquota.quota_config.targetoid = diskquota.target.rowId AND
