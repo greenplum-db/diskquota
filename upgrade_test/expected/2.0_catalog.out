@@ -43,7 +43,7 @@ ORDER BY
  table_size                             | {int8,int2,int4,oid,oid,tid,xid,xid,cid,cid}
  target                                 | {int4,int4,int4,oid,oid,oid,tid,xid,xid,cid,cid}
  target_rowid_seq                       | {bool,bool,name,int8,int8,int8,int8,int8,int8,int8,int4,oid,tid,xid,xid,cid,cid}
-(15 rows)
+(16 rows)
 
 -- types end
 -- tables
