@@ -25,7 +25,7 @@ SELECT diskquota.set_schema_quota('s', '1 MB');
 SELECT diskquota.wait_for_worker_new_epoch();
 
 CREATE TABLE s.t1(i int) DISTRIBUTED BY (i); -- activetable = 1
-INSERT INTO s.t1 SELECT generate_series(1, 100000); -- ok. diskquota soft limit dose not check when first write
+INSERT INTO s.t1 SELECT generate_series(1, 100000); -- ok. diskquota soft limit does not check when first write
 
 SELECT diskquota.wait_for_worker_new_epoch();
 
@@ -40,7 +40,7 @@ INSERT INTO s.t3 SELECT generate_series(1, 10);  -- expect failed
 --    the real capacity of this data structure based on the hash conflict probability.
 --    so we can not predict when the data structure will be fill in fully.
 --
---    this test case is use less, remove this if anyone dislike it.
+--    this test case is useless, remove this if anyone dislike it.
 --    but the hash capacity is smaller than 6, so the test case works for issue 51
 
 DROP EXTENSION diskquota;
