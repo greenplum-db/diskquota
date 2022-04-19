@@ -1620,7 +1620,6 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 	HASH_SEQ_STATUS      hash_seq;
 	HTAB                *local_blackmap;
 	HASHCTL              hashctl;
-	int                  ret_code;
 
 	if (!superuser())
 		ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE), errmsg("must be superuser to update blackmap")));
@@ -1629,20 +1628,8 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 	if (ARR_NDIM(blackmap_array_type) > 1 || ARR_NDIM(active_oid_array_type) > 1)
 		ereport(ERROR, (errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR), errmsg("1-dimensional array needed")));
 
-	/* Firstly, clear the blackmap entries. */
-	LWLockAcquire(diskquota_locks.black_map_lock, LW_EXCLUSIVE);
-	hash_seq_init(&hash_seq, disk_quota_black_map);
-	while ((blackmapentry = hash_seq_search(&hash_seq)) != NULL)
-		hash_search(disk_quota_black_map, &blackmapentry->keyitem, HASH_REMOVE, NULL);
-	LWLockRelease(diskquota_locks.black_map_lock);
-
-	ret_code = SPI_connect();
-	if (ret_code != SPI_OK_CONNECT)
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-		                errmsg("unable to connect to execute internal query, return code: %d", ret_code)));
-
 	/*
-	 * Secondly, iterate over blackmap entries and add these entries to the local black map
+	 * Iterate over blackmap entries and add these entries to the local black map
 	 * on segment servers so that we are able to check whether the given relation (by oid)
 	 * should be blacked in O(1) time complexity in third step.
 	 */
@@ -1860,6 +1847,12 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 
 	/* Flush the content of local_blackmap to the global blackmap. */
 	LWLockAcquire(diskquota_locks.black_map_lock, LW_EXCLUSIVE);
+
+	/* Clear blackmap entries. */
+	hash_seq_init(&hash_seq, disk_quota_black_map);
+	while ((blackmapentry = hash_seq_search(&hash_seq)) != NULL)
+		hash_search(disk_quota_black_map, &blackmapentry->keyitem, HASH_REMOVE, NULL);
+
 	hash_seq_init(&hash_seq, local_blackmap);
 	while ((blackmapentry = hash_seq_search(&hash_seq)) != NULL)
 	{
@@ -1876,7 +1869,6 @@ refresh_blackmap(PG_FUNCTION_ARGS)
 	}
 	LWLockRelease(diskquota_locks.black_map_lock);
 
-	SPI_finish();
 	PG_RETURN_VOID();
 }
 
