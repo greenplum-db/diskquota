@@ -389,8 +389,6 @@ diskquota_fetch_table_stat(PG_FUNCTION_ARGS)
 			ereport(ERROR, (errmsg("This function must not be called on master or by user")));
 		}
 
-		AcceptInvalidationMessages();
-
 		switch (mode)
 		{
 			case FETCH_ACTIVE_OID:
@@ -683,21 +681,27 @@ get_active_tables_oid(void)
 		rnode.spcNode = active_table_file_entry->tablespaceoid;
 		relOid        = get_relid_by_relfilenode(rnode);
 
-		elog(WARNING, "get_active_tables_oid: relfilenode = %u, relid = %u", rnode.relNode, relOid);
-		HeapTuple tp;
-
 		if (relOid != InvalidOid)
 		{
-			tp         = SearchSysCache1(RELOID, ObjectIdGetDatum(relOid));
-			if (HeapTupleIsValid(tp))
-			{
-				Form_pg_class reltup = (Form_pg_class)GETSTRUCT(tp);
-				if (reltup->relfilenode != rnode.relNode)
-				{
-					elog(WARNING, "get_active_tables_oid cache inconsistent: relfilenode = %u", reltup->relfilenode);
-				}
-				ReleaseSysCache(tp);
-			}
+			/* 
+			 * Since we don't take any lock on relation, check for cache 
+			 * invalidation messages manually to minimize risk of cache 
+			 * inconsistency.
+			 */
+			AcceptInvalidationMessages();
+			HeapTuple tp         = SearchSysCache1(RELOID, ObjectIdGetDatum(relOid));
+			if (!HeapTupleIsValid(tp)) continue;
+			Form_pg_class reltup = (Form_pg_class)GETSTRUCT(tp);
+
+			/* 
+			 * If cache invalidation messages are not delievered in time, the
+			 * relfilenode in the tuple of the relation is stale. In that case,
+			 * the relfilenode in the relation tuple is not equal to the one in
+			 * the active table map.
+			 */
+			bool is_relfilenode_stale = reltup->relfilenode != rnode.relNode;
+			ReleaseSysCache(tp);
+
 			prelid             = get_primary_table_oid(relOid, true);
 			active_table_entry = hash_search(local_active_table_stats_map, &prelid, HASH_ENTER, &found);
 			if (active_table_entry && !found)
@@ -707,10 +711,14 @@ get_active_tables_oid(void)
 				active_table_entry->tablesize = 0;
 				active_table_entry->segid     = -1;
 			}
-			if (!is_relation_being_altered(relOid))
+			/* 
+			 * Do NOT remove relation from the active table map if it is being
+			 * altered or its relfilenode is stale so that we can check it 
+			 * again in the next epoch.
+			 */
+			if (!is_relation_being_altered(relOid) && !is_relfilenode_stale)
 			{
 				hash_search(local_active_table_file_map, active_table_file_entry, HASH_REMOVE, NULL);
-				elog(WARNING, "relation removed from active table map.");
 			}
 		}
 	}
