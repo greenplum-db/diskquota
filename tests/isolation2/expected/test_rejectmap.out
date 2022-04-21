@@ -48,13 +48,13 @@ SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'reset', dbid)
 
 -- Session 1 will return and emit an error message saying that the quota limit is exceeded on seg0.
 1<:  <... completed>
-ERROR:  schema's disk space quota exceeded with name: 2200  (seg0 127.0.0.1:6002 pid=4675)
+ERROR:  schema's disk space quota exceeded with name: 2200  (seg0 127.0.0.1:6002 pid=2163)
 
 -- Clean up the rejectmap on seg0.
 SELECT diskquota.refresh_rejectmap( ARRAY[]::diskquota.rejectmap_entry[], ARRAY[]::oid[]) FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
  refresh_rejectmap 
-------------------
-                  
+-------------------
+                   
 (1 row)
 
 -- 2. Test canceling the extending of a toast relation.
@@ -87,13 +87,13 @@ SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'reset', dbid)
 
 -- Session 1 will return and emit an error message saying that the quota limit is exceeded on seg0.
 1<:  <... completed>
-ERROR:  schema's disk space quota exceeded with name: 2200  (seg0 127.0.0.1:6002 pid=4675)
+ERROR:  schema's disk space quota exceeded with name: 2200  (seg0 127.0.0.1:6002 pid=2163)
 
 -- Clean up the rejectmap on seg0.
 SELECT diskquota.refresh_rejectmap( ARRAY[]::diskquota.rejectmap_entry[], ARRAY[]::oid[]) FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
  refresh_rejectmap 
-------------------
-                  
+-------------------
+                   
 (1 row)
 
 -- 3. Test canceling the extending of an appendonly relation.
@@ -126,13 +126,13 @@ SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'reset', dbid)
 
 -- Session 1 will return and emit an error message saying that the quota limit is exceeded on seg0.
 1<:  <... completed>
-ERROR:  schema's disk space quota exceeded with name: 2200  (seg0 127.0.0.1:6002 pid=4675)
+ERROR:  schema's disk space quota exceeded with name: 2200  (seg0 127.0.0.1:6002 pid=2163)
 
 -- Clean up the rejectmap on seg0.
 SELECT diskquota.refresh_rejectmap( ARRAY[]::diskquota.rejectmap_entry[], ARRAY[]::oid[]) FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
  refresh_rejectmap 
-------------------
-                  
+-------------------
+                   
 (1 row)
 
 -- 4. Test canceling the extending of an index relation.
@@ -167,13 +167,13 @@ SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'reset', dbid)
 
 -- Session 1 will return and emit an error message saying that the quota limit is exceeded on seg0.
 1<:  <... completed>
-ERROR:  schema's disk space quota exceeded with name: 2200  (seg0 127.0.0.1:6002 pid=4675)
+ERROR:  schema's disk space quota exceeded with name: 2200  (seg0 127.0.0.1:6002 pid=2163)
 
 -- Clean up the rejectmap on seg0.
 SELECT diskquota.refresh_rejectmap( ARRAY[]::diskquota.rejectmap_entry[], ARRAY[]::oid[]) FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
  refresh_rejectmap 
-------------------
-                  
+-------------------
+                   
 (1 row)
 
 -- 5. Test error message for NAMESPACE_TABLESPACE_QUOTA when the quota limit is exceeded on segments.
@@ -199,12 +199,12 @@ SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'reset', dbid)
  Success:                 
 (1 row)
 1<:  <... completed>
-ERROR:  tablespace: 1663, schema: 2200 diskquota exceeded per segment quota  (seg0 127.0.0.1:6002 pid=4675)
+ERROR:  tablespace: 1663, schema: 2200 diskquota exceeded per segment quota  (seg0 127.0.0.1:6002 pid=2163)
 -- Clean up the rejectmap on seg0.
 SELECT diskquota.refresh_rejectmap( ARRAY[]::diskquota.rejectmap_entry[], ARRAY[]::oid[]) FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
  refresh_rejectmap 
-------------------
-                  
+-------------------
+                   
 (1 row)
 
 -- 6. Test error message for ROLE_TABLESPACE_QUOTA when the quota limit is exceeded on segments.
@@ -230,12 +230,12 @@ SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'reset', dbid)
  Success:                 
 (1 row)
 1<:  <... completed>
-ERROR:  tablespace: 1663, role: 10 diskquota exceeded per segment quota  (seg0 127.0.0.1:6002 pid=4675)
+ERROR:  tablespace: 1663, role: 10 diskquota exceeded per segment quota  (seg0 127.0.0.1:6002 pid=2163)
 -- Clean up the rejectmap on seg0.
 SELECT diskquota.refresh_rejectmap( ARRAY[]::diskquota.rejectmap_entry[], ARRAY[]::oid[]) FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
  refresh_rejectmap 
-------------------
-                  
+-------------------
+                   
 (1 row)
 
 -- Do some clean-ups.
@@ -314,14 +314,14 @@ SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'reset', dbid)
  Success:                 
 (1 row)
 1<:  <... completed>
-ERROR:  schema's disk space quota exceeded with name: 2200  (seg0 127.0.0.1:6002 pid=4675)
+ERROR:  schema's disk space quota exceeded with name: 2200  (seg0 127.0.0.1:6002 pid=2163)
 1: ABORT;
 ABORT
 -- Clean up the rejectmap on seg0.
 SELECT diskquota.refresh_rejectmap( ARRAY[]::diskquota.rejectmap_entry[], ARRAY[]::oid[]) FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
  refresh_rejectmap 
-------------------
-                  
+-------------------
+                   
 (1 row)
 
 -- 8. Test that we are able to block an ordinary relation on seg0 by its relowner.
@@ -359,14 +359,14 @@ SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'reset', dbid)
  Success:                 
 (1 row)
 1<:  <... completed>
-ERROR:  role's disk space quota exceeded with name: 10  (seg0 127.0.0.1:6002 pid=4675)
+ERROR:  role's disk space quota exceeded with name: 10  (seg0 127.0.0.1:6002 pid=2163)
 1: ABORT;
 ABORT
 -- Clean up the rejectmap on seg0.
 SELECT diskquota.refresh_rejectmap( ARRAY[]::diskquota.rejectmap_entry[], ARRAY[]::oid[]) FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
  refresh_rejectmap 
-------------------
-                  
+-------------------
+                   
 (1 row)
 
 -- 9. Test that we are able to block an ordinary relation on seg0 by its relnamespace and reltablespace.
@@ -404,14 +404,14 @@ SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'reset', dbid)
  Success:                 
 (1 row)
 1<:  <... completed>
-ERROR:  tablespace: 1663, schema: 2200 diskquota exceeded  (seg0 127.0.0.1:6002 pid=4675)
+ERROR:  tablespace: 1663, schema: 2200 diskquota exceeded  (seg0 127.0.0.1:6002 pid=2163)
 1: ABORT;
 ABORT
 -- Clean up the rejectmap on seg0.
 SELECT diskquota.refresh_rejectmap( ARRAY[]::diskquota.rejectmap_entry[], ARRAY[]::oid[]) FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
  refresh_rejectmap 
-------------------
-                  
+-------------------
+                   
 (1 row)
 
 -- 10. Test that we are able to block an ordinary relation on seg0 by its relowner and reltablespace.
@@ -449,14 +449,14 @@ SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'reset', dbid)
  Success:                 
 (1 row)
 1<:  <... completed>
-ERROR:  tablespace: 1663, role: 10 diskquota exceeded  (seg0 127.0.0.1:6002 pid=4675)
+ERROR:  tablespace: 1663, role: 10 diskquota exceeded  (seg0 127.0.0.1:6002 pid=2163)
 1: ABORT;
 ABORT
 -- Clean up the rejectmap on seg0.
 SELECT diskquota.refresh_rejectmap( ARRAY[]::diskquota.rejectmap_entry[], ARRAY[]::oid[]) FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
  refresh_rejectmap 
-------------------
-                  
+-------------------
+                   
 (1 row)
 
 -- 11. Test that we are able to block an ordinary relation on seg0 by its relnamespace and reltablespace (segexceeded=true).
@@ -494,14 +494,14 @@ SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'reset', dbid)
  Success:                 
 (1 row)
 1<:  <... completed>
-ERROR:  tablespace: 1663, schema: 2200 diskquota exceeded per segment quota  (seg0 127.0.0.1:6002 pid=4675)
+ERROR:  tablespace: 1663, schema: 2200 diskquota exceeded per segment quota  (seg0 127.0.0.1:6002 pid=2163)
 1: ABORT;
 ABORT
 -- Clean up the rejectmap on seg0.
 SELECT diskquota.refresh_rejectmap( ARRAY[]::diskquota.rejectmap_entry[], ARRAY[]::oid[]) FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
  refresh_rejectmap 
-------------------
-                  
+-------------------
+                   
 (1 row)
 
 -- 12. Test that we are able to block an ordinary relation on seg0 by its relowner and reltablespace (segexceeded=true).
@@ -539,14 +539,14 @@ SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'reset', dbid)
  Success:                 
 (1 row)
 1<:  <... completed>
-ERROR:  tablespace: 1663, role: 10 diskquota exceeded per segment quota  (seg0 127.0.0.1:6002 pid=4675)
+ERROR:  tablespace: 1663, role: 10 diskquota exceeded per segment quota  (seg0 127.0.0.1:6002 pid=2163)
 1: ABORT;
 ABORT
 -- Clean up the rejectmap on seg0.
 SELECT diskquota.refresh_rejectmap( ARRAY[]::diskquota.rejectmap_entry[], ARRAY[]::oid[]) FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
  refresh_rejectmap 
-------------------
-                  
+-------------------
+                   
 (1 row)
 
 -- 13. Test that we are able to block a toast relation on seg0 by its namespace.
@@ -586,14 +586,14 @@ SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'reset', dbid)
  Success:                 
 (1 row)
 1<:  <... completed>
-ERROR:  schema's disk space quota exceeded with name: 2200  (seg0 127.0.0.1:6002 pid=4675)
+ERROR:  schema's disk space quota exceeded with name: 2200  (seg0 127.0.0.1:6002 pid=2163)
 1: ABORT;
 ABORT
 -- Clean up the rejectmap on seg0.
 SELECT diskquota.refresh_rejectmap( ARRAY[]::diskquota.rejectmap_entry[], ARRAY[]::oid[]) FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
  refresh_rejectmap 
-------------------
-                  
+-------------------
+                   
 (1 row)
 
 -- 14. Test that we are able to block an appendonly relation on seg0 by its namespace.
@@ -634,14 +634,14 @@ SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'reset', dbid)
  Success:                 
 (1 row)
 1<:  <... completed>
-ERROR:  schema's disk space quota exceeded with name: 2200  (seg0 127.0.0.1:6002 pid=4675)
+ERROR:  schema's disk space quota exceeded with name: 2200  (seg0 127.0.0.1:6002 pid=2163)
 1: ABORT;
 ABORT
 -- Clean up the rejectmap on seg0.
 SELECT diskquota.refresh_rejectmap( ARRAY[]::diskquota.rejectmap_entry[], ARRAY[]::oid[]) FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
  refresh_rejectmap 
-------------------
-                  
+-------------------
+                   
 (1 row)
 
 -- 15. Test that we are able to block an appendonly (column oriented) relation on seg0 by its namespace.
@@ -682,14 +682,14 @@ SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'reset', dbid)
  Success:                 
 (1 row)
 1<:  <... completed>
-ERROR:  schema's disk space quota exceeded with name: 2200  (seg0 127.0.0.1:6002 pid=4675)
+ERROR:  schema's disk space quota exceeded with name: 2200  (seg0 127.0.0.1:6002 pid=2163)
 1: ABORT;
 ABORT
 -- Clean up the rejectmap on seg0.
 SELECT diskquota.refresh_rejectmap( ARRAY[]::diskquota.rejectmap_entry[], ARRAY[]::oid[]) FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
  refresh_rejectmap 
-------------------
-                  
+-------------------
+                   
 (1 row)
 
 -- Disable check quota by relfilenode on seg0.
