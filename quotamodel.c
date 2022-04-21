@@ -51,10 +51,10 @@
 /* Number of attributes in quota configuration records. */
 #define NUM_QUOTA_CONFIG_ATTRS 6
 
-typedef struct TableSizeEntry      TableSizeEntry;
-typedef struct NamespaceSizeEntry  NamespaceSizeEntry;
-typedef struct RoleSizeEntry       RoleSizeEntry;
-typedef struct QuotaLimitEntry     QuotaLimitEntry;
+typedef struct TableSizeEntry       TableSizeEntry;
+typedef struct NamespaceSizeEntry   NamespaceSizeEntry;
+typedef struct RoleSizeEntry        RoleSizeEntry;
+typedef struct QuotaLimitEntry      QuotaLimitEntry;
 typedef struct RejectMapEntry       RejectMapEntry;
 typedef struct GlobalRejectMapEntry GlobalRejectMapEntry;
 typedef struct LocalRejectMapEntry  LocalRejectMapEntry;
@@ -95,7 +95,7 @@ struct QuotaInfo
 {
 	char        *map_name;
 	unsigned int num_keys;
-	Oid         *sys_cache;
+	Oid	     *sys_cache;
 	HTAB        *map;
 };
 
@@ -134,7 +134,7 @@ struct RejectMapEntry
 struct GlobalRejectMapEntry
 {
 	RejectMapEntry keyitem;
-	bool          segexceeded;
+	bool           segexceeded;
 	/*
 	 * When the quota limit is exceeded on segment servers,
 	 * we need an extra auxiliary field to preserve the quota
@@ -149,8 +149,8 @@ struct GlobalRejectMapEntry
 struct LocalRejectMapEntry
 {
 	RejectMapEntry keyitem;
-	bool          isexceeded;
-	bool          segexceeded;
+	bool           isexceeded;
+	bool           segexceeded;
 };
 
 /* using hash table to support incremental update the table size entry.*/
@@ -409,7 +409,7 @@ disk_quota_shmem_startup(void)
 	hash_ctl.hash      = tag_hash;
 
 	disk_quota_reject_map = ShmemInitHash("rejectmap whose quota limitation is reached", INIT_DISK_QUOTA_REJECT_ENTRIES,
-	                                     MAX_DISK_QUOTA_REJECT_ENTRIES, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
+	                                      MAX_DISK_QUOTA_REJECT_ENTRIES, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
 
 	init_shm_worker_active_tables();
 
@@ -449,7 +449,7 @@ static void
 init_lwlocks(void)
 {
 	diskquota_locks.active_table_lock          = LWLockAssign();
-	diskquota_locks.reject_map_lock             = LWLockAssign();
+	diskquota_locks.reject_map_lock            = LWLockAssign();
 	diskquota_locks.extension_ddl_message_lock = LWLockAssign();
 	diskquota_locks.extension_ddl_lock         = LWLockAssign();
 	diskquota_locks.monitoring_dbid_cache_lock = LWLockAssign();
@@ -779,8 +779,8 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 	HASH_SEQ_STATUS            iter;
 	DiskQuotaActiveTableEntry *active_table_entry;
 	TableEntryKey              key;
-	List                      *oidlist;
-	ListCell                  *l;
+	List	                  *oidlist;
+	ListCell	              *l;
 
 	/*
 	 * unset is_exist flag for tsentry in table_size_map this is used to
@@ -1052,10 +1052,10 @@ flush_to_table_size(void)
 static void
 flush_local_reject_map(void)
 {
-	HASH_SEQ_STATUS      iter;
+	HASH_SEQ_STATUS       iter;
 	LocalRejectMapEntry  *localrejectentry;
 	GlobalRejectMapEntry *rejectentry;
-	bool                 found;
+	bool                  found;
 
 	LWLockAcquire(diskquota_locks.reject_map_lock, LW_EXCLUSIVE);
 
@@ -1065,7 +1065,7 @@ flush_local_reject_map(void)
 		if (localrejectentry->isexceeded)
 		{
 			rejectentry = (GlobalRejectMapEntry *)hash_search(disk_quota_reject_map, (void *)&localrejectentry->keyitem,
-			                                                HASH_ENTER_NULL, &found);
+			                                                  HASH_ENTER_NULL, &found);
 			if (rejectentry == NULL)
 			{
 				ereport(WARNING, (errmsg("[diskquota] Shared disk quota reject map size limit reached."
@@ -1105,7 +1105,7 @@ static void
 dispatch_rejectmap(HTAB *local_active_table_stat_map)
 {
 	HASH_SEQ_STATUS            hash_seq;
-	GlobalRejectMapEntry       *rejectmap_entry;
+	GlobalRejectMapEntry      *rejectmap_entry;
 	DiskQuotaActiveTableEntry *active_table_entry;
 	int                        num_entries, count = 0;
 	CdbPgResults               cdb_pgresults = {NULL, 0};
@@ -1368,7 +1368,7 @@ get_rel_name_namespace(Oid relid, Oid *nsOid, char *relname)
 static bool
 check_rejectmap_by_relfilenode(RelFileNode relfilenode)
 {
-	bool                 found;
+	bool                  found;
 	RejectMapEntry        keyitem;
 	GlobalRejectMapEntry *entry;
 
@@ -1431,10 +1431,10 @@ prepare_rejectmap_search_key(RejectMapEntry *keyitem, QuotaType type, Oid relown
 static bool
 check_rejectmap_by_reloid(Oid reloid)
 {
-	Oid                  ownerOid      = InvalidOid;
-	Oid                  nsOid         = InvalidOid;
-	Oid                  tablespaceoid = InvalidOid;
-	bool                 found;
+	Oid                   ownerOid      = InvalidOid;
+	Oid                   nsOid         = InvalidOid;
+	Oid                   tablespaceoid = InvalidOid;
+	bool                  found;
 	RejectMapEntry        keyitem;
 	GlobalRejectMapEntry *entry;
 
@@ -1493,7 +1493,7 @@ quota_check_common(Oid reloid, RelFileNode *relfilenode)
 void
 invalidate_database_rejectmap(Oid dbid)
 {
-	RejectMapEntry  *entry;
+	RejectMapEntry *entry;
 	HASH_SEQ_STATUS iter;
 
 	LWLockAcquire(diskquota_locks.reject_map_lock, LW_EXCLUSIVE);
@@ -1604,28 +1604,29 @@ PG_FUNCTION_INFO_V1(refresh_rejectmap);
 Datum
 refresh_rejectmap(PG_FUNCTION_ARGS)
 {
-	ArrayType           *rejectmap_array_type   = PG_GETARG_ARRAYTYPE_P(0);
-	ArrayType           *active_oid_array_type = PG_GETARG_ARRAYTYPE_P(1);
-	Oid                  rejectmap_elem_type    = ARR_ELEMTYPE(rejectmap_array_type);
-	Oid                  active_oid_elem_type  = ARR_ELEMTYPE(active_oid_array_type);
-	Datum               *datums;
-	bool                *nulls;
-	int16                elem_width;
-	bool                 elem_type_by_val;
-	char                 elem_alignment_code;
-	int                  count;
-	HeapTupleHeader      lt;
-	bool                 segexceeded;
+	ArrayType            *rejectmap_array_type  = PG_GETARG_ARRAYTYPE_P(0);
+	ArrayType            *active_oid_array_type = PG_GETARG_ARRAYTYPE_P(1);
+	Oid                   rejectmap_elem_type   = ARR_ELEMTYPE(rejectmap_array_type);
+	Oid                   active_oid_elem_type  = ARR_ELEMTYPE(active_oid_array_type);
+	Datum	            *datums;
+	bool	             *nulls;
+	int16                 elem_width;
+	bool                  elem_type_by_val;
+	char                  elem_alignment_code;
+	int                   count;
+	HeapTupleHeader       lt;
+	bool                  segexceeded;
 	GlobalRejectMapEntry *rejectmapentry;
-	HASH_SEQ_STATUS      hash_seq;
-	HTAB                *local_rejectmap;
-	HASHCTL              hashctl;
-	int                  ret_code;
+	HASH_SEQ_STATUS       hash_seq;
+	HTAB	             *local_rejectmap;
+	HASHCTL               hashctl;
+	int                   ret_code;
 
 	if (!superuser())
 		ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE), errmsg("must be superuser to update rejectmap")));
 	if (IS_QUERY_DISPATCHER())
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("\"refresh_rejectmap()\" can only be executed on QE.")));
+		ereport(ERROR,
+		        (errcode(ERRCODE_INTERNAL_ERROR), errmsg("\"refresh_rejectmap()\" can only be executed on QE.")));
 	if (ARR_NDIM(rejectmap_array_type) > 1 || ARR_NDIM(active_oid_array_type) > 1)
 		ereport(ERROR, (errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR), errmsg("1-dimensional array needed")));
 
@@ -1666,7 +1667,7 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 	for (int i = 0; i < count; ++i)
 	{
 		RejectMapEntry keyitem;
-		bool          isnull;
+		bool           isnull;
 
 		if (nulls[i]) continue;
 
@@ -1707,12 +1708,12 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 		tuple = SearchSysCacheCopy1(RELOID, active_oid);
 		if (HeapTupleIsValid(tuple))
 		{
-			Form_pg_class form          = (Form_pg_class)GETSTRUCT(tuple);
-			Oid           relnamespace  = form->relnamespace;
-			Oid           reltablespace = OidIsValid(form->reltablespace) ? form->reltablespace : MyDatabaseTableSpace;
-			Oid           relowner      = form->relowner;
+			Form_pg_class  form          = (Form_pg_class)GETSTRUCT(tuple);
+			Oid            relnamespace  = form->relnamespace;
+			Oid            reltablespace = OidIsValid(form->reltablespace) ? form->reltablespace : MyDatabaseTableSpace;
+			Oid            relowner      = form->relowner;
 			RejectMapEntry keyitem;
-			bool          found;
+			bool           found;
 
 			for (QuotaType type = 0; type < NUM_QUOTA_TYPES; ++type)
 			{
@@ -1769,10 +1770,10 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 							Form_pg_class curr_form = (Form_pg_class)GETSTRUCT(curr_tuple);
 							Oid curr_reltablespace  = OidIsValid(curr_form->reltablespace) ? curr_form->reltablespace
 							                                                               : MyDatabaseTableSpace;
-							RelFileNode          relfilenode = {.dbNode  = MyDatabaseId,
-							                                    .relNode = curr_form->relfilenode,
-							                                    .spcNode = curr_reltablespace};
-							bool                 found;
+							RelFileNode           relfilenode = {.dbNode  = MyDatabaseId,
+							                                     .relNode = curr_form->relfilenode,
+							                                     .spcNode = curr_reltablespace};
+							bool                  found;
 							GlobalRejectMapEntry *blocked_filenode_entry;
 							RejectMapEntry        blocked_filenode_keyitem;
 
@@ -1808,9 +1809,9 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 			relation_cache_entry = hash_search(relation_cache, &active_oid, HASH_FIND, &found);
 			if (found && relation_cache_entry)
 			{
-				Oid           relnamespace  = relation_cache_entry->namespaceoid;
-				Oid           reltablespace = relation_cache_entry->rnode.node.spcNode;
-				Oid           relowner      = relation_cache_entry->owneroid;
+				Oid            relnamespace  = relation_cache_entry->namespaceoid;
+				Oid            reltablespace = relation_cache_entry->rnode.node.spcNode;
+				Oid            relowner      = relation_cache_entry->owneroid;
 				RejectMapEntry keyitem;
 				for (QuotaType type = 0; type < NUM_QUOTA_TYPES; ++type)
 				{
@@ -1830,10 +1831,10 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 
 						foreach (cell, oid_list)
 						{
-							bool                 found;
+							bool                  found;
 							GlobalRejectMapEntry *blocked_filenode_entry;
 							RejectMapEntry        blocked_filenode_keyitem;
-							Oid                  curr_oid = lfirst_oid(cell);
+							Oid                   curr_oid = lfirst_oid(cell);
 
 							relation_cache_entry = hash_search(relation_cache, &curr_oid, HASH_FIND, &found);
 							if (found && relation_cache_entry)
@@ -1842,8 +1843,8 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 								memcpy(&blocked_filenode_keyitem.relfilenode, &relation_cache_entry->rnode.node,
 								       sizeof(RelFileNode));
 
-								blocked_filenode_entry =
-								        hash_search(local_rejectmap, &blocked_filenode_keyitem, HASH_ENTER_NULL, &found);
+								blocked_filenode_entry = hash_search(local_rejectmap, &blocked_filenode_keyitem,
+								                                     HASH_ENTER_NULL, &found);
 								if (!found && blocked_filenode_entry)
 								{
 									memcpy(&blocked_filenode_entry->auxblockinfo, &keyitem, sizeof(RejectMapEntry));
@@ -1863,7 +1864,7 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 	hash_seq_init(&hash_seq, local_rejectmap);
 	while ((rejectmapentry = hash_seq_search(&hash_seq)) != NULL)
 	{
-		bool                 found;
+		bool                  found;
 		GlobalRejectMapEntry *new_entry;
 		new_entry = hash_search(disk_quota_reject_map, &rejectmapentry->keyitem, HASH_ENTER_NULL, &found);
 		/*
@@ -1889,7 +1890,7 @@ PG_FUNCTION_INFO_V1(show_rejectmap);
 Datum
 show_rejectmap(PG_FUNCTION_ARGS)
 {
-	FuncCallContext     *funcctx;
+	FuncCallContext      *funcctx;
 	GlobalRejectMapEntry *rejectmap_entry;
 	struct RejectMapCtx
 	{
@@ -1939,7 +1940,8 @@ show_rejectmap(PG_FUNCTION_ARGS)
 		while ((rejectmap_entry = hash_seq_search(&hash_seq)) != NULL)
 		{
 			GlobalRejectMapEntry *local_rejectmap_entry = NULL;
-			local_rejectmap_entry = hash_search(rejectmap_ctx->rejectmap, &rejectmap_entry->keyitem, HASH_ENTER_NULL, NULL);
+			local_rejectmap_entry =
+			        hash_search(rejectmap_ctx->rejectmap, &rejectmap_entry->keyitem, HASH_ENTER_NULL, NULL);
 			if (local_rejectmap_entry)
 			{
 				memcpy(&local_rejectmap_entry->keyitem, &rejectmap_entry->keyitem, sizeof(RejectMapEntry));
@@ -1955,19 +1957,19 @@ show_rejectmap(PG_FUNCTION_ARGS)
 		MemoryContextSwitchTo(oldcontext);
 	}
 
-	funcctx      = SRF_PERCALL_SETUP();
+	funcctx       = SRF_PERCALL_SETUP();
 	rejectmap_ctx = (struct RejectMapCtx *)funcctx->user_fctx;
 
 	while ((rejectmap_entry = hash_seq_search(&(rejectmap_ctx->rejectmap_seq))) != NULL)
 	{
 #define _TARGETTYPE_STR_SIZE 32
-		Datum         result;
-		Datum         values[9];
-		bool          nulls[9];
-		HeapTuple     tuple;
+		Datum          result;
+		Datum          values[9];
+		bool           nulls[9];
+		HeapTuple      tuple;
 		RejectMapEntry keyitem;
-		char          targettype_str[_TARGETTYPE_STR_SIZE];
-		RelFileNode   blocked_relfilenode;
+		char           targettype_str[_TARGETTYPE_STR_SIZE];
+		RelFileNode    blocked_relfilenode;
 
 		memcpy(&blocked_relfilenode, &rejectmap_entry->keyitem.relfilenode, sizeof(RelFileNode));
 		/*
