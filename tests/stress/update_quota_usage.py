@@ -14,8 +14,9 @@ def run(db: str, num_tables: int, num_tablespaces: int, enable_diskquota: bool):
     CREATE or replace FUNCTION mkdir_spc(name text)
 RETURNS void
 AS $$
-  import subprocess as sp
-  sp.call(['mkdir', name])
+import os
+if not os.path.exists(name):
+    os.mkdir(name)
 $$ LANGUAGE plpythonu;
     ''')
 
@@ -163,7 +164,7 @@ class Tablespace(Catalog):
 
     def __del__(self):
         self.drop_table()
-        self.exec(f"DROP TABLESPACE {self.get_name()};")
+        self.exec(f"DROP TABLESPACE if exists {self.get_name()};")
 
     def alter_table(self, table_name):
         if not table_name:
