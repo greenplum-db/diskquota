@@ -199,7 +199,7 @@ calculate_all_table_size()
 	Size                       tablesize;
 	RelFileNodeBackend         rnode;
 	TableEntryKey              keyitem;
-	HTAB	                  *local_table_size_map;
+	HTAB                      *local_table_size_map;
 	HASHCTL                    hashctl;
 	DiskQuotaActiveTableEntry *entry;
 	bool                       found;

@@ -41,7 +41,7 @@ PG_FUNCTION_INFO_V1(diskquota_fetch_table_stat);
 /* The results set cache for SRF call*/
 typedef struct DiskQuotaSetOFCache
 {
-	HTAB	       *result;
+	HTAB           *result;
 	HASH_SEQ_STATUS pos;
 } DiskQuotaSetOFCache;
 
@@ -307,9 +307,9 @@ report_active_table_helper(const RelFileNodeBackend *relFileNode)
 HTAB *
 gp_fetch_active_tables(bool is_init)
 {
-	HTAB	      *local_table_stats_map = NULL;
+	HTAB          *local_table_stats_map = NULL;
 	HASHCTL        ctl;
-	HTAB	      *local_active_table_oid_maps;
+	HTAB          *local_active_table_oid_maps;
 	StringInfoData active_oid_list;
 
 	Assert(Gp_role == GP_ROLE_DISPATCH);
@@ -369,7 +369,7 @@ diskquota_fetch_table_stat(PG_FUNCTION_ARGS)
 	AttInMetadata   *attinmeta;
 	bool             isFirstCall = true;
 
-	HTAB	                  *localCacheTable = NULL;
+	HTAB                      *localCacheTable = NULL;
 	DiskQuotaSetOFCache       *cache           = NULL;
 	DiskQuotaActiveTableEntry *results_entry   = NULL;
 
@@ -492,18 +492,18 @@ static HTAB *
 get_active_tables_stats(ArrayType *array)
 {
 	int                        ndim = ARR_NDIM(array);
-	int	                   *dims = ARR_DIMS(array);
+	int                       *dims = ARR_DIMS(array);
 	int                        nitems;
 	int16                      typlen;
 	bool                       typbyval;
 	char                       typalign;
-	char	                  *ptr;
-	bits8	                 *bitmap;
+	char                      *ptr;
+	bits8                     *bitmap;
 	int                        bitmask;
 	int                        i;
 	Oid                        relOid;
 	int                        segId;
-	HTAB	                  *local_table = NULL;
+	HTAB                      *local_table = NULL;
 	HASHCTL                    ctl;
 	TableEntryKey              key;
 	DiskQuotaActiveTableEntry *entry;
@@ -610,13 +610,13 @@ static HTAB *
 get_active_tables_oid(void)
 {
 	HASHCTL                        ctl;
-	HTAB	                      *local_active_table_file_map  = NULL;
-	HTAB	                      *local_active_table_stats_map = NULL;
-	HTAB	                      *local_altered_reloid_cache   = NULL;
+	HTAB                          *local_active_table_file_map  = NULL;
+	HTAB                          *local_active_table_stats_map = NULL;
+	HTAB                          *local_altered_reloid_cache   = NULL;
 	HASH_SEQ_STATUS                iter;
 	DiskQuotaActiveTableFileEntry *active_table_file_entry;
 	DiskQuotaActiveTableEntry     *active_table_entry;
-	Oid	                       *altered_reloid_entry;
+	Oid                           *altered_reloid_entry;
 
 	Oid relOid;
 
@@ -900,8 +900,8 @@ pull_active_list_from_seg(void)
 {
 	CdbPgResults               cdb_pgresults = {NULL, 0};
 	int                        i, j;
-	char	                  *sql                        = NULL;
-	HTAB	                  *local_active_table_oid_map = NULL;
+	char                      *sql                        = NULL;
+	HTAB                      *local_active_table_oid_map = NULL;
 	HASHCTL                    ctl;
 	DiskQuotaActiveTableEntry *entry;
 

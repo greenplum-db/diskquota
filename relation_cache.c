@@ -268,7 +268,7 @@ remove_committed_relation_from_cache(void)
 	HASH_SEQ_STATUS              iter        = {0};
 	DiskQuotaRelationCacheEntry *entry       = NULL;
 	DiskQuotaRelationCacheEntry *local_entry = NULL;
-	HTAB	                    *local_relation_cache;
+	HTAB                        *local_relation_cache;
 	HASHCTL                      ctl;
 
 	memset(&ctl, 0, sizeof(ctl));

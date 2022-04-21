@@ -95,7 +95,7 @@ struct QuotaInfo
 {
 	char        *map_name;
 	unsigned int num_keys;
-	Oid	     *sys_cache;
+	Oid         *sys_cache;
 	HTAB        *map;
 };
 
@@ -779,8 +779,8 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 	HASH_SEQ_STATUS            iter;
 	DiskQuotaActiveTableEntry *active_table_entry;
 	TableEntryKey              key;
-	List	                  *oidlist;
-	ListCell	              *l;
+	List                      *oidlist;
+	ListCell                  *l;
 
 	/*
 	 * unset is_exist flag for tsentry in table_size_map this is used to
@@ -1608,8 +1608,8 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 	ArrayType            *active_oid_array_type = PG_GETARG_ARRAYTYPE_P(1);
 	Oid                   rejectmap_elem_type   = ARR_ELEMTYPE(rejectmap_array_type);
 	Oid                   active_oid_elem_type  = ARR_ELEMTYPE(active_oid_array_type);
-	Datum	            *datums;
-	bool	             *nulls;
+	Datum                *datums;
+	bool                 *nulls;
 	int16                 elem_width;
 	bool                  elem_type_by_val;
 	char                  elem_alignment_code;
@@ -1618,7 +1618,7 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 	bool                  segexceeded;
 	GlobalRejectMapEntry *rejectmapentry;
 	HASH_SEQ_STATUS       hash_seq;
-	HTAB	             *local_rejectmap;
+	HTAB                 *local_rejectmap;
 	HASHCTL               hashctl;
 	int                   ret_code;
 
