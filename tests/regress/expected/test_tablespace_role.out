@@ -158,7 +158,7 @@ SELECT rolname from pg_roles where rolsuper=true;
 -- end_ignore
 \gset
 select diskquota.set_role_tablespace_quota(:'rolname', 'rolespc', '1mb');
-ERROR:  Can not set disk quota for system owner: xiwang
+ERROR:  Can not set disk quota for system owner: xx
 DROP TABLE b, b2;
 DROP ROLE rolespcu1, rolespcu2;
 RESET search_path;
