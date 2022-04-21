@@ -78,7 +78,9 @@ SELECT diskquota.wait_for_worker_new_epoch();
 INSERT INTO b SELECT generate_series(1,100);
 
 -- superuser is blocked to set quota
+-- start_ignore
 SELECT rolname from pg_roles where rolsuper=true;
+-- end_ignore
 \gset
 select diskquota.set_role_tablespace_quota(:'rolname', 'rolespc', '1mb');
 

@@ -51,7 +51,9 @@ INSERT INTO b SELECT generate_series(1,100);
 INSERT INTO b2 SELECT generate_series(1,100);
 
 -- superuser is blocked to set quota
+--start_ignore
 SELECT rolname from pg_roles where rolsuper=true;
+--end_ignore
 \gset
 select diskquota.set_role_quota(:'rolname', '1mb');
 DROP TABLE b, b2;
