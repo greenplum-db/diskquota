@@ -7,6 +7,18 @@ def run(db: str, num_tables: int, num_tablespaces: int, enable_diskquota: bool):
     if enable_diskquota:
         db_enable_diskquota(db)
 
+    db_exec(db, f'''
+    create language plpythonu;
+    ''')
+    db_exec(db, f'''
+    CREATE or replace FUNCTION mkdir_spc(name text)
+RETURNS void
+AS $$
+  import subprocess as sp
+  sp.call(['mkdir', name])
+$$ LANGUAGE plpythonu;
+    ''')
+
     Catalog.db = db
 
     quotas = role_schema_quotas(num_tables)
@@ -17,7 +29,6 @@ def run(db: str, num_tables: int, num_tablespaces: int, enable_diskquota: bool):
     # expect insertions failed
     for q in quotas:
         q.insert_to_table(1e6)
-
 
 class Catalog:
     db = "testdb"
@@ -136,8 +147,13 @@ class Tablespace(Catalog):
     def __init__(self, name):
         super().__init__()
         self.set_name(name)
+
         dir_name = f'/tmp/tbspc_dir_{self.get_name()}'
-        gp_run(['mkdir', '-p', dir_name])
+
+        self.exec(f'''
+        select mkdir_spc('{dir_name}') from gp_dist_random('gp_id');
+        ''')
+
         stmt = f"CREATE TABLESPACE {self.get_name()} LOCATION '{dir_name}';"
         self.exec(stmt)
 
