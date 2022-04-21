@@ -11,12 +11,15 @@ def run(db: str, num_tables: int, num_tablespaces: int, enable_diskquota: bool):
     create language plpythonu;
     ''')
     db_exec(db, f'''
-    CREATE or replace FUNCTION mkdir_spc(name text)
+CREATE or replace FUNCTION mkdir_spc(name text)
 RETURNS void
 AS $$
-import os
-if not os.path.exists(name):
-    os.mkdir(name)
+  import os
+  try:
+    if not os.path.exists(name):
+      os.mkdir(name)
+  except Exception:
+    pass
 $$ LANGUAGE plpythonu;
     ''')
 
@@ -153,6 +156,9 @@ class Tablespace(Catalog):
 
         self.exec(f'''
         select mkdir_spc('{dir_name}') from gp_dist_random('gp_id');
+        ''')
+        self.exec(f'''
+        select mkdir_spc('{dir_name}');
         ''')
 
         stmt = f"CREATE TABLESPACE {self.get_name()} LOCATION '{dir_name}';"
