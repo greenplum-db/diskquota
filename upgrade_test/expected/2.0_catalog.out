@@ -27,9 +27,9 @@ ORDER BY
     t1.typname;
                 typname                 |                                     typname                                      
 ----------------------------------------+----------------------------------------------------------------------------------
- blackmap                               | {bool,int4,text,oid,oid,oid,oid,oid,oid}
- blackmap_entry                         | {bool,int4,oid,oid,oid}
- blackmap_entry_detail                  | {bool,int4,text,oid,oid,oid,oid,oid,oid}
+ rejectmap                               | {bool,int4,text,oid,oid,oid,oid,oid,oid}
+ rejectmap_entry                         | {bool,int4,oid,oid,oid}
+ rejectmap_entry_detail                  | {bool,int4,text,oid,oid,oid,oid,oid,oid}
  diskquota_active_table_type            | {int8,int2,oid}
  quota_config                           | {int8,int4,int4,oid,oid,tid,xid,xid,cid,cid,float4}
  relation_cache_detail                  | {char,int4,int4,oid,oid,oid,oid,oid,oid,oid,_oid}
@@ -62,8 +62,8 @@ ORDER BY
     relname;
            relname           |            reltype            | reloftype 
 -----------------------------+-------------------------------+-----------
- blackmap_entry              | {blackmap_entry}              | 
- blackmap_entry_detail       | {blackmap_entry_detail}       | 
+ rejectmap_entry              | {rejectmap_entry}              | 
+ rejectmap_entry_detail       | {rejectmap_entry_detail}       | 
  diskquota_active_table_type | {diskquota_active_table_type} | 
  quota_config                | {quota_config}                | 
  quota_config_pkey           |                               | 
@@ -103,7 +103,7 @@ ORDER BY
  init_table_size_table       | {void}                        |                        |                 |             | init_table_size_table                                                                                                | $libdir/diskquota-2.0.so | 
  pause                       | {void}                        |                        |                 |             | diskquota_pause                                                                                                      | $libdir/diskquota-2.0.so | 
  pull_all_table_size         | {record}                      |                        | {oid,int8,int2} | {o,o,o}     | pull_all_table_size                                                                                                  | $libdir/diskquota-2.0.so | 
- refresh_blackmap            | {void}                        | {_blackmap_entry,_oid} |                 |             | refresh_blackmap                                                                                                     | $libdir/diskquota-2.0.so | 
+ refresh_rejectmap            | {void}                        | {_rejectmap_entry,_oid} |                 |             | refresh_rejectmap                                                                                                     | $libdir/diskquota-2.0.so | 
  relation_size               | {int8}                        | {regclass}             |                 |             |                                                                                                                     +|                          | 
                              |                               |                        |                 |             |         SELECT SUM(size)::bigint FROM (                                                                             +|                          | 
                              |                               |                        |                 |             |                 SELECT diskquota.relation_size_local(reltablespace, relfilenode, relpersistence, relstorage) AS size+|                          | 
@@ -119,7 +119,7 @@ ORDER BY
  set_role_tablespace_quota   | {void}                        | {text,text,text}       |                 |             | set_role_tablespace_quota                                                                                            | $libdir/diskquota-2.0.so | 
  set_schema_quota            | {void}                        | {text,text}            |                 |             | set_schema_quota                                                                                                     | $libdir/diskquota-2.0.so | 
  set_schema_tablespace_quota | {void}                        | {text,text,text}       |                 |             | set_schema_tablespace_quota                                                                                          | $libdir/diskquota-2.0.so | 
- show_blackmap               | {blackmap_entry_detail}       |                        |                 |             | show_blackmap                                                                                                        | $libdir/diskquota-2.0.so | 
+ show_rejectmap               | {rejectmap_entry_detail}       |                        |                 |             | show_rejectmap                                                                                                        | $libdir/diskquota-2.0.so | 
  show_relation_cache         | {relation_cache_detail}       |                        |                 |             | show_relation_cache                                                                                                  | $libdir/diskquota-2.0.so | 
  show_relation_cache_all_seg | {relation_cache_detail}       |                        |                 |             |                                                                                                                     +|                          | 
                              |                               |                        |                 |             |         WITH relation_cache AS (                                                                                    +|                          | 
@@ -146,7 +146,7 @@ ORDER by
     schemaname, viewname;
  schemaname |                viewname                |                                                                 definition                                                                  
 ------------+----------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------------
- diskquota  | blackmap                               |  SELECT bm.target_type,                                                                                                                    +
+ diskquota  | rejectmap                               |  SELECT bm.target_type,                                                                                                                    +
             |                                        |     bm.target_oid,                                                                                                                         +
             |                                        |     bm.database_oid,                                                                                                                       +
             |                                        |     bm.tablespace_oid,                                                                                                                     +
@@ -155,7 +155,7 @@ ORDER by
             |                                        |     bm.spcnode,                                                                                                                            +
             |                                        |     bm.relnode,                                                                                                                            +
             |                                        |     bm.segid                                                                                                                               +
-            |                                        |    FROM diskquota.show_blackmap() bm(target_type, target_oid, database_oid, tablespace_oid, seg_exceeded, dbnode, spcnode, relnode, segid);
+            |                                        |    FROM diskquota.show_rejectmap() bm(target_type, target_oid, database_oid, tablespace_oid, seg_exceeded, dbnode, spcnode, relnode, segid);
  diskquota  | show_fast_database_size_view           |  SELECT (( SELECT sum(pg_relation_size((pg_class.oid)::regclass)) AS sum                                                                   +
             |                                        |            FROM pg_class                                                                                                                   +
             |                                        |           WHERE (pg_class.oid <= (16384)::oid)) + ( SELECT sum(table_size.size) AS sum                                                     +
