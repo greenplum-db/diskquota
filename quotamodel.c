@@ -41,11 +41,11 @@
 #include "cdb/cdbdispatchresult.h"
 #include "cdb/cdbutil.h"
 
-/* cluster level max size of reject list */
+/* cluster level max size of rejectmap */
 #define MAX_DISK_QUOTA_REJECT_ENTRIES (1024 * 1024)
-/* cluster level init size of reject list */
+/* cluster level init size of rejectmap */
 #define INIT_DISK_QUOTA_REJECT_ENTRIES 8192
-/* per database level max size of reject list */
+/* per database level max size of rejectmap */
 #define MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES 8192
 #define MAX_NUM_KEYS_QUOTA_MAP 8
 /* Number of attributes in quota configuration records. */
@@ -116,7 +116,7 @@ struct QuotaInfo quota_info[NUM_QUOTA_TYPES] = {
         [TABLESPACE_QUOTA]           = {
                           .map_name = "Tablespace map", .num_keys = 1, .sys_cache = (Oid[]){TABLESPACEOID}, .map = NULL}};
 
-/* global rejectlist for which exceed their quota limit */
+/* global rejectmap for which exceed their quota limit */
 struct RejectMapEntry
 {
 	Oid    targetoid;
@@ -145,7 +145,7 @@ struct GlobalRejectMapEntry
 	RejectMapEntry auxblockinfo;
 };
 
-/* local rejectlist for which exceed their quota limit */
+/* local rejectmap for which exceed their quota limit */
 struct LocalRejectMapEntry
 {
 	RejectMapEntry keyitem;
@@ -156,7 +156,7 @@ struct LocalRejectMapEntry
 /* using hash table to support incremental update the table size entry.*/
 static HTAB *table_size_map = NULL;
 
-/* reject list for database objects which exceed their quota limit */
+/* rejectmap for database objects which exceed their quota limit */
 static HTAB *disk_quota_reject_map       = NULL;
 static HTAB *local_disk_quota_reject_map = NULL;
 
@@ -167,7 +167,7 @@ static void init_all_quota_maps(void);
 static void update_size_for_quota(int64 size, QuotaType type, Oid *keys, int16 segid);
 static void update_limit_for_quota(int64 limit, float segratio, QuotaType type, Oid *keys);
 static void remove_quota(QuotaType type, Oid *keys, int16 segid);
-static void add_quota_to_rejectlist(QuotaType type, Oid targetOid, Oid tablespaceoid, bool segexceeded);
+static void add_quota_to_rejectmap(QuotaType type, Oid targetOid, Oid tablespaceoid, bool segexceeded);
 static void check_quota_map(QuotaType type);
 static void clear_all_quota_maps(void);
 static void transfer_table_for_quota(int64 totalsize, QuotaType type, Oid *old_keys, Oid *new_keys, int16 segid);
@@ -267,10 +267,10 @@ remove_quota(QuotaType type, Oid *keys, int16 segid)
 
 /*
  * Compare the disk quota limit and current usage of a database object.
- * Put them into local rejectlist if quota limit is exceeded.
+ * Put them into local rejectmap if quota limit is exceeded.
  */
 static void
-add_quota_to_rejectlist(QuotaType type, Oid targetOid, Oid tablespaceoid, bool segexceeded)
+add_quota_to_rejectmap(QuotaType type, Oid targetOid, Oid tablespaceoid, bool segexceeded)
 {
 	LocalRejectMapEntry *localrejectentry;
 	RejectMapEntry       keyitem = {0};
@@ -279,7 +279,7 @@ add_quota_to_rejectlist(QuotaType type, Oid targetOid, Oid tablespaceoid, bool s
 	keyitem.databaseoid   = MyDatabaseId;
 	keyitem.tablespaceoid = tablespaceoid;
 	keyitem.targettype    = (uint32)type;
-	ereport(DEBUG1, (errmsg("[diskquota] Put object %u to rejectlist", targetOid)));
+	ereport(DEBUG1, (errmsg("[diskquota] Put object %u to rejectmap", targetOid)));
 	localrejectentry = (LocalRejectMapEntry *)hash_search(local_disk_quota_reject_map, &keyitem, HASH_ENTER, NULL);
 	localrejectentry->isexceeded  = true;
 	localrejectentry->segexceeded = segexceeded;
@@ -288,7 +288,7 @@ add_quota_to_rejectlist(QuotaType type, Oid targetOid, Oid tablespaceoid, bool s
 /*
  * Check the quota map, if the entry doesn't exist anymore,
  * remove it from the map. Otherwise, check if it has hit
- * the quota limit, if it does, add it to the reject list.
+ * the quota limit, if it does, add it to the rejectmap.
  */
 static void
 check_quota_map(QuotaType type)
@@ -326,7 +326,7 @@ check_quota_map(QuotaType type)
 				                            : InvalidOid;
 
 				bool segmentExceeded = entry->segid == -1 ? false : true;
-				add_quota_to_rejectlist(type, targetOid, tablespaceoid, segmentExceeded);
+				add_quota_to_rejectmap(type, targetOid, tablespaceoid, segmentExceeded);
 			}
 		}
 	}
@@ -397,7 +397,7 @@ disk_quota_shmem_startup(void)
 	/*
 	 * Four shared memory data. extension_ddl_message is used to handle
 	 * diskquota extension create/drop command. disk_quota_reject_map is used
-	 * to store out-of-quota rejectlist. active_tables_map is used to store
+	 * to store out-of-quota rejectmap. active_tables_map is used to store
 	 * active tables whose disk usage is changed.
 	 */
 	extension_ddl_message = ShmemInitStruct("disk_quota_extension_ddl_message", sizeof(ExtensionDDLMessage), &found);
@@ -438,7 +438,7 @@ disk_quota_shmem_startup(void)
 /*
  * Initialize four shared memory locks.
  * active_table_lock is used to access active table map.
- * reject_map_lock is used to access out-of-quota rejectlist.
+ * reject_map_lock is used to access out-of-quota rejectmap.
  * extension_ddl_message_lock is used to access content of
  * extension_ddl_message.
  * extension_ddl_lock is used to avoid concurrent diskquota
@@ -1045,9 +1045,9 @@ flush_to_table_size(void)
 }
 
 /*
- * Generate the new shared rejectlist from the local_reject_list which
+ * Generate the new shared rejectmap from the local_rejectmap which
  * exceed the quota limit.
- * local_reject_list is used to reduce the lock contention.
+ * local_rejectmap is used to reduce the lock contention.
  */
 static void
 flush_local_reject_map(void)
@@ -1070,7 +1070,7 @@ flush_local_reject_map(void)
 			{
 				ereport(WARNING, (errmsg("[diskquota] Shared disk quota reject map size limit reached."
 				                         "Some out-of-limit schemas or roles will be lost"
-				                         "in rejectlist.")));
+				                         "in rejectmap.")));
 			}
 			else
 			{
@@ -1416,7 +1416,7 @@ prepare_rejectmap_search_key(RejectMapEntry *keyitem, QuotaType type, Oid relown
 		keyitem->tablespaceoid = reltablespace;
 	else
 	{
-		/* refer to add_quota_to_rejectlist */
+		/* refer to add_quota_to_rejectmap */
 		keyitem->tablespaceoid = InvalidOid;
 	}
 	keyitem->databaseoid = MyDatabaseId;

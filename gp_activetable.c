@@ -787,7 +787,7 @@ get_active_tables_oid(void)
 
 /*
  * Load table size info from diskquota.table_size table.
- * This is called when system startup, disk quota reject list
+ * This is called when system startup, disk quota rejectmap
  * and other shared memory will be warmed up by table_size table.
  */
 static void

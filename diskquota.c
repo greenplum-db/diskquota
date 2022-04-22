@@ -376,7 +376,7 @@ disk_quota_worker_main(Datum main_arg)
 	if (got_sigterm)
 	{
 		ereport(LOG, (errmsg("[diskquota] bgworker for \"%s\" is being terminated by SIGTERM.", dbname)));
-		/* clear the out-of-quota rejectlist in shared memory */
+		/* clear the out-of-quota rejectmap in shared memory */
 		invalidate_database_rejectmap(MyDatabaseId);
 		proc_exit(0);
 	}
@@ -431,7 +431,7 @@ disk_quota_worker_main(Datum main_arg)
 	}
 
 	ereport(LOG, (errmsg("[diskquota] bgworker for \"%s\" is being terminated by SIGTERM.", dbname)));
-	/* clear the out-of-quota rejectlist in shared memory */
+	/* clear the out-of-quota rejectmap in shared memory */
 	invalidate_database_rejectmap(MyDatabaseId);
 	proc_exit(0);
 }
