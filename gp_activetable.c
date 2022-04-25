@@ -68,6 +68,7 @@ static void           pull_active_table_size_from_seg(HTAB *local_table_stats_ma
 static StringInfoData convert_map_to_string(HTAB *active_list);
 static void           load_table_size(HTAB *local_table_stats_map);
 static void           report_active_table_helper(const RelFileNodeBackend *relFileNode);
+static void           remove_from_active_table_map(const RelFileNodeBackend *relFileNode);
 static void           report_relation_cache_helper(Oid relid);
 static void           report_altered_reloid(Oid reloid);
 
@@ -163,6 +164,11 @@ active_table_hook_smgrunlink(RelFileNodeBackend rnode)
 {
 	if (prev_file_unlink_hook) (*prev_file_unlink_hook)(rnode);
 
+	/*
+	 * Since we do not remove a relfilenode if it cooresponds to no valid
+	 * relation oid, we need to do the cleaning here to avoid memory leak
+	 */
+	remove_from_active_table_map(&rnode);
 	remove_cache_entry(InvalidOid, rnode.node.relNode);
 }
 
@@ -283,6 +289,23 @@ report_active_table_helper(const RelFileNodeBackend *relFileNode)
 		 */
 		ereport(WARNING, (errmsg("Share memory is not enough for active tables.")));
 	}
+	LWLockRelease(diskquota_locks.active_table_lock);
+}
+
+/*
+ * Remove relfilenode from the active table map if exists.
+ */
+static void
+remove_from_active_table_map(const RelFileNodeBackend *relFileNode)
+{
+	DiskQuotaActiveTableFileEntry item = {0};
+
+	item.dbid          = relFileNode->node.dbNode;
+	item.relfilenode   = relFileNode->node.relNode;
+	item.tablespaceoid = relFileNode->node.spcNode;
+
+	LWLockAcquire(diskquota_locks.active_table_lock, LW_EXCLUSIVE);
+	hash_search(active_tables_map, &item, HASH_REMOVE, NULL);
 	LWLockRelease(diskquota_locks.active_table_lock);
 }
 
@@ -683,17 +706,17 @@ get_active_tables_oid(void)
 
 		if (relOid != InvalidOid)
 		{
-			/* 
-			 * Since we don't take any lock on relation, check for cache 
-			 * invalidation messages manually to minimize risk of cache 
+			/*
+			 * Since we don't take any lock on relation, check for cache
+			 * invalidation messages manually to minimize risk of cache
 			 * inconsistency.
 			 */
 			AcceptInvalidationMessages();
-			HeapTuple tp         = SearchSysCache1(RELOID, ObjectIdGetDatum(relOid));
+			HeapTuple tp = SearchSysCache1(RELOID, ObjectIdGetDatum(relOid));
 			if (!HeapTupleIsValid(tp)) continue;
 			Form_pg_class reltup = (Form_pg_class)GETSTRUCT(tp);
 
-			/* 
+			/*
 			 * If cache invalidation messages are not delievered in time, the
 			 * relfilenode in the tuple of the relation is stale. In that case,
 			 * the relfilenode in the relation tuple is not equal to the one in
@@ -711,9 +734,9 @@ get_active_tables_oid(void)
 				active_table_entry->tablesize = 0;
 				active_table_entry->segid     = -1;
 			}
-			/* 
+			/*
 			 * Do NOT remove relation from the active table map if it is being
-			 * altered or its relfilenode is stale so that we can check it 
+			 * altered or its relfilenode is stale so that we can check it
 			 * again in the next epoch.
 			 */
 			if (!is_relation_being_altered(relOid) && !is_relfilenode_stale)
