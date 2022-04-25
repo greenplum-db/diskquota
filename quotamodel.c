@@ -1847,7 +1847,6 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 		}
 	}
 
-	/* Flush the content of local_rejectmap to the global rejectmap. */
 	LWLockAcquire(diskquota_locks.reject_map_lock, LW_EXCLUSIVE);
 
 	/* Clear rejectmap entries. */
@@ -1855,6 +1854,7 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 	while ((blackmapentry = hash_seq_search(&hash_seq)) != NULL)
 		hash_search(disk_quota_black_map, &blackmapentry->keyitem, HASH_REMOVE, NULL);
 
+	/* Flush the content of local_rejectmap to the global rejectmap. */
 	hash_seq_init(&hash_seq, local_rejectmap);
 	while ((rejectmapentry = hash_seq_search(&hash_seq)) != NULL)
 	{
