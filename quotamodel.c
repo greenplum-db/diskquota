@@ -1620,7 +1620,6 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 	HASH_SEQ_STATUS       hash_seq;
 	HTAB                 *local_rejectmap;
 	HASHCTL               hashctl;
-	int                   ret_code;
 
 	if (!superuser())
 		ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE), errmsg("must be superuser to update rejectmap")));
@@ -1850,9 +1849,9 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 	LWLockAcquire(diskquota_locks.reject_map_lock, LW_EXCLUSIVE);
 
 	/* Clear rejectmap entries. */
-	hash_seq_init(&hash_seq, disk_quota_black_map);
-	while ((blackmapentry = hash_seq_search(&hash_seq)) != NULL)
-		hash_search(disk_quota_black_map, &blackmapentry->keyitem, HASH_REMOVE, NULL);
+	hash_seq_init(&hash_seq, disk_quota_reject_map);
+	while ((rejectmapentry = hash_seq_search(&hash_seq)) != NULL)
+		hash_search(disk_quota_reject_map, &rejectmapentry->keyitem, HASH_REMOVE, NULL);
 
 	/* Flush the content of local_rejectmap to the global rejectmap. */
 	hash_seq_init(&hash_seq, local_rejectmap);
