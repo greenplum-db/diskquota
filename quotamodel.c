@@ -1630,7 +1630,7 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 		ereport(ERROR, (errcode(ERRCODE_ARRAY_SUBSCRIPT_ERROR), errmsg("1-dimensional array needed")));
 
 	/*
-	 * Iterate over rejectmap entries and add these entries to the local black map
+	 * Iterate over rejectmap entries and add these entries to the local reject map
 	 * on segment servers so that we are able to check whether the given relation (by oid)
 	 * should be rejected in O(1) time complexity in third step.
 	 */
