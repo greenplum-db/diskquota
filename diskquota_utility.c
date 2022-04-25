@@ -99,9 +99,9 @@ PG_FUNCTION_INFO_V1(pull_all_table_size);
 
 static object_access_hook_type next_object_access_hook;
 static bool                    is_database_empty(void);
-static void        dq_object_access_hook(ObjectAccessType access, Oid classId, Oid objectId, int subId, void *arg);
-static void        ddl_err_code_to_err_message(MessageResult code, const char **err_msg, const char **hint_msg);
-static int64       get_size_in_mb(char *str);
+static void  dq_object_access_hook(ObjectAccessType access, Oid classId, Oid objectId, int subId, void *arg);
+static void  ddl_err_code_to_err_message(MessageResult code, const char **err_msg, const char **hint_msg);
+static int64 get_size_in_mb(char *str);
 static void set_quota_config_internal(Oid targetoid, int64 quota_limit_mb, QuotaType type, float4 segratio, Oid spcoid);
 static int  set_target_internal(Oid primaryoid, Oid spcoid, int64 quota_limit_mb, QuotaType type);
 static float4 get_per_segment_ratio(Oid spcoid);
