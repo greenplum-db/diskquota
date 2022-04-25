@@ -365,7 +365,10 @@ diskquota_start_worker(PG_FUNCTION_ARGS)
 			ResetLatch(&MyProc->procLatch);
 
 			ereportif(kill(launcher_pid, 0) == -1 && errno == ESRCH, // do existence check
-			          ERROR, (errmsg("[diskquota] diskquota launcher pid = %d no longer exists", launcher_pid)));
+			          ERROR,
+			          (errmsg("[diskquota] diskquota launcher pid = %d no longer exists", launcher_pid),
+			           errhint("The diskquota launcher process has been terminated for some reasons. Consider to "
+			                   "restart the cluster to start it.")));
 
 			LWLockAcquire(diskquota_locks.extension_ddl_message_lock, LW_SHARED);
 			if (extension_ddl_message->result != ERR_PENDING)
@@ -619,7 +622,10 @@ dq_object_access_hook_on_drop(void)
 			ResetLatch(&MyProc->procLatch);
 
 			ereportif(kill(launcher_pid, 0) == -1 && errno == ESRCH, // do existence check
-			          ERROR, (errmsg("[diskquota] diskquota launcher pid = %d no longer exists", launcher_pid)));
+			          ERROR,
+			          (errmsg("[diskquota] diskquota launcher pid = %d no longer exists", launcher_pid),
+			           errhint("The diskquota launcher process has been terminated for some reasons. Consider to "
+			                   "restart the cluster to start it.")));
 
 			LWLockAcquire(diskquota_locks.extension_ddl_message_lock, LW_SHARED);
 			if (extension_ddl_message->result != ERR_PENDING)
