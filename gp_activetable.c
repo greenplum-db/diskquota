@@ -359,8 +359,7 @@ gp_fetch_active_tables(bool is_init)
 		active_oid_list             = convert_map_to_string(local_active_table_oid_maps);
 
 		ereport(DEBUG1,
-		        (errcode(ERRCODE_INTERNAL_ERROR), 
-				errmsg("[diskquota] active_old_list = %s", active_oid_list.data));
+		        (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] active_old_list = %s", active_oid_list.data)));
 
 		/* step 2: fetch active table sizes based on active oids */
 		pull_active_table_size_from_seg(local_table_stats_map, active_oid_list.data);
