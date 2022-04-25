@@ -1,8 +1,13 @@
 # Update quota usage when the number of possible quota definition is large
+# eg. for ((i=1; i<=10; i++)); do PYTHONPATH='' python3 -m tests.stress update_quota_usage --num_tables 2 --num_tablespaces 2 --enable_diskquota 0 --db testdb ; done
 
 from __utils__ import *
+from datetime import datetime
+import time
 
-def run(db: str, num_tables: int, num_tablespaces: int, enable_diskquota: bool):
+def run(db: str, num_tables: int, num_tablespaces: int, enable_diskquota: int):
+    print(f'enable_diskquota={enable_diskquota}')
+
     db_clean(db)
     if enable_diskquota:
         db_enable_diskquota(db)
@@ -25,14 +30,25 @@ $$ LANGUAGE plpythonu;
 
     Catalog.db = db
 
-    quotas = role_schema_quotas(num_tables)
-    quotas.extend(tablespace_based_quotas(num_tablespaces))
+    quotas = role_schema_quotas(num_tables, 1e3, enable_diskquota)
+    quotas.extend(tablespace_based_quotas(num_tablespaces, 1e3, enable_diskquota))
 
-    Catalog.wait()
+    if enable_diskquota:
+        Catalog.wait()
 
-    # expect insertions failed
+    time1 = datetime.now()
+
+    # expect insertions succeed
     for q in quotas:
         q.insert_to_table(1e6)
+
+    time2 = datetime.now()
+    seconds = (time2 - time1).seconds
+
+    with open(f"result_{enable_diskquota}.txt", 'a') as f:
+        f.write(f"{seconds}\n")
+
+    print(len(quotas))
 
 class Catalog:
     db = "testdb"
@@ -183,8 +199,8 @@ class Tablespace(Catalog):
         return f"DROP TABLE IF EXISTS {self.table_name};"
 
 class Quota:
-    def __init__(self):
-        pass
+    def __init__(self, enable_diskquota=True):
+        self.enable_diskquota = enable_diskquota
 
     def __del__(self):
         self.set(-1)
@@ -214,10 +230,12 @@ class Quota:
         pass
 
     def set(self, sz):
-        self.get_base_catalog().exec(self.set_stmt(sz))
+        if self.enable_diskquota:
+            self.get_base_catalog().exec(self.set_stmt(sz))
 
 class RoleQuota(Quota):
-    def __init__(self, role, sz):
+    def __init__(self, role, sz, enable_diskquota):
+        super().__init__(enable_diskquota)
         self.role = role
         self.sz = sz
         self.set(self.sz)
@@ -231,7 +249,8 @@ class RoleQuota(Quota):
         '''
 
 class SchemaQuota(Quota):
-    def __init__(self, schema, sz):
+    def __init__(self, schema, sz, enable_diskquota):
+        super().__init__(enable_diskquota)
         self.schema = schema
         self.sz = sz
         self.set(self.sz)
@@ -245,7 +264,8 @@ class SchemaQuota(Quota):
         '''
 
 class TablespaceSchemaQuota(Quota):
-    def __init__(self, schema, spc, sz):
+    def __init__(self, schema, spc, sz, enable_diskquota):
+        super().__init__(enable_diskquota)
         self.schema = schema
         self.spc = spc
         self.sz = sz
@@ -264,7 +284,8 @@ class TablespaceSchemaQuota(Quota):
         self.spc.alter_table(self.schema.get_full_tablename())
 
 class TablespaceRoleQuota(Quota):
-    def __init__(self, role, spc, sz):
+    def __init__(self, role, spc, sz, enable_diskquota):
+        super().__init__(enable_diskquota)
         self.role = role
         self.spc = spc
         self.sz = sz
@@ -281,7 +302,7 @@ class TablespaceRoleQuota(Quota):
     def put_table(self):
         self.spc.alter_table(self.role.get_tablename())
 
-def role_schema_quotas(n):
+def role_schema_quotas(n, rows, enable_diskquota=True):
     if n < 1:
         raise Exception("invalid n")
 
@@ -292,19 +313,19 @@ def role_schema_quotas(n):
 
     quotas = []
     for i in range(n):
-        rq = RoleQuota(roles[i], 1)
-        sq = SchemaQuota(schemas[i], 1)
+        rq = RoleQuota(roles[i], 1, enable_diskquota)
+        sq = SchemaQuota(schemas[i], 1, enable_diskquota)
 
         quotas.append(rq)
         quotas.append(sq)
 
     for i, q in enumerate(quotas):
         q.create_table(i)
-        q.insert_to_table(1e6)
+        q.insert_to_table(rows)
 
     return quotas
 
-def tablespace_based_quotas(n):
+def tablespace_based_quotas(n, rows, enable_diskquota=True):
     if n < 1:
         raise Exception(f"invalid n: {n}")
 
@@ -320,8 +341,8 @@ def tablespace_based_quotas(n):
 
     quotas = []
     for i in range(n):
-        trq = TablespaceRoleQuota(roles[i], spcs[i], 1)
-        tsq = TablespaceSchemaQuota(schemas[i], spcs[i + n], 1)
+        trq = TablespaceRoleQuota(roles[i], spcs[i], 1, enable_diskquota)
+        tsq = TablespaceSchemaQuota(schemas[i], spcs[i + n], 1, enable_diskquota)
 
         quotas.append(trq)
         quotas.append(tsq)
@@ -329,6 +350,6 @@ def tablespace_based_quotas(n):
     for i, q in enumerate(quotas):
         q.create_table(i)
         q.put_table()
-        q.insert_to_table(1e6)
+        q.insert_to_table(rows)
 
     return quotas
