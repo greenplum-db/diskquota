@@ -11,6 +11,9 @@ def run(db: str, num_tables: int, num_tablespaces: int, enable_diskquota: int):
     db_clean(db)
     if enable_diskquota:
         db_enable_diskquota(db)
+    else:
+        gp_run(['gpconfig', '-c', 'shared_preload_libraries', '-v', ''])
+        gp_run(['gpstop', '-far'])
 
     db_exec(db, f'''
     create language plpythonu;
