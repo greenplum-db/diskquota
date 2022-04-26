@@ -627,13 +627,18 @@ is_relation_being_altered(Oid relid)
 	return being_altered;
 }
 
+/*
+ * Check whether the given relfilenode is stale due to delayed cache 
+ * invalidation messages.
+ * 
+ * NOTE: It will return false if the relation is currently uncommitted.
+ */ 
 static bool
 is_relfilenode_stale(Oid relOid, RelFileNode rnode)
 {
 	/*
-	 * Since we don't take any lock on relation, check for cache
-	 * invalidation messages manually to minimize risk of cache
-	 * inconsistency.
+	 * Since we don't take any lock on relation, need to check for cache
+	 * invalidation messages manually.
 	 */
 	AcceptInvalidationMessages();
 	HeapTuple tp = SearchSysCacheCopy1(RELOID, ObjectIdGetDatum(relOid));
