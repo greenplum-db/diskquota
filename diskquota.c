@@ -52,6 +52,14 @@ PG_MODULE_MAGIC;
 #endif
 /* clang-format on */
 
+typedef enum {
+	DC_ALIVE = 0,
+	DC_CREATE_MONITOR_TABLE,
+	DC_START_WORKER,
+	DC_POSTMASTER,
+	DC_SIGTERM
+} DeathCode;
+
 #include <unistd.h>                 // for useconds_t
 extern int usleep(useconds_t usec); // in <unistd.h>
 
@@ -104,7 +112,7 @@ static void disk_quota_sighup(SIGNAL_ARGS);
 static void define_guc_variables(void);
 static bool start_worker_by_dboid(Oid dbid);
 static void start_workers_from_dblist(void);
-static void create_monitor_db_table(void);
+static bool create_monitor_db_table(void);
 static void add_dbid_to_database_list(Oid dbid);
 static void del_dbid_from_database_list(Oid dbid);
 static void process_extension_ddl_message(void);
@@ -114,6 +122,7 @@ static void terminate_all_workers(void);
 static void on_add_db(Oid dbid, MessageResult *code);
 static void on_del_db(Oid dbid, MessageResult *code);
 static bool is_valid_dbid(Oid dbid);
+static void set_launcher_death_code(DeathCode code);
 extern void invalidate_database_blackmap(Oid dbid);
 
 /*
@@ -467,6 +476,7 @@ disk_quota_launcher_main(Datum main_arg)
 
 	LWLockAcquire(diskquota_locks.extension_ddl_message_lock, LW_EXCLUSIVE);
 	extension_ddl_message->launcher_pid = MyProcPid;
+	extension_ddl_message->launcher_death_code = DC_ALIVE;
 	LWLockRelease(diskquota_locks.extension_ddl_message_lock);
 
 	/*
@@ -485,13 +495,25 @@ disk_quota_launcher_main(Datum main_arg)
 	 * use table diskquota_namespace.database_list to store diskquota enabled
 	 * database.
 	 */
-	create_monitor_db_table();
+	if (!create_monitor_db_table()) {
+		set_launcher_death_code(DC_CREATE_MONITOR_TABLE);
+		ereport(ERROR, (errmsg("[diskquota launcher] failed to create monitor db table")));
+	}
 
 	/*
 	 * firstly start worker processes for each databases with diskquota
 	 * enabled.
 	 */
-	start_workers_from_dblist();
+	PG_TRY();
+	{
+		start_workers_from_dblist();
+	}
+	PG_CATCH();
+	{
+		set_launcher_death_code(DC_START_WORKER);
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
 
 	ereport(LOG, (errmsg("[diskquota launcher] start main loop")));
 	/* main loop: do this until the SIGTERM handler tells us to terminate. */
@@ -519,6 +541,7 @@ disk_quota_launcher_main(Datum main_arg)
 		/* Emergency bailout if postmaster has died */
 		if (rc & WL_POSTMASTER_DEATH)
 		{
+			set_launcher_death_code(DC_POSTMASTER);
 			ereport(LOG, (errmsg("[diskquota launcher] launcher is being terminated by postmaster death.")));
 			proc_exit(1);
 		}
@@ -550,6 +573,7 @@ disk_quota_launcher_main(Datum main_arg)
 	}
 
 	/* terminate all the diskquota worker processes before launcher exit */
+	set_launcher_death_code(DC_SIGTERM);
 	ereport(LOG, (errmsg("[diskquota launcher] launcher is being terminated by SIGTERM.")));
 	terminate_all_workers();
 	proc_exit(0);
@@ -563,7 +587,7 @@ disk_quota_launcher_main(Datum main_arg)
  * When database restarted, diskquota launcher will start worker processes
  * for these databases.
  */
-static void
+static bool
 create_monitor_db_table(void)
 {
 	const char *sql;
@@ -624,6 +648,7 @@ create_monitor_db_table(void)
 		AbortCurrentTransaction();
 
 	debug_query_string = NULL;
+	return ret;
 }
 
 /*
@@ -1113,6 +1138,38 @@ is_valid_dbid(Oid dbid)
 	if (!HeapTupleIsValid(tuple)) return false;
 	ReleaseSysCache(tuple);
 	return true;
+}
+
+
+static void
+set_launcher_death_code(DeathCode code)
+{
+	LWLockAcquire(diskquota_locks.extension_ddl_message_lock, LW_EXCLUSIVE);
+	extension_ddl_message->result = ERR_LAUNCHER_DIED;
+	extension_ddl_message->launcher_death_code = code;
+	LWLockRelease(diskquota_locks.extension_ddl_message_lock);
+}
+
+const char *
+launcher_describe_death_reason(int code)
+{
+	switch(code)
+	{
+		case DC_ALIVE:
+			return "Diskquota launcher is still alive";
+		case DC_CREATE_MONITOR_TABLE:
+			return "Diskquota launcher failed to create monitor table. "
+				"Check if the diskquota database has been created before starting the cluster.";
+		case DC_START_WORKER:
+			return "Diskquota launcher failed while creating workers.";
+		case DC_POSTMASTER:
+			return "Diskquota launcher has been terminated due to postmaster's death.";
+		case DC_SIGTERM:
+			return "Diskquota launcher has been terminated by SIGTERM.";
+		default:
+			break;
+	}
+	return "Diskquota launcher has been terminated for unknown reason.";
 }
 
 bool

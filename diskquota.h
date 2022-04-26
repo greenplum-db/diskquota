@@ -92,6 +92,8 @@ typedef struct DiskQuotaLocks DiskQuotaLocks;
 struct ExtensionDDLMessage
 {
 	int launcher_pid; /* diskquota launcher pid */
+	int launcher_death_code; /* The reason of launcher death. 0 for still alive. */
+
 	int req_pid;      /* pid of the QD process which create/drop
 	                   * diskquota extension */
 	int cmd;          /* message command type, see MessageCommand */
@@ -121,6 +123,8 @@ enum MessageResult
 	ERR_START_WORKER,
 	/* invalid dbid */
 	ERR_INVALID_DBID,
+	/* the launcher has been terminated. */
+	ERR_LAUNCHER_DIED,
 	ERR_UNKNOWN,
 };
 
@@ -182,5 +186,7 @@ extern Oid      diskquota_parse_primary_table_oid(Oid namespace, char *relname);
 extern bool         worker_increase_epoch(Oid database_oid);
 extern unsigned int worker_get_epoch(Oid database_oid);
 extern bool         diskquota_is_paused(void);
+
+extern const char *launcher_describe_death_reason(int code);
 
 #endif

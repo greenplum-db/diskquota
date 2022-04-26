@@ -337,7 +337,7 @@ pull_all_table_size(PG_FUNCTION_ARGS)
 Datum
 diskquota_start_worker(PG_FUNCTION_ARGS)
 {
-	int rc, launcher_pid;
+	int rc, launcher_pid, launcher_death_code;
 
 	/*
 	 * Lock on extension_ddl_lock to avoid multiple backend create diskquota
@@ -350,6 +350,7 @@ diskquota_start_worker(PG_FUNCTION_ARGS)
 	extension_ddl_message->result  = ERR_PENDING;
 	extension_ddl_message->dbid    = MyDatabaseId;
 	launcher_pid                   = extension_ddl_message->launcher_pid;
+	launcher_death_code = extension_ddl_message->launcher_death_code;
 	/* setup sig handler to diskquota launcher process */
 	rc = kill(launcher_pid, SIGUSR1);
 	LWLockRelease(diskquota_locks.extension_ddl_message_lock);
@@ -365,10 +366,7 @@ diskquota_start_worker(PG_FUNCTION_ARGS)
 			ResetLatch(&MyProc->procLatch);
 
 			ereportif(kill(launcher_pid, 0) == -1 && errno == ESRCH, // do existence check
-			          ERROR,
-			          (errmsg("[diskquota] diskquota launcher pid = %d no longer exists", launcher_pid),
-			           errhint("The diskquota launcher process has been terminated for some reasons. Consider to "
-			                   "restart the cluster to start it.")));
+			          ERROR, (errmsg("[diskquota] diskquota launcher pid = %d no longer exists", launcher_pid)));
 
 			LWLockAcquire(diskquota_locks.extension_ddl_message_lock, LW_SHARED);
 			if (extension_ddl_message->result != ERR_PENDING)
@@ -687,7 +685,6 @@ ddl_err_code_to_err_message(MessageResult code, const char **err_msg, const char
 	{
 		case ERR_PENDING:
 			*err_msg  = "no response from diskquota launcher, check whether launcher process exists";
-			*hint_msg = "Create \"diskquota\" database and restart the cluster.";
 			break;
 		case ERR_OK:
 			*err_msg = "succeeded";
@@ -707,6 +704,9 @@ ddl_err_code_to_err_message(MessageResult code, const char **err_msg, const char
 		case ERR_INVALID_DBID:
 			*err_msg = "invalid dbid";
 			break;
+		case ERR_LAUNCHER_DIED:
+			*err_msg = "launcher process doesnt exist";
+			*hint_msg = "Create \"diskquota\" database and restart the cluster.";
 		default:
 			*err_msg = "unknown error";
 			break;
