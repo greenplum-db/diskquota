@@ -628,11 +628,11 @@ is_relation_being_altered(Oid relid)
 }
 
 /*
- * Check whether the given relfilenode is stale due to delayed cache 
+ * Check whether the given relfilenode is stale due to delayed cache
  * invalidation messages.
- * 
+ *
  * NOTE: It will return false if the relation is currently uncommitted.
- */ 
+ */
 static bool
 is_relfilenode_stale(Oid relOid, RelFileNode rnode)
 {
