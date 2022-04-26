@@ -358,7 +358,7 @@ gp_fetch_active_tables(bool is_init)
 		local_active_table_oid_maps = pull_active_list_from_seg();
 		active_oid_list             = convert_map_to_string(local_active_table_oid_maps);
 
-		ereport(DEBUG1,
+		ereport(WARNING,
 		        (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] active_old_list = %s", active_oid_list.data)));
 
 		/* step 2: fetch active table sizes based on active oids */
@@ -627,6 +627,32 @@ is_relation_being_altered(Oid relid)
 	return being_altered;
 }
 
+static bool
+is_relfilenode_stale(Oid relOid, RelFileNode rnode)
+{
+	/*
+	 * Since we don't take any lock on relation, check for cache
+	 * invalidation messages manually to minimize risk of cache
+	 * inconsistency.
+	 */
+	AcceptInvalidationMessages();
+	HeapTuple tp = SearchSysCacheCopy1(RELOID, ObjectIdGetDatum(relOid));
+
+	/* Tuple is not valid if the relation has not been committed yet */
+	if (!HeapTupleIsValid(tp)) return false;
+	Form_pg_class reltup = (Form_pg_class)GETSTRUCT(tp);
+
+	/*
+	 * If cache invalidation messages are not delievered in time, the
+	 * relfilenode in the tuple of the relation is stale. In that case,
+	 * the relfilenode in the relation tuple is not equal to the one in
+	 * the active table map.
+	 */
+	bool is_stale = reltup->relfilenode != rnode.relNode;
+	heap_freetuple(tp);
+	return is_stale;
+}
+
 /*
  * Get local active table with table oid and table size info.
  * This function first copies active table map from shared memory
@@ -719,25 +745,6 @@ get_active_tables_oid(void)
 
 		if (relOid != InvalidOid)
 		{
-			/*
-			 * Since we don't take any lock on relation, check for cache
-			 * invalidation messages manually to minimize risk of cache
-			 * inconsistency.
-			 */
-			AcceptInvalidationMessages();
-			HeapTuple tp = SearchSysCache1(RELOID, ObjectIdGetDatum(relOid));
-			if (!HeapTupleIsValid(tp)) continue;
-			Form_pg_class reltup = (Form_pg_class)GETSTRUCT(tp);
-
-			/*
-			 * If cache invalidation messages are not delievered in time, the
-			 * relfilenode in the tuple of the relation is stale. In that case,
-			 * the relfilenode in the relation tuple is not equal to the one in
-			 * the active table map.
-			 */
-			bool is_relfilenode_stale = reltup->relfilenode != rnode.relNode;
-			ReleaseSysCache(tp);
-
 			prelid             = get_primary_table_oid(relOid, true);
 			active_table_entry = hash_search(local_active_table_stats_map, &prelid, HASH_ENTER, &found);
 			if (active_table_entry && !found)
@@ -752,7 +759,7 @@ get_active_tables_oid(void)
 			 * altered or its relfilenode is stale so that we can check it
 			 * again in the next epoch.
 			 */
-			if (!is_relation_being_altered(relOid) && !is_relfilenode_stale)
+			if (!is_relation_being_altered(relOid) && !is_relfilenode_stale(relOid, rnode))
 			{
 				hash_search(local_active_table_file_map, active_table_file_entry, HASH_REMOVE, NULL);
 			}
