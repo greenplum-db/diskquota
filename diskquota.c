@@ -398,7 +398,10 @@ disk_quota_worker_main(Datum main_arg)
 		/*
 		 * Allow sinval catchup interrupts while sleeping
 		 *
-		 * This follows what the Autovacuum launcher does
+		 * This follows what the autovacuum launcher does
+		 *
+		 * TODO: Currently, this does not take effect because there is no
+		 * handler for it in disk_quota_sigusr1().
 		 */
 		EnableCatchupInterrupt();
 

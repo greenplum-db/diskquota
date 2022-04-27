@@ -168,7 +168,7 @@ active_table_hook_smgrunlink(RelFileNodeBackend rnode)
 	if (prev_file_unlink_hook) (*prev_file_unlink_hook)(rnode);
 
 	/*
-	 * Since we do not remove the relfilenode if it maps to no valid
+	 * Since we do not remove the relfilenode if it does not map to any valid
 	 * relation oid, we need to do the cleaning here to avoid memory leak
 	 */
 	remove_from_active_table_map(&rnode);
@@ -628,13 +628,13 @@ is_relation_being_altered(Oid relid)
 }
 
 /*
- * Check whether the given relfilenode is stale due to delayed cache
- * invalidation messages.
+ * Check whether the cached relfilenode is stale compared to the given one
+ * due to delayed cache invalidation messages.
  *
  * NOTE: It will return false if the relation is currently uncommitted.
  */
 static bool
-is_relfilenode_stale(Oid relOid, RelFileNode rnode)
+is_cached_relfilenode_stale(Oid relOid, RelFileNode rnode)
 {
 	/*
 	 * Since we don't take any lock on relation, need to check for cache
@@ -643,7 +643,11 @@ is_relfilenode_stale(Oid relOid, RelFileNode rnode)
 	AcceptInvalidationMessages();
 	HeapTuple tp = SearchSysCacheCopy1(RELOID, ObjectIdGetDatum(relOid));
 
-	/* Tuple is not valid if the relation has not been committed yet */
+	/* 
+	 * Tuple is not valid if
+	 * - The relation has not been committed yet, or
+	 * - The relation has been deleted
+	 */
 	if (!HeapTupleIsValid(tp)) return false;
 	Form_pg_class reltup = (Form_pg_class)GETSTRUCT(tp);
 
@@ -653,7 +657,8 @@ is_relfilenode_stale(Oid relOid, RelFileNode rnode)
 	 * the relfilenode in the relation tuple is not equal to the one in
 	 * the active table map.
 	 */
-	bool is_stale = reltup->relfilenode != rnode.relNode;
+	Oid  cached_relfilenode = reltup->relfilenode;
+	bool is_stale           = cached_relfilenode != rnode.relNode;
 	heap_freetuple(tp);
 	return is_stale;
 }
@@ -761,10 +766,10 @@ get_active_tables_oid(void)
 			}
 			/*
 			 * Do NOT remove relation from the active table map if it is being
-			 * altered or its relfilenode is stale so that we can check it
+			 * altered or its cached relfilenode is stale so that we can check it
 			 * again in the next epoch.
 			 */
-			if (!is_relation_being_altered(relOid) && !is_relfilenode_stale(relOid, rnode))
+			if (!is_relation_being_altered(relOid) && !is_cached_relfilenode_stale(relOid, rnode))
 			{
 				hash_search(local_active_table_file_map, active_table_file_entry, HASH_REMOVE, NULL);
 			}
