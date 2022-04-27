@@ -643,7 +643,7 @@ is_cached_relfilenode_stale(Oid relOid, RelFileNode rnode)
 	AcceptInvalidationMessages();
 	HeapTuple tp = SearchSysCacheCopy1(RELOID, ObjectIdGetDatum(relOid));
 
-	/* 
+	/*
 	 * Tuple is not valid if
 	 * - The relation has not been committed yet, or
 	 * - The relation has been deleted
