@@ -1322,6 +1322,12 @@ get_rel_owner_schema_tablespace(Oid relid, Oid *ownerOid, Oid *nsOid, Oid *table
 {
 	HeapTuple tp;
 
+	/*
+	 * Since we don't take any lock on relation, check for cache
+	 * invalidation messages manually to minimize risk of cache
+	 * inconsistency.
+	 */
+	AcceptInvalidationMessages();
 	tp         = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
 	bool found = HeapTupleIsValid(tp);
 	if (HeapTupleIsValid(tp))
@@ -1351,6 +1357,12 @@ get_rel_name_namespace(Oid relid, Oid *nsOid, char *relname)
 {
 	HeapTuple tp;
 
+	/*
+	 * Since we don't take any lock on relation, check for cache
+	 * invalidation messages manually to minimize risk of cache
+	 * inconsistency.
+	 */
+	AcceptInvalidationMessages();
 	tp         = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
 	bool found = HeapTupleIsValid(tp);
 	if (found)
@@ -1705,6 +1717,12 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 		active_oid = DatumGetObjectId(datums[i]);
 		if (!OidIsValid(active_oid)) continue;
 
+		/*
+		 * Since we don't take any lock on relation, check for cache
+		 * invalidation messages manually to minimize risk of cache
+		 * inconsistency.
+		 */
+		AcceptInvalidationMessages();
 		tuple = SearchSysCacheCopy1(RELOID, active_oid);
 		if (HeapTupleIsValid(tuple))
 		{
