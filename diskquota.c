@@ -28,7 +28,6 @@
 #include "port/atomics.h"
 #include "storage/ipc.h"
 #include "storage/proc.h"
-#include "storage/sinval.h"
 #include "tcop/idle_resource_cleaner.h"
 #include "tcop/utility.h"
 #include "utils/builtins.h"
