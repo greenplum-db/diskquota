@@ -382,7 +382,7 @@ diskquota_start_worker(PG_FUNCTION_ARGS)
 	if (!is_database_empty())
 	{
 		ereport(WARNING, (errmsg("[diskquota] diskquota is not ready because current database is not empty"),
-		                 errhint("please run 'SELECT diskquota.init_table_size_table();' to initialize diskquota")));
+		                  errhint("please run 'SELECT diskquota.init_table_size_table();' to initialize diskquota")));
 	}
 	PG_RETURN_VOID();
 }
