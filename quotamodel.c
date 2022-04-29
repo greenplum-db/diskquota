@@ -621,7 +621,7 @@ do_check_diskquota_state_is_ready(void)
 	bool      isnull;
 
 	dat   = SPI_getbinval(tup, tupdesc, 1, &isnull);
-	state = DatumGetInt32(dat);
+	state = isnull ? DISKQUOTA_UNKNOWN_STATE : DatumGetInt32(dat);
 
 	if (state != DISKQUOTA_READY_STATE)
 	{
