@@ -22,7 +22,7 @@ foreach(ddl IN LISTS ddl_files)
   cmake_path(GET ddl FILENAME ddl)
   exec_program(
     git ${CMAKE_SOURCE_DIR} ARGS
-    diff --exit-code ${ddl}
+    diff origin/gpdb --exit-code ${ddl}
     OUTPUT_VARIABLE NULL
     RETURN_VALUE "${ddl}_modified")
 
