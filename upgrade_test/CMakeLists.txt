@@ -18,7 +18,7 @@ regresstarget_add(
 
 exec_program(
   git ${CMAKE_SOURCE_DIR} ARGS
-  tag --sort version:refname | tail -n 1
+  tag | sort --version-sort -r | head -n 1
   OUTPUT_VARIABLE latest_tag
 )
 
