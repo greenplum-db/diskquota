@@ -35,7 +35,7 @@ foreach(ddl IN LISTS ddl_files)
   if("${${ddl}_modified}")
     message(
       NOTICE
-      "compare to ${latest_tag}, the DDL file ${ddl} is modified, checking if upgrade test is needed."
+      "compared to ${latest_tag}, the DDL file ${ddl} is modified, checking if upgrade test is needed."
     )
     set(DISKQUOTA_DDL_MODIFIED TRUE)
   endif()
