@@ -1,0 +1,169 @@
+--start_ignore
+\! gpconfig -c diskquota.naptime -v 1;
+20220627:17:15:43:023295 gpconfig:wxiaoran-a01:xiwang-[INFO]:-completed successfully with parameters '-c diskquota.naptime -v 1'
+\! gpconfig -c diskquota.max_workers -v 1;
+20220626:22:03:07:025118 gpconfig:wxiaoran-a01:xiwang-[INFO]:-completed successfully with parameters '-c diskquota.max_workers -v 1'
+\! gpstop -u;
+20220626:22:03:08:025289 gpstop:wxiaoran-a01:xiwang-[INFO]:-Starting gpstop with args: -u
+20220626:22:03:08:025289 gpstop:wxiaoran-a01:xiwang-[INFO]:-Gathering information and validating the environment...
+20220626:22:03:08:025289 gpstop:wxiaoran-a01:xiwang-[INFO]:-Obtaining Greenplum Master catalog information
+20220626:22:03:08:025289 gpstop:wxiaoran-a01:xiwang-[INFO]:-Obtaining Segment details from master...
+20220626:22:03:08:025289 gpstop:wxiaoran-a01:xiwang-[INFO]:-Greenplum Version: 'postgres (Greenplum Database) 6.20.3+dev.5.g4bc90eab02 build dev'
+20220626:22:03:08:025289 gpstop:wxiaoran-a01:xiwang-[INFO]:-Signalling all postmaster processes to reload
+CREATE DATABASE t1;
+CREATE DATABASE t2;
+CREATE DATABASE t3;
+CREATE DATABASE t4;
+--end_ignore
+\c t1
+CREATE EXTENSION diskquota;
+show diskquota.naptime;
+ diskquota.naptime 
+-------------------
+ 1
+(1 row)
+
+\c t2
+CREATE EXTENSION diskquota;
+\c t1
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+\c t2
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+--start_ignore
+\! gpconfig -c diskquota.naptime -v 1;
+20220627:17:23:49:030288 gpconfig:wxiaoran-a01:xiwang-[INFO]:-completed successfully with parameters '-c diskquota.naptime -v 1'
+\! gpconfig -c diskquota.max_workers -v 3;
+20220626:22:22:02:043248 gpconfig:wxiaoran-a01:xiwang-[INFO]:-completed successfully with parameters '-c diskquota.max_workers -v 3'
+\! gpstop -ari
+20220626:22:11:31:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-Starting gpstop with args: -ari
+20220626:22:11:31:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-Gathering information and validating the environment...
+20220626:22:11:31:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-Obtaining Greenplum Master catalog information
+20220626:22:11:31:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-Obtaining Segment details from master...
+20220626:22:11:31:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-Greenplum Version: 'postgres (Greenplum Database) 6.20.3+dev.5.g4bc90eab02 build dev'
+20220626:22:11:31:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-Commencing Master instance shutdown with mode='immediate'
+20220626:22:11:31:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-Master segment instance directory=/Users/xiwang/gpdb/gpAux/gpdemo/datadirs/qddir/demoDataDir-1/
+20220626:22:11:31:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-Attempting forceful termination of any leftover master process
+20220626:22:11:31:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-Terminating processes for segment /Users/xiwang/gpdb/gpAux/gpdemo/datadirs/qddir/demoDataDir-1/
+20220626:22:11:32:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-Stopping master standby host wxiaoran-a01.vmware.com mode=fast
+20220626:22:11:33:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-Successfully shutdown standby process on wxiaoran-a01.vmware.com
+20220626:22:11:33:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-Targeting dbid [2, 5, 3, 6, 4, 7] for shutdown
+20220626:22:11:33:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-Commencing parallel primary segment instance shutdown, please wait...
+20220626:22:11:33:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-0.00% of jobs completed
+20220626:22:11:36:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-100.00% of jobs completed
+20220626:22:11:36:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-Commencing parallel mirror segment instance shutdown, please wait...
+20220626:22:11:36:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-0.00% of jobs completed
+20220626:22:11:38:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-100.00% of jobs completed
+20220626:22:11:38:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-----------------------------------------------------
+20220626:22:11:38:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-   Segments stopped successfully      = 6
+20220626:22:11:38:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-   Segments with errors during stop   = 0
+20220626:22:11:38:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-----------------------------------------------------
+20220626:22:11:38:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-Successfully shutdown 6 of 6 segment instances 
+20220626:22:11:38:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-Database successfully shutdown with no errors reported
+20220626:22:11:38:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-Cleaning up leftover gpmmon process
+20220626:22:11:39:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-No leftover gpmmon process found
+20220626:22:11:39:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-Cleaning up leftover gpsmon processes
+20220626:22:11:39:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-No leftover gpsmon processes on some hosts. not attempting forceful termination on these hosts
+20220626:22:11:39:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-Cleaning up leftover shared memory
+20220626:22:11:41:034218 gpstop:wxiaoran-a01:xiwang-[INFO]:-Restarting System...
+--end_ignore
+\c t1
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+\c t2
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+\c t3
+CREATE EXTENSION diskquota;
+\c t1
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+\c t2
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+\c t3
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+\c t4
+CREATE EXTENSION diskquota;
+\c t1
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+\c t2
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+\c t3
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+\c t4
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+--start_ignore
+\c t1
+DROP EXTENSION diskquota;
+\c t2
+DROP EXTENSION diskquota;
+\c t3
+DROP EXTENSION diskquota;
+\c t4
+DROP EXTENSION diskquota;
+\c contrib_regression
+DROP DATABASE t1;
+DROP DATABASE t2;
+DROP DATABASE t3;
+DROP DATABASE t4;
+\! gpconfig -r diskquota.worker_timeout;
+20220626:22:03:49:026790 gpconfig:wxiaoran-a01:xiwang-[INFO]:-completed successfully with parameters '-r diskquota.worker_timeout'
+\! gpstop -u;
+20220626:22:03:50:026971 gpstop:wxiaoran-a01:xiwang-[INFO]:-Starting gpstop with args: -u
+20220626:22:03:50:026971 gpstop:wxiaoran-a01:xiwang-[INFO]:-Gathering information and validating the environment...
+20220626:22:03:50:026971 gpstop:wxiaoran-a01:xiwang-[INFO]:-Obtaining Greenplum Master catalog information
+20220626:22:03:50:026971 gpstop:wxiaoran-a01:xiwang-[INFO]:-Obtaining Segment details from master...
+20220626:22:03:50:026971 gpstop:wxiaoran-a01:xiwang-[INFO]:-Greenplum Version: 'postgres (Greenplum Database) 6.20.3+dev.5.g4bc90eab02 build dev'
+20220626:22:03:50:026971 gpstop:wxiaoran-a01:xiwang-[INFO]:-Signalling all postmaster processes to reload
+--end_ignore

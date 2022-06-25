@@ -13,11 +13,15 @@
 #ifndef DISK_QUOTA_H
 #define DISK_QUOTA_H
 
+//#include "lib/ilist.h"
 #include "c.h"
 #include "postgres.h"
 #include "port/atomics.h"
 
+#include "lib/ilist.h"
 #include "fmgr.h"
+#include "storage/ipc.h"
+#include "storage/dsm.h"
 #include "storage/lock.h"
 #include "storage/lwlock.h"
 #include "storage/relfilenode.h"
@@ -25,11 +29,12 @@
 
 #include "utils/hsearch.h"
 #include "utils/relcache.h"
+#include "utils/timestamp.h"
 
 #include <signal.h>
 
 /* max number of monitored database with diskquota enabled */
-#define MAX_NUM_MONITORED_DB 10
+#define MAX_NUM_MONITORED_DB 50
 typedef enum
 {
 	NAMESPACE_QUOTA = 0,
@@ -132,6 +137,7 @@ extern DiskQuotaLocks       diskquota_locks;
 extern ExtensionDDLMessage *extension_ddl_message;
 
 typedef struct DiskQuotaWorkerEntry DiskQuotaWorkerEntry;
+typedef struct DiskquotaDBEntry     DiskquotaDBEntry;
 
 /* disk quota worker info used by launcher to manage the worker processes. */
 struct DiskQuotaWorkerEntry
@@ -139,12 +145,41 @@ struct DiskQuotaWorkerEntry
 	Oid              dbid;
 	pg_atomic_uint32 epoch;     /* this counter will be increased after each worker loop */
 	bool             is_paused; /* true if this worker is paused */
-
+	int              launcherpid;
 	// NOTE: this field only can access in diskquota launcher, in other process it is dangling pointer
 	BackgroundWorkerHandle *handle;
+	TimestampTz             launchtime;
+	int                     pid;
+	dlist_node              links;
 };
 
-extern HTAB *disk_quota_worker_map;
+typedef struct
+{
+	dlist_head                   freeWorkers;
+	dlist_head                   runningWorkers;
+	dlist_head                   finishWorkers;
+	struct DiskQuotaWorkerEntry *startingWorker;
+	int                          running_workers_num;
+} DiskquotaLauncherShmemStruct;
+
+struct DiskquotaDBEntry
+{
+	dlist_node  node;
+	Oid         dbid;
+	char       *dbname;
+	TimestampTz nextTime;
+	bool        running;
+};
+
+typedef struct DiskquotaDBStatus DiskquotaDBStatus;
+struct DiskquotaDBStatus
+{
+	Oid  dbid;
+	bool inited;
+};
+
+extern HTAB              *disk_quota_worker_map;
+extern DiskquotaDBStatus *diskquotaDBStatus;
 
 /* drop extension hook */
 extern void register_diskquota_object_access_hook(void);
@@ -155,7 +190,7 @@ extern void invalidate_database_rejectmap(Oid dbid);
 
 /* quota model interface*/
 extern void init_disk_quota_shmem(void);
-extern void init_disk_quota_model(void);
+extern void init_disk_quota_model(Oid dbid);
 extern void refresh_disk_quota_model(bool force);
 extern bool check_diskquota_state_is_ready(void);
 extern bool quota_check_common(Oid reloid, RelFileNode *relfilenode);
@@ -183,5 +218,7 @@ extern bool         worker_increase_epoch(Oid database_oid);
 extern unsigned int worker_get_epoch(Oid database_oid);
 extern bool         diskquota_is_paused(void);
 extern void         do_check_diskquota_state_is_ready(void);
-
+extern Size         DiskquotaLauncherShmemSize(void);
+extern void         InitLaunchShmem(void);
+extern void         init_table_size_map(Oid dbid);
 #endif

@@ -353,7 +353,7 @@ diskquota_start_worker(PG_FUNCTION_ARGS)
 	extension_ddl_message->dbid    = MyDatabaseId;
 	launcher_pid                   = extension_ddl_message->launcher_pid;
 	/* setup sig handler to diskquota launcher process */
-	rc = kill(launcher_pid, SIGUSR1);
+	rc = kill(launcher_pid, SIGUSR2);
 	LWLockRelease(diskquota_locks.extension_ddl_message_lock);
 	if (rc == 0)
 	{
@@ -609,7 +609,7 @@ dq_object_access_hook_on_drop(void)
 	extension_ddl_message->result  = ERR_PENDING;
 	extension_ddl_message->dbid    = MyDatabaseId;
 	launcher_pid                   = extension_ddl_message->launcher_pid;
-	rc                             = kill(launcher_pid, SIGUSR1);
+	rc                             = kill(launcher_pid, SIGUSR2);
 	LWLockRelease(diskquota_locks.extension_ddl_message_lock);
 	if (rc == 0)
 	{
