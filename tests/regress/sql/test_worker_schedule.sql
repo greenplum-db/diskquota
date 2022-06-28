@@ -23,7 +23,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 --start_ignore
 \! gpconfig -c diskquota.naptime -v 1;
 \! gpconfig -c diskquota.max_workers -v 3;
-\! gpstop -ari
+\! gpstop -arf
 --end_ignore
 
 \c t1
