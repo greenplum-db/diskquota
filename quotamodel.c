@@ -510,7 +510,7 @@ init_disk_quota_model(Oid dbid)
 	hash_ctl.keysize   = sizeof(RejectMapEntry);
 	hash_ctl.entrysize = sizeof(LocalRejectMapEntry);
 	hash_ctl.hash      = tag_hash;
-	/* WARNNING: The max length of name of the map is 48 */ 
+	/* WARNNING: The max length of name of the map is 48 */
 	format_name("localrejectmap", dbid, &str);
 	local_disk_quota_reject_map =
 	        ShmemInitHash(str.data, MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, &hash_ctl,
