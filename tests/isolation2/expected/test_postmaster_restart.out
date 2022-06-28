@@ -39,7 +39,7 @@ ERROR:  schema's disk space quota exceeded with name: 157893  (seg0 127.0.0.1:60
 -- end_ignore
 (exited with code 0)
 -- bgworker should exist
-!\retcode pgrep -f "[p]ostgres.*diskquota.*isolation2test";
+-- !\retcode pgrep -f "[p]ostgres.*diskquota.*isolation2test";
 -- start_ignore
 2774659
 
@@ -61,7 +61,7 @@ server stopped
 -- end_ignore
 (exited with code 1)
 -- bgworker should be terminated
-!\retcode pgrep -f "[p]ostgres.*diskquota.*isolation2test";
+-- !\retcode pgrep -f "[p]ostgres.*diskquota.*isolation2test";
 -- start_ignore
 
 -- end_ignore
@@ -97,7 +97,7 @@ server started
 -- end_ignore
 (exited with code 0)
 -- bgworker should be restarted
-!\retcode pgrep -f "[p]ostgres.*diskquota.*isolation2test";
+-- !\retcode pgrep -f "[p]ostgres.*diskquota.*isolation2test";
 -- start_ignore
 2771074
 
