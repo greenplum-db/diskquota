@@ -401,43 +401,6 @@ diskquota_start_worker(PG_FUNCTION_ARGS)
 }
 
 /*
- * Dispatch pausing/resuming command to segments.
- */
-static void
-dispatch_pause_or_resume_command(Oid dbid, bool pause_extension)
-{
-	CdbPgResults   cdb_pgresults = {NULL, 0};
-	int            i;
-	StringInfoData sql;
-
-	initStringInfo(&sql);
-	appendStringInfo(&sql, "SELECT diskquota.%s", pause_extension ? "pause" : "resume");
-	if (dbid == InvalidOid)
-	{
-		appendStringInfo(&sql, "()");
-	}
-	else
-	{
-		appendStringInfo(&sql, "(%d)", dbid);
-	}
-	CdbDispatchCommand(sql.data, DF_NONE, &cdb_pgresults);
-
-	for (i = 0; i < cdb_pgresults.numResults; ++i)
-	{
-		PGresult *pgresult = cdb_pgresults.pg_results[i];
-		if (PQresultStatus(pgresult) != PGRES_TUPLES_OK)
-		{
-			cdbdisp_clearCdbPgResults(&cdb_pgresults);
-			ereport(ERROR, (errmsg("[diskquota] %s extension on segments, encounter unexpected result from segment: %d",
-			                       pause_extension ? "pausing" : "resuming", PQresultStatus(pgresult))));
-		}
-	}
-
-	pfree(sql.data);
-	cdbdisp_clearCdbPgResults(&cdb_pgresults);
-}
-
-/*
  * this function is called by user.
  * pause diskquota in current or specific database.
  * After this function being called, diskquota doesn't emit an error when the disk usage limit is exceeded.
@@ -455,26 +418,18 @@ diskquota_pause(PG_FUNCTION_ARGS)
 	{
 		dbid = PG_GETARG_OID(0);
 	}
-
-	// pause current worker
-	LWLockAcquire(diskquota_locks.worker_map_lock, LW_EXCLUSIVE);
-	{
-		bool                  found;
-		DiskQuotaWorkerEntry *hentry;
-
-		hentry = (DiskQuotaWorkerEntry *)hash_search(disk_quota_worker_map, (void *)&dbid,
-		                                             // segment dose not boot the worker
-		                                             // this will add new element on segment
-		                                             // delete this element in diskquota_resume()
-		                                             HASH_ENTER, &found);
-
-		hentry->is_paused = true;
-	}
-	LWLockRelease(diskquota_locks.worker_map_lock);
-
+	// active current worker
 	if (IS_QUERY_DISPATCHER())
-		dispatch_pause_or_resume_command(PG_NARGS() == 0 ? InvalidOid : dbid, true /* pause_extension */);
-
+	{
+		// pause current worker
+		if (SPI_OK_CONNECT != SPI_connect())
+		{
+			ereport(ERROR,
+			        (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] unable to connect to execute SPI query")));
+		}
+		remove_my_db_from_all_segments(dbid);
+		SPI_finish();
+	}
 	PG_RETURN_VOID();
 }
 
@@ -497,28 +452,16 @@ diskquota_resume(PG_FUNCTION_ARGS)
 	}
 
 	// active current worker
-	LWLockAcquire(diskquota_locks.worker_map_lock, LW_EXCLUSIVE);
-	{
-		bool                  found;
-		DiskQuotaWorkerEntry *hentry;
-
-		hentry = (DiskQuotaWorkerEntry *)hash_search(disk_quota_worker_map, (void *)&dbid, HASH_FIND, &found);
-		if (found)
-		{
-			hentry->is_paused = false;
-		}
-
-		// remove the element since we do not need any more
-		// ref diskquota_pause()
-		if (found && hentry->handle == NULL)
-		{
-			hash_search(disk_quota_worker_map, (void *)&dbid, HASH_REMOVE, &found);
-		}
-	}
-	LWLockRelease(diskquota_locks.worker_map_lock);
-
 	if (IS_QUERY_DISPATCHER())
-		dispatch_pause_or_resume_command(PG_NARGS() == 0 ? InvalidOid : dbid, false /* pause_extension */);
+	{
+		if (SPI_OK_CONNECT != SPI_connect())
+		{
+			ereport(ERROR,
+			        (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] unable to connect to execute SPI query")));
+		}
+		dispatch_my_db_to_all_segments(dbid);
+		SPI_finish();
+	}
 
 	PG_RETURN_VOID();
 }
@@ -1256,10 +1199,6 @@ update_diskquota_db_list(Oid dbid, HASHACTION action)
 	else if (action == HASH_REMOVE)
 	{
 		hash_search(monitoring_dbid_cache, &dbid, HASH_REMOVE, &found);
-		if (!found)
-		{
-			ereport(WARNING, (errmsg("cannot remove the database from db list, dbid not found")));
-		}
 	}
 	LWLockRelease(diskquota_locks.monitoring_dbid_cache_lock);
 }

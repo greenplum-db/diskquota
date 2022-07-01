@@ -29,10 +29,6 @@ SELECT diskquota.wait_for_worker_new_epoch();
 -- expect insert fail
 INSERT INTO a SELECT generate_series(1,100);
 
--- table size should be updated after resume
-SELECT tableid::regclass, size, segid FROM diskquota.table_size 
-WHERE tableid = 'a'::regclass AND segid = -1;
-
 RESET search_path;
 DROP TABLE s1.a;
 DROP SCHEMA s1;

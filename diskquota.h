@@ -78,7 +78,7 @@ struct DiskQuotaLocks
 	LWLock *extension_ddl_lock; /* ensure create diskquota extension serially */
 	LWLock *monitoring_dbid_cache_lock;
 	LWLock *relation_cache_lock;
-	LWLock *worker_map_lock;
+	LWLock *dblist_lock;
 	LWLock *altered_reloid_cache_lock;
 };
 typedef struct DiskQuotaLocks DiskQuotaLocks;
@@ -142,35 +142,40 @@ typedef struct DiskquotaDBEntry     DiskquotaDBEntry;
 /* disk quota worker info used by launcher to manage the worker processes. */
 struct DiskQuotaWorkerEntry
 {
-	Oid              dbid;
-	pg_atomic_uint32 epoch;     /* this counter will be increased after each worker loop */
-	bool             is_paused; /* true if this worker is paused */
-	int              launcherpid;
+	Oid dbid;
+	int launcherpid;
 	// NOTE: this field only can access in diskquota launcher, in other process it is dangling pointer
-	BackgroundWorkerHandle *handle;
-	TimestampTz             launchtime;
-	int                     pid;
-	dlist_node              links;
+	TimestampTz       launchtime;
+	int               pid;
+	DiskquotaDBEntry *dbEntry;
+	dlist_node        links;
+	TimestampTz       dbCreateTime;
 };
 
 typedef struct
 {
 	dlist_head                   freeWorkers;
 	dlist_head                   runningWorkers;
-	dlist_head                   finishWorkers;
+	dlist_head                   dbList;
+	dlist_head                   freeDBList;
 	struct DiskQuotaWorkerEntry *startingWorker;
 	int                          running_workers_num;
 } DiskquotaLauncherShmemStruct;
 
+/* databsae info used by launcher to schedule diskquota workers, in laucher local memory */
 struct DiskquotaDBEntry
 {
-	dlist_node  node;
-	Oid         dbid;
-	char       *dbname;
-	TimestampTz nextTime;
-	bool        running;
+	dlist_node              node;
+	Oid                     dbid;
+	char                   *dbname;
+	bool                    running;
+	pg_atomic_uint32        epoch; /* this counter will be increased after each worker loop */
+	BackgroundWorkerHandle *handle;
+	// pg_atomic_uint32        is_paused; /* 1 if this worker is paused */
+	TimestampTz createTime;
 };
 
+/* store the running status info of the db*/
 typedef struct DiskquotaDBStatus DiskquotaDBStatus;
 struct DiskquotaDBStatus
 {
@@ -214,11 +219,16 @@ extern List    *diskquota_get_index_list(Oid relid);
 extern void     diskquota_get_appendonly_aux_oid_list(Oid reloid, Oid *segrelid, Oid *blkdirrelid, Oid *visimaprelid);
 extern Oid      diskquota_parse_primary_table_oid(Oid namespace, char *relname);
 
-extern bool         worker_increase_epoch(Oid database_oid);
-extern unsigned int worker_get_epoch(Oid database_oid);
-extern bool         diskquota_is_paused(void);
-extern void         do_check_diskquota_state_is_ready(void);
-extern Size         DiskquotaLauncherShmemSize(void);
-extern void         InitLaunchShmem(void);
-extern void         init_table_size_map(Oid dbid);
+extern bool              worker_increase_epoch(Oid database_oid);
+extern unsigned int      worker_get_epoch(Oid database_oid);
+extern bool              diskquota_is_paused(void);
+extern void              do_check_diskquota_state_is_ready(void);
+extern Size              DiskquotaLauncherShmemSize(void);
+extern void              InitLaunchShmem(void);
+extern void              init_table_size_map(Oid dbid);
+extern DiskquotaDBEntry *get_db_entry(Oid dbid);
+extern uint32            db_is_paused(DiskquotaDBEntry *dbEntry);
+extern void              dispatch_my_db_to_all_segments(Oid dbid);
+extern void              remove_my_db_from_all_segments(Oid dbid);
+extern void              reset_disk_quota_model(Oid dbid);
 #endif

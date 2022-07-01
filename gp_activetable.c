@@ -47,8 +47,19 @@ typedef struct DiskQuotaSetOFCache
 	HASH_SEQ_STATUS pos;
 } DiskQuotaSetOFCache;
 
-HTAB *active_tables_map     = NULL;
+HTAB *active_tables_map = NULL;
+/*
+ * monitoring_dbid_cache is a white list for diskquota
+ * to know which databases it need to monitor.
+ *
+ * dbid will be added to it when creating diskquota extension
+ * dbid will be removed from it when droping diskquota extension
+ * dbid will be removed from it when diskquota.paused() called
+ * dbid will be added back to it when diskquota.resume() called
+ *
+ */
 HTAB *monitoring_dbid_cache = NULL;
+HTAB *paused_dbid_cache     = NULL;
 HTAB *altered_reloid_cache  = NULL;
 
 /* active table hooks which detect the disk file size change. */
@@ -74,6 +85,7 @@ static void           report_active_table_helper(const RelFileNodeBackend *relFi
 static void           remove_from_active_table_map(const RelFileNodeBackend *relFileNode);
 static void           report_relation_cache_helper(Oid relid);
 static void           report_altered_reloid(Oid reloid);
+static Oid            get_dbid(ArrayType *array);
 
 void  init_active_table_hook(void);
 void  init_shm_worker_active_tables(void);
@@ -396,6 +408,7 @@ diskquota_fetch_table_stat(PG_FUNCTION_ARGS)
 	int32            mode = PG_GETARG_INT32(0);
 	AttInMetadata   *attinmeta;
 	bool             isFirstCall = true;
+	Oid              dbid;
 
 	HTAB                      *localCacheTable = NULL;
 	DiskQuotaSetOFCache       *cache           = NULL;
@@ -434,11 +447,13 @@ diskquota_fetch_table_stat(PG_FUNCTION_ARGS)
 				localCacheTable = get_active_tables_stats(PG_GETARG_ARRAYTYPE_P(1));
 				break;
 			case ADD_DB_TO_MONITOR:
-				update_diskquota_db_list(MyDatabaseId, HASH_ENTER);
-				break;
+				dbid = get_dbid(PG_GETARG_ARRAYTYPE_P(1));
+				update_diskquota_db_list(dbid, HASH_ENTER);
+				PG_RETURN_NULL();
 			case REMOVE_DB_FROM_BEING_MONITORED:
-				update_diskquota_db_list(MyDatabaseId, HASH_REMOVE);
-				break;
+				dbid = get_dbid(PG_GETARG_ARRAYTYPE_P(1));
+				update_diskquota_db_list(dbid, HASH_REMOVE);
+				PG_RETURN_NULL();
 			default:
 				ereport(ERROR, (errmsg("Unused mode number %d, transaction will be aborted", mode)));
 				break;
@@ -510,6 +525,22 @@ diskquota_fetch_table_stat(PG_FUNCTION_ARGS)
 	hash_destroy(cache->result);
 	pfree(cache);
 	SRF_RETURN_DONE(funcctx);
+}
+
+static Oid
+get_dbid(ArrayType *array)
+{
+	Assert(ARR_ELEMTYPE(array) == OIDOID);
+	char *ptr;
+	bool  typbyval;
+	int16 typlen;
+	char  typalign;
+	Oid   dbid;
+
+	get_typlenbyvalalign(ARR_ELEMTYPE(array), &typlen, &typbyval, &typalign);
+	ptr  = ARR_DATA_PTR(array);
+	dbid = DatumGetObjectId(fetch_att(ptr, typbyval, typlen));
+	return dbid;
 }
 
 /*
