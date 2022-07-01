@@ -304,6 +304,7 @@ INSERT INTO diskquota.state SELECT (count(relname) = 0)::int FROM pg_class AS c,
 
 -- re-dispatch pause status to false. in case user pause-drop-recreate.
 -- refer to see test case 'test_drop_after_pause'
+SELECT FROM diskquota.resume();
 
 -- Starting the worker has to be the last step.
 CREATE FUNCTION diskquota.diskquota_start_worker() RETURNS void STRICT AS '$libdir/diskquota-2.0.so' LANGUAGE C;
