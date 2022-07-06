@@ -403,7 +403,7 @@ disk_quota_shmem_startup(void)
 
 	memset(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize   = sizeof(Oid);
-	hash_ctl.entrysize = sizeof(Oid);
+	hash_ctl.entrysize = sizeof(MonitorDBEntry);
 	hash_ctl.hash      = oid_hash;
 
 	monitoring_dbid_cache = ShmemInitHash("table oid cache which shoud tracking", MAX_NUM_MONITORED_DB,
@@ -461,7 +461,7 @@ DiskQuotaShmemSize(void)
 	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(DiskQuotaActiveTableEntry)));
 	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(DiskQuotaRelationCacheEntry)));
 	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(DiskQuotaRelidCacheEntry)));
-	size = add_size(size, hash_estimate_size(MAX_NUM_MONITORED_DB, sizeof(Oid)));
+	size = add_size(size, hash_estimate_size(MAX_NUM_MONITORED_DB, sizeof(MonitorDBEntry)));
 	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(Oid)));
 	size = add_size(size, DiskquotaLauncherShmemSize());
 	size = add_size(size, database_size() * MAX_NUM_MONITORED_DB);
@@ -626,7 +626,7 @@ check_diskquota_state_is_ready()
 		connected = true;
 		PushActiveSnapshot(GetTransactionSnapshot());
 		pushed_active_snap = true;
-		dispatch_my_db_to_all_segments(MyDatabaseId);
+		update_monitor_db(MyDatabaseId, ADD_DB_TO_MONITOR);
 		do_check_diskquota_state_is_ready();
 		is_ready = true;
 	}
@@ -2089,13 +2089,13 @@ show_rejectmap(PG_FUNCTION_ARGS)
 }
 
 void
-dispatch_my_db_to_all_segments(Oid dbid)
+update_monitor_db(Oid dbid, FetchTableStatType action)
 {
 	StringInfoData sql_command;
 	initStringInfo(&sql_command);
 	appendStringInfo(&sql_command,
 	                 "SELECT diskquota.diskquota_fetch_table_stat(%d, '%s'::oid[]) FROM gp_dist_random('gp_id')",
-	                 ADD_DB_TO_MONITOR, psprintf("{%d}", dbid));
+	                 action, psprintf("{%d}", dbid));
 	/* Add current database to the monitored db cache on all segments */
 	int ret = SPI_execute(sql_command.data, true, 0);
 	pfree(sql_command.data);
@@ -2105,28 +2105,9 @@ dispatch_my_db_to_all_segments(Oid dbid)
 	           errmsg("[diskquota] check diskquota state SPI_execute failed: error code %d", ret)));
 
 	/* Add current database to the monitored db cache on coordinator */
-	update_diskquota_db_list(dbid, HASH_ENTER);
+	update_diskquota_db_list(dbid, action);
 }
 
-void
-remove_my_db_from_all_segments(Oid dbid)
-{
-	StringInfoData sql_command;
-	initStringInfo(&sql_command);
-	appendStringInfo(&sql_command,
-	                 "SELECT diskquota.diskquota_fetch_table_stat(%d, '%s'::oid[]) FROM gp_dist_random('gp_id')",
-	                 REMOVE_DB_FROM_BEING_MONITORED, psprintf("{%d}", dbid));
-	/* Add current database to the monitored db cache on all segments */
-	int ret = SPI_execute(sql_command.data, true, 0);
-	pfree(sql_command.data);
-
-	ereportif(ret != SPI_OK_SELECT, ERROR,
-	          (errcode(ERRCODE_INTERNAL_ERROR),
-	           errmsg("[diskquota] check diskquota state SPI_execute failed: error code %d", ret)));
-
-	/* removecurrent database to the monitored db cache on coordinator */
-	update_diskquota_db_list(dbid, HASH_REMOVE);
-}
 static void
 format_name(const char *prefix, Oid dbid, StringInfo str)
 {

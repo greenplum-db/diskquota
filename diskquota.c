@@ -112,17 +112,22 @@ static DiskquotaDBEntry     *next_db();
 static DiskQuotaWorkerEntry *next_worker(Oid dbid);
 static DiskquotaDBEntry     *add_db_entry(Oid dbid);
 static void                  release_db_entry(Oid dbid);
+static bool                  is_new_db(Oid dbid);
 
 bool
 diskquota_is_paused()
 {
 	Assert(MyDatabaseId != InvalidOid);
-	bool paused = false;
-	bool found;
+	bool           paused = false;
+	bool           found;
+	MonitorDBEntry entry;
 
 	LWLockAcquire(diskquota_locks.monitoring_dbid_cache_lock, LW_SHARED);
-	hash_search(monitoring_dbid_cache, &MyDatabaseId, HASH_FIND, &found);
-	paused = found ? false : true;
+	entry = hash_search(monitoring_dbid_cache, &MyDatabaseId, HASH_FIND, &found);
+	if (found)
+	{
+		paused = entry->paused;
+	}
 	LWLockRelease(diskquota_locks.monitoring_dbid_cache_lock);
 	return paused;
 }
@@ -304,6 +309,7 @@ disk_quota_worker_main(Datum main_arg)
 {
 	char *dbname       = MyBgworkerEntry->bgw_name;
 	int   launcher_pid = 0;
+	bool  loop         = true;
 	ereport(LOG, (errmsg("[diskquota] start disk quota worker process to monitor database:%s", dbname)));
 
 	/* Establish signal handlers before unblocking signals. */
@@ -389,6 +395,7 @@ disk_quota_worker_main(Datum main_arg)
 	 */
 	init_ps_display("bgworker:", "[diskquota]", dbname, "");
 
+	if (is_new_db(MyDatabaseId)) reset_disk_quota_model(MyDatabaseId);
 	if (!diskquotaDBStatus->inited)
 	{
 		/* Waiting for diskquota state become ready */
@@ -442,16 +449,49 @@ disk_quota_worker_main(Datum main_arg)
 	}
 	ereport(LOG, (errmsg("[diskquota] start bgworker for database: \"%s\"", dbname)));
 
-	if (!diskquota_is_paused())
+	while (!got_sigterm && loop)
 	{
-		// CurrentResourceOwner = diskquotaResourceOwner = ResourceOwnerCreate(NULL, "diskquota worker");
+		int rc;
+
+		CHECK_FOR_INTERRUPTS();
+
+		/*
+		 * Background workers mustn't call usleep() or any direct equivalent:
+		 * instead, they may wait on their process latch, which sleeps as
+		 * necessary, but is awakened if postmaster dies.  That way the
+		 * background process goes away immediately in an emergency.
+		 */
+		rc = WaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH, diskquota_naptime * 1000L);
+		ResetLatch(&MyProc->procLatch);
+
+		// be nice to scheduler when naptime == 0 and diskquota_is_paused() == true
+		if (!diskquota_naptime) usleep(1);
+
+		/* Emergency bailout if postmaster has died */
+		if (rc & WL_POSTMASTER_DEATH)
+		{
+			ereport(LOG, (errmsg("[diskquota] bgworker for \"%s\" is being terminated by postmaster death.", dbname)));
+			proc_exit(1);
+		}
+
+		/* In case of a SIGHUP, just reload the configuration. */
+		if (got_sighup)
+		{
+			got_sighup = false;
+			ProcessConfigFile(PGC_SIGHUP);
+		}
 		SIMPLE_FAULT_INJECTOR("diskquota_worker_main");
-		/* Refresh quota model with init mode */
-		refresh_disk_quota_model(!diskquotaDBStatus->inited);
-		diskquotaDBStatus->inited = true;
+		if (!diskquota_is_paused())
+		{
+			/* Refresh quota model with init mode */
+			refresh_disk_quota_model(!diskquotaDBStatus->inited);
+			if (!diskquotaDBStatus->inited) diskquotaDBStatus->inited = true;
+		}
+		worker_increase_epoch(MyDatabaseId);
+		MemoryAccounting_Reset();
+		loop = !DiskquotaLauncherShmem->dynamicWorker;
 	}
-	worker_increase_epoch(MyDatabaseId);
-	MemoryAccounting_Reset();
+
 	ereport(LOG, (errmsg("[diskquota] stop bgworker for database: \"%s\"", dbname)));
 	proc_exit(0);
 }
@@ -753,6 +793,8 @@ init_database_list(void)
 	PopActiveSnapshot();
 	CommitTransactionCommand();
 	/* TODO: clean invalid database */
+
+	if (num_db >= diskquota_max_workers) DiskquotaLauncherShmem->dynamicWorker = true;
 }
 
 /*
@@ -826,11 +868,13 @@ do_process_extension_ddl_message(MessageResult *code, ExtensionDDLMessage local_
 			case CMD_CREATE_EXTENSION:
 				on_add_db(local_extension_ddl_message.dbid, code);
 				num_db++;
+				if (num_db >= diskquota_max_workers) DiskquotaLauncherShmem->dynamicWorker = true;
 				*code = ERR_OK;
 				break;
 			case CMD_DROP_EXTENSION:
 				on_del_db(local_extension_ddl_message.dbid, code);
 				num_db--;
+				if (num_db < diskquota_max_workers) DiskquotaLauncherShmem->dynamicWorker = false;
 				*code = ERR_OK;
 				break;
 			default:
@@ -922,7 +966,6 @@ on_del_db(Oid dbid, MessageResult *code)
 	{
 		del_dbid_from_database_list(dbid);
 		release_db_entry(dbid);
-		reset_disk_quota_model(dbid);
 		/* clear the out-of-quota rejectmap in shared memory */
 		invalidate_database_rejectmap(dbid);
 	}
@@ -1411,6 +1454,7 @@ InitLaunchShmem()
 	bool found;
 	DiskquotaLauncherShmem = (DiskquotaLauncherShmemStruct *)ShmemInitStruct("Diskquota launcher Data",
 	                                                                         DiskquotaLauncherShmemSize(), &found);
+	memset(DiskquotaLauncherShmem, 0, sizeof(DiskquotaLauncherShmemStruct));
 	if (!found)
 	{
 		DiskQuotaWorkerEntry *worker;
@@ -1575,4 +1619,14 @@ next_worker(Oid dbid)
 	dlist_push_head(&DiskquotaLauncherShmem->runningWorkers, &dq_worker->links);
 	DiskquotaLauncherShmem->running_workers_num++;
 	return dq_worker;
+}
+
+static bool
+is_new_db(Oid dbid)
+{
+	bool found;
+	LWLockAcquire(diskquota_locks.monitoring_dbid_cache_lock, LW_SHARED);
+	hash_search(monitoring_dbid_cache, &MyDatabaseId, HASH_FIND, &found);
+	LWLockRelease(diskquota_locks.monitoring_dbid_cache_lock);
+	return !found;
 }

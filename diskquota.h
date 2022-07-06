@@ -62,6 +62,8 @@ typedef enum
 	FETCH_ACTIVE_SIZE, /* fetch size for active tables */
 	ADD_DB_TO_MONITOR,
 	REMOVE_DB_FROM_BEING_MONITORED,
+	PAUSE_DB_TO_MONITOR,
+	RESUME_DB_TO_MONITOR,
 } FetchTableStatType;
 
 typedef enum
@@ -160,6 +162,7 @@ typedef struct
 	dlist_head                   freeDBList;
 	struct DiskQuotaWorkerEntry *startingWorker;
 	int                          running_workers_num;
+	volatile bool                dynamicWorker;
 } DiskquotaLauncherShmemStruct;
 
 /* databsae info used by launcher to schedule diskquota workers, in laucher local memory */
@@ -183,6 +186,12 @@ struct DiskquotaDBStatus
 	bool inited;
 };
 
+typedef struct MonitorDBEntry *MonitorDBEntry;
+struct MonitorDBEntry
+{
+	Oid           dbid;
+	volatile bool paused;
+};
 extern HTAB              *disk_quota_worker_map;
 extern DiskquotaDBStatus *diskquotaDBStatus;
 
@@ -228,7 +237,7 @@ extern void              InitLaunchShmem(void);
 extern void              init_table_size_map(Oid dbid);
 extern DiskquotaDBEntry *get_db_entry(Oid dbid);
 extern uint32            db_is_paused(DiskquotaDBEntry *dbEntry);
-extern void              dispatch_my_db_to_all_segments(Oid dbid);
-extern void              remove_my_db_from_all_segments(Oid dbid);
+extern void              update_monitor_db(Oid dbid, FetchTableStatType action);
 extern void              reset_disk_quota_model(Oid dbid);
+extern void              update_diskquota_db_list(Oid dbid, FetchTableStatType action);
 #endif

@@ -427,7 +427,7 @@ diskquota_pause(PG_FUNCTION_ARGS)
 			ereport(ERROR,
 			        (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] unable to connect to execute SPI query")));
 		}
-		remove_my_db_from_all_segments(dbid);
+		update_monitor_db(dbid, PAUSE_DB_TO_MONITOR);
 		SPI_finish();
 	}
 	PG_RETURN_VOID();
@@ -459,7 +459,7 @@ diskquota_resume(PG_FUNCTION_ARGS)
 			ereport(ERROR,
 			        (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] unable to connect to execute SPI query")));
 		}
-		dispatch_my_db_to_all_segments(dbid);
+		update_monitor_db(dbid, RESUME_DB_TO_MONITOR);
 		SPI_finish();
 	}
 
@@ -534,7 +534,7 @@ dq_object_access_hook_on_drop(void)
 	 * Remove the current database from monitored db cache
 	 * on all segments and on coordinator.
 	 */
-	update_diskquota_db_list(MyDatabaseId, HASH_REMOVE);
+	update_diskquota_db_list(MyDatabaseId, REMOVE_DB_FROM_BEING_MONITORED);
 
 	if (!IS_QUERY_DISPATCHER())
 	{
@@ -1178,27 +1178,47 @@ get_size_in_mb(char *str)
  * Will print a WARNING to log if out of memory
  */
 void
-update_diskquota_db_list(Oid dbid, HASHACTION action)
+update_diskquota_db_list(Oid dbid, FetchTableStatType action)
 {
-	bool found = false;
+	bool           found = false;
+	MonitorDBEntry entry;
 
 	/* add/remove the dbid to monitoring database cache to filter out table not under
 	 * monitoring in hook functions
 	 */
 
 	LWLockAcquire(diskquota_locks.monitoring_dbid_cache_lock, LW_EXCLUSIVE);
-	if (action == HASH_ENTER)
+	if (action == ADD_DB_TO_MONITOR)
 	{
-		Oid *entry = NULL;
-		entry      = hash_search(monitoring_dbid_cache, &dbid, HASH_ENTER_NULL, &found);
+		MonitorDBEntry entry;
+
+		entry = hash_search(monitoring_dbid_cache, &dbid, HASH_ENTER_NULL, &found);
 		if (entry == NULL)
 		{
 			ereport(WARNING, (errmsg("can't alloc memory on dbid cache, there ary too many databases to monitor")));
 		}
+		entry->paused = false;
 	}
-	else if (action == HASH_REMOVE)
+	else if (action == REMOVE_DB_FROM_BEING_MONITORED)
 	{
 		hash_search(monitoring_dbid_cache, &dbid, HASH_REMOVE, &found);
+	}
+	else if (action == PAUSE_DB_TO_MONITOR)
+	{
+		entry = hash_search(monitoring_dbid_cache, &dbid, HASH_FIND, &found);
+		if (found)
+		{
+			entry->paused = true;
+		}
+	}
+	else if (action == RESUME_DB_TO_MONITOR)
+	{
+		entry = hash_search(monitoring_dbid_cache, &dbid, HASH_FIND, &found);
+
+		if (found)
+		{
+			entry->paused = false;
+		}
 	}
 	LWLockRelease(diskquota_locks.monitoring_dbid_cache_lock);
 }
