@@ -1073,7 +1073,7 @@ start_worker(void)
 	MemoryContext         old_ctx;
 	bool                  ret;
 	DiskQuotaWorkerEntry *dq_worker;
-	DiskquotaDBEntry *dbEntry;
+	DiskquotaDBEntry     *dbEntry;
 
 	/* pick a db and worker to run */
 	if (!CanLaunchWorker())
@@ -1086,11 +1086,10 @@ start_worker(void)
 		return false;
 	}
 
-	dq_worker               = next_worker(dbEntry);
-	if (dq_worker == NULL)
-		return false;
+	dq_worker = next_worker(dbEntry);
+	if (dq_worker == NULL) return false;
 
-	dbEntry->running        = true;
+	dbEntry->running = true;
 	memset(&worker, 0, sizeof(BackgroundWorker));
 	worker.bgw_flags      = BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
 	worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
@@ -1401,8 +1400,7 @@ FreeWorker(DiskQuotaWorkerEntry *worker)
 	if (worker != NULL)
 	{
 		LWLockAcquire(diskquota_locks.workerlist_lock, LW_EXCLUSIVE);
-		if (worker->dbEntry != NULL)
-			worker->dbEntry->running = false;
+		if (worker->dbEntry != NULL) worker->dbEntry->running = false;
 		dlist_delete(&worker->links);
 		dlist_push_head(&DiskquotaLauncherShmem->freeWorkers, &worker->links);
 		DiskquotaLauncherShmem->running_workers_num--;
@@ -1425,12 +1423,9 @@ CanLaunchWorker(void)
 	bool result = false;
 	LWLockAcquire(diskquota_locks.workerlist_lock, LW_SHARED);
 	LWLockAcquire(diskquota_locks.dblist_lock, LW_SHARED);
-	if (dlist_is_empty(&DiskquotaLauncherShmem->freeWorkers))
-		goto out;
-	if (dlist_is_empty(&DiskquotaLauncherShmem->dbList))
-		goto out;
-	if (DiskquotaLauncherShmem->running_workers_num >= num_db)
-		goto out;
+	if (dlist_is_empty(&DiskquotaLauncherShmem->freeWorkers)) goto out;
+	if (dlist_is_empty(&DiskquotaLauncherShmem->dbList)) goto out;
+	if (DiskquotaLauncherShmem->running_workers_num >= num_db) goto out;
 	result = true;
 out:
 	LWLockRelease(diskquota_locks.workerlist_lock);
@@ -1594,7 +1589,7 @@ next_db()
 		dbEntry = dlist_container(DiskquotaDBEntry, node, curDB);
 	}
 out:
-	dbEntry =  curDB == NULL ? NULL : dlist_container(DiskquotaDBEntry, node, curDB);
+	dbEntry = curDB == NULL ? NULL : dlist_container(DiskquotaDBEntry, node, curDB);
 	LWLockRelease(diskquota_locks.dblist_lock);
 	return dbEntry;
 }
@@ -1607,8 +1602,7 @@ next_worker(DiskquotaDBEntry *dbEntry)
 
 	/* acquire worker from worker list */
 	LWLockAcquire(diskquota_locks.workerlist_lock, LW_EXCLUSIVE);
-	if (dlist_is_empty(&DiskquotaLauncherShmem->freeWorkers))
-		goto out;
+	if (dlist_is_empty(&DiskquotaLauncherShmem->freeWorkers)) goto out;
 	wnode     = dlist_pop_head_node(&DiskquotaLauncherShmem->freeWorkers);
 	dq_worker = dlist_container(DiskQuotaWorkerEntry, links, wnode);
 	memset(dq_worker, 0, sizeof(DiskQuotaWorkerEntry));

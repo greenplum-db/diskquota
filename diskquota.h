@@ -145,7 +145,7 @@ typedef struct DiskquotaDBEntry     DiskquotaDBEntry;
 /* disk quota worker info used by launcher to manage the worker processes. */
 struct DiskQuotaWorkerEntry
 {
-	int launcherpid;
+	int               launcherpid;
 	DiskquotaDBEntry *dbEntry;
 	dlist_node        links;
 };
@@ -167,7 +167,7 @@ struct DiskquotaDBEntry
 	dlist_node              node;
 	Oid                     dbid;
 	char                   *dbname;
-	volatile bool                    running;
+	volatile bool           running;
 	pg_atomic_uint32        epoch; /* this counter will be increased after each worker loop */
 	BackgroundWorkerHandle *handle;
 };
