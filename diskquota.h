@@ -81,6 +81,7 @@ struct DiskQuotaLocks
 	LWLock *monitoring_dbid_cache_lock;
 	LWLock *relation_cache_lock;
 	LWLock *dblist_lock;
+	LWLock *workerlist_lock;
 	LWLock *altered_reloid_cache_lock;
 };
 typedef struct DiskQuotaLocks DiskQuotaLocks;
@@ -144,14 +145,9 @@ typedef struct DiskquotaDBEntry     DiskquotaDBEntry;
 /* disk quota worker info used by launcher to manage the worker processes. */
 struct DiskQuotaWorkerEntry
 {
-	Oid dbid;
 	int launcherpid;
-	// NOTE: this field only can access in diskquota launcher, in other process it is dangling pointer
-	TimestampTz       launchtime;
-	int               pid;
 	DiskquotaDBEntry *dbEntry;
 	dlist_node        links;
-	TimestampTz       dbCreateTime;
 };
 
 typedef struct
@@ -171,11 +167,9 @@ struct DiskquotaDBEntry
 	dlist_node              node;
 	Oid                     dbid;
 	char                   *dbname;
-	bool                    running;
+	volatile bool                    running;
 	pg_atomic_uint32        epoch; /* this counter will be increased after each worker loop */
 	BackgroundWorkerHandle *handle;
-	// pg_atomic_uint32        is_paused; /* 1 if this worker is paused */
-	TimestampTz createTime;
 };
 
 /* store the running status info of the db*/
