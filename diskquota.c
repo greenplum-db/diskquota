@@ -1401,8 +1401,8 @@ FreeWorker(DiskQuotaWorkerEntry *worker)
 	{
 		LWLockAcquire(diskquota_locks.workerlist_lock, LW_EXCLUSIVE);
 		if (worker->dbEntry != NULL) worker->dbEntry->running = false;
-		dlist_delete(&worker->links);
-		dlist_push_head(&DiskquotaLauncherShmem->freeWorkers, &worker->links);
+		dlist_delete(&worker->node);
+		dlist_push_head(&DiskquotaLauncherShmem->freeWorkers, &worker->node);
 		DiskquotaLauncherShmem->running_workers_num--;
 		LWLockRelease(diskquota_locks.workerlist_lock);
 	}
@@ -1454,7 +1454,7 @@ InitLaunchShmem()
 		/* initialize the worker free list */
 		for (i = 0; i < diskquota_max_workers; i++)
 		{
-			dlist_push_head(&DiskquotaLauncherShmem->freeWorkers, &worker[i].links);
+			dlist_push_head(&DiskquotaLauncherShmem->freeWorkers, &worker[i].node);
 		}
 		DiskquotaLauncherShmem->running_workers_num = 0;
 
@@ -1604,10 +1604,10 @@ next_worker(DiskquotaDBEntry *dbEntry)
 	LWLockAcquire(diskquota_locks.workerlist_lock, LW_EXCLUSIVE);
 	if (dlist_is_empty(&DiskquotaLauncherShmem->freeWorkers)) goto out;
 	wnode     = dlist_pop_head_node(&DiskquotaLauncherShmem->freeWorkers);
-	dq_worker = dlist_container(DiskQuotaWorkerEntry, links, wnode);
+	dq_worker = dlist_container(DiskQuotaWorkerEntry, node, wnode);
 	memset(dq_worker, 0, sizeof(DiskQuotaWorkerEntry));
 	dq_worker->dbEntry = dbEntry;
-	dlist_push_head(&DiskquotaLauncherShmem->runningWorkers, &dq_worker->links);
+	dlist_push_head(&DiskquotaLauncherShmem->runningWorkers, &dq_worker->node);
 	DiskquotaLauncherShmem->running_workers_num++;
 out:
 	LWLockRelease(diskquota_locks.workerlist_lock);

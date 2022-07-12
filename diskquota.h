@@ -147,7 +147,7 @@ struct DiskQuotaWorkerEntry
 {
 	int               launcherpid;
 	DiskquotaDBEntry *dbEntry;
-	dlist_node        links;
+	dlist_node        node;
 };
 
 typedef struct
