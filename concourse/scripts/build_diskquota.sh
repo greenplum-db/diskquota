@@ -2,53 +2,25 @@
 
 set -exo pipefail
 
-CWDIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-TOP_DIR=${CWDIR}/../../../
-
-source "${TOP_DIR}/gpdb_src/concourse/scripts/common.bash"
 function pkg() {
     [ -f /opt/gcc_env.sh ] && source /opt/gcc_env.sh
     source /usr/local/greenplum-db-devel/greenplum_path.sh
 
-    export USE_PGXS=1
-    pushd diskquota_src/
-    DISKQUOTA_VERSION=$(git describe --tags)
-    make clean
-    make install
-    popd
+    if [ "${DISKQUOTA_OS}" = "rhel6" ]; then
+        export CC="$(which gcc)"
+    fi
 
-    pushd /usr/local/greenplum-db-devel/
-    echo 'cp -r lib share $GPHOME || exit 1'> install_gpdb_component
-    chmod a+x install_gpdb_component
-    case "$DISKQUOTA_OS" in
-    rhel6)
-        tar -czf $TOP_DIR/diskquota_artifacts/diskquota-${DISKQUOTA_VERSION}-rhel6_x86_64.tar.gz \
-        lib/postgresql/diskquota.so \
-        share/postgresql/extension/diskquota.control \
-        share/postgresql/extension/diskquota--1.0.sql \
-        install_gpdb_component
-      ;;
-    rhel7)
-        tar -czf $TOP_DIR/diskquota_artifacts/diskquota-${DISKQUOTA_VERSION}-rhel7_x86_64.tar.gz \
-        lib/postgresql/diskquota.so \
-        share/postgresql/extension/diskquota.control \
-        share/postgresql/extension/diskquota--1.0.sql \
-        install_gpdb_component
-      ;;
-    ubuntu18.04)
-        tar -czf $TOP_DIR/diskquota_artifacts/diskquota-${DISKQUOTA_VERSION}-ubuntu18.04_x86_64.tar.gz \
-        lib/postgresql/diskquota.so \
-        share/postgresql/extension/diskquota.control \
-        share/postgresql/extension/diskquota--1.0.sql \
-        install_gpdb_component
-      ;;
-    *) echo "Unknown OS: $OSVER"; exit 1 ;;
-    esac
+    pushd /home/gpadmin/diskquota_artifacts
+    local last_release_path
+    last_release_path=$(readlink -e /home/gpadmin/last_released_diskquota_bin/diskquota-*.tar.gz)
+    cmake /home/gpadmin/diskquota_src \
+        -DDISKQUOTA_LAST_RELEASE_PATH="${last_release_path}" \
+        -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
+    cmake --build . --target create_artifact
     popd
 }
 
-function _main() {	
-    time install_gpdb
+function _main() {
     time pkg
 }
 

@@ -5,11 +5,16 @@ inputs:
   - name: bin_gpdb
   - name: diskquota_src
   - name: gpdb_src
+  - name: bin_cmake
+  - name: last_released_diskquota_bin
 
 outputs:
   - name: diskquota_artifacts
 
 run:
-  path: diskquota_src/concourse/scripts/build_diskquota.sh
+  path: diskquota_src/concourse/scripts/entry.sh
+  args:
+    - build
 params:
   DISKQUOTA_OS:
+  BUILD_TYPE:

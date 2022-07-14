@@ -1,0 +1,471 @@
+-- NOTE: when test this script, you must make sure that there is no diskquota
+-- worker process.
+CREATE DATABASE dbx0 ;
+CREATE DATABASE dbx1 ;
+CREATE DATABASE dbx2 ;
+CREATE DATABASE dbx3 ;
+CREATE DATABASE dbx4 ;
+CREATE DATABASE dbx5 ;
+CREATE DATABASE dbx6 ;
+CREATE DATABASE dbx7 ;
+CREATE DATABASE dbx8 ;
+CREATE DATABASE dbx9 ;
+CREATE DATABASE dbx10 ;
+show max_worker_processes;
+ max_worker_processes 
+----------------------
+ 20
+(1 row)
+
+\! sleep 0.5; ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
+2
+-- FIXME: We need to sleep for a while each time after CREATE EXTENSION and
+-- DROP EXTENSION to wait for the bgworker to start or to exit.
+\c dbx0
+CREATE EXTENSION diskquota;
+\! sleep 0.5; ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
+3
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+CREATE SCHEMA SX;
+CREATE TABLE SX.a(i int) DISTRIBUTED BY (i);
+SELECT diskquota.set_schema_quota('SX', '1MB');
+ set_schema_quota 
+------------------
+ 
+(1 row)
+
+INSERT INTO SX.a values(generate_series(0, 100000));
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+INSERT INTO SX.a values(generate_series(0, 10));
+ERROR:  schema's disk space quota exceeded with name: sx
+DROP TABLE SX.a;
+\c dbx1
+CREATE SCHEMA SX;
+CREATE TABLE SX.a(i int) DISTRIBUTED BY (i);
+INSERT INTO SX.a values(generate_series(0, 100000));
+CREATE EXTENSION diskquota;
+WARNING:  [diskquota] diskquota is not ready because current database is not empty
+HINT:  please run 'SELECT diskquota.init_table_size_table();' to initialize diskquota
+SELECT diskquota.init_table_size_table();
+ init_table_size_table 
+-----------------------
+ 
+(1 row)
+
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+SELECT diskquota.set_schema_quota('SX', '1MB');
+ set_schema_quota 
+------------------
+ 
+(1 row)
+
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+\! sleep 0.5; ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
+4
+INSERT INTO SX.a values(generate_series(0, 10));
+ERROR:  schema's disk space quota exceeded with name: sx
+DROP TABLE SX.a;
+\c dbx2
+CREATE EXTENSION diskquota;
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+\! ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
+5
+CREATE SCHEMA SX;
+CREATE TABLE SX.a(i int) DISTRIBUTED BY (i);
+SELECT diskquota.set_schema_quota('SX', '1MB');
+ set_schema_quota 
+------------------
+ 
+(1 row)
+
+INSERT INTO SX.a values(generate_series(0, 100000));
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+INSERT INTO SX.a values(generate_series(0, 10));
+ERROR:  schema's disk space quota exceeded with name: sx
+DROP TABLE SX.a;
+\c dbx3
+CREATE EXTENSION diskquota;
+\! sleep 0.5; ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
+6
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+CREATE SCHEMA SX;
+CREATE TABLE SX.a(i int) DISTRIBUTED BY (i);
+SELECT diskquota.set_schema_quota('SX', '1MB');
+ set_schema_quota 
+------------------
+ 
+(1 row)
+
+INSERT INTO SX.a values(generate_series(0, 100000));
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+INSERT INTO SX.a values(generate_series(0, 10));
+ERROR:  schema's disk space quota exceeded with name: sx
+DROP TABLE SX.a;
+\c dbx4
+CREATE EXTENSION diskquota;
+\! sleep 0.5; ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
+7
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+CREATE SCHEMA SX;
+CREATE TABLE SX.a(i int) DISTRIBUTED BY (i);
+SELECT diskquota.set_schema_quota('SX', '1MB');
+ set_schema_quota 
+------------------
+ 
+(1 row)
+
+INSERT INTO SX.a values(generate_series(0, 100000));
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+INSERT INTO SX.a values(generate_series(0, 10));
+ERROR:  schema's disk space quota exceeded with name: sx
+DROP TABLE SX.a;
+\c dbx5
+CREATE EXTENSION diskquota;
+\! sleep 0.5; ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
+8
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+CREATE SCHEMA SX;
+CREATE TABLE SX.a(i int) DISTRIBUTED BY (i);
+SELECT diskquota.set_schema_quota('SX', '1MB');
+ set_schema_quota 
+------------------
+ 
+(1 row)
+
+INSERT INTO SX.a values(generate_series(0, 100000));
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+INSERT INTO SX.a values(generate_series(0, 10));
+ERROR:  schema's disk space quota exceeded with name: sx
+DROP TABLE SX.a;
+\c dbx6
+CREATE EXTENSION diskquota;
+\! sleep 0.5; ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
+9
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+CREATE SCHEMA SX;
+CREATE TABLE SX.a(i int) DISTRIBUTED BY (i);
+SELECT diskquota.set_schema_quota('SX', '1MB');
+ set_schema_quota 
+------------------
+ 
+(1 row)
+
+INSERT INTO SX.a values(generate_series(0, 100000));
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+INSERT INTO SX.a values(generate_series(0, 10));
+ERROR:  schema's disk space quota exceeded with name: sx
+DROP TABLE SX.a;
+\c dbx7
+CREATE EXTENSION diskquota;
+\! sleep 0.5; ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
+10
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+CREATE SCHEMA SX;
+CREATE TABLE SX.a(i int) DISTRIBUTED BY (i);
+SELECT diskquota.set_schema_quota('SX', '1MB');
+ set_schema_quota 
+------------------
+ 
+(1 row)
+
+INSERT INTO SX.a values(generate_series(0, 100000));
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+INSERT INTO SX.a values(generate_series(0, 10));
+ERROR:  schema's disk space quota exceeded with name: sx
+DROP TABLE SX.a;
+\c dbx8
+CREATE EXTENSION diskquota;
+\! sleep 0.5; ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
+11
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+CREATE SCHEMA SX;
+CREATE TABLE SX.a(i int) DISTRIBUTED BY (i);
+SELECT diskquota.set_schema_quota('SX', '1MB');
+ set_schema_quota 
+------------------
+ 
+(1 row)
+
+INSERT INTO SX.a values(generate_series(0, 100000));
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+INSERT INTO SX.a values(generate_series(0, 10));
+ERROR:  schema's disk space quota exceeded with name: sx
+DROP TABLE SX.a;
+\c dbx9
+CREATE EXTENSION diskquota;
+ERROR:  [diskquota] failed to create diskquota extension: too many databases to monitor (diskquota_utility.c:376)
+\! sleep 0.5; ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
+11
+SELECT diskquota.wait_for_worker_new_epoch();
+ERROR:  schema "diskquota" does not exist
+\c dbx10
+CREATE EXTENSION diskquota;
+ERROR:  [diskquota] failed to create diskquota extension: too many databases to monitor (diskquota_utility.c:376)
+\! sleep 0.5; ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
+11
+SELECT diskquota.wait_for_worker_new_epoch();
+ERROR:  schema "diskquota" does not exist
+\c dbx0
+SELECT diskquota.pause();
+ pause 
+-------
+ 
+(1 row)
+
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+DROP EXTENSION diskquota;
+\! sleep 0.5; ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
+10
+\c dbx1
+SELECT diskquota.pause();
+ pause 
+-------
+ 
+(1 row)
+
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+DROP EXTENSION diskquota;
+\! sleep 0.5; ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
+9
+\c dbx2
+SELECT diskquota.pause();
+ pause 
+-------
+ 
+(1 row)
+
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+DROP EXTENSION diskquota;
+\! sleep 0.5; ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
+8
+\c dbx3
+SELECT diskquota.pause();
+ pause 
+-------
+ 
+(1 row)
+
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+DROP EXTENSION diskquota;
+\! sleep 0.5; ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
+7
+\c dbx4
+SELECT diskquota.pause();
+ pause 
+-------
+ 
+(1 row)
+
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+DROP EXTENSION diskquota;
+\! sleep 0.5; ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
+6
+\c dbx5
+SELECT diskquota.pause();
+ pause 
+-------
+ 
+(1 row)
+
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+DROP EXTENSION diskquota;
+\! sleep 0.5; ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
+5
+\c dbx6
+SELECT diskquota.pause();
+ pause 
+-------
+ 
+(1 row)
+
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+DROP EXTENSION diskquota;
+\! sleep 0.5; ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
+4
+\c dbx7
+SELECT diskquota.pause();
+ pause 
+-------
+ 
+(1 row)
+
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+DROP EXTENSION diskquota;
+\! sleep 0.5; ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
+3
+\c dbx8
+SELECT diskquota.pause();
+ pause 
+-------
+ 
+(1 row)
+
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+DROP EXTENSION diskquota;
+\! sleep 0.5; ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
+2
+\c dbx9
+SELECT diskquota.pause();
+ERROR:  schema "diskquota" does not exist
+SELECT diskquota.wait_for_worker_new_epoch();
+ERROR:  schema "diskquota" does not exist
+DROP EXTENSION diskquota;
+ERROR:  extension "diskquota" does not exist
+\! sleep 0.5; ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
+2
+\c dbx10
+SELECT diskquota.pause();
+ERROR:  schema "diskquota" does not exist
+SELECT diskquota.wait_for_worker_new_epoch();
+ERROR:  schema "diskquota" does not exist
+DROP EXTENSION diskquota;
+ERROR:  extension "diskquota" does not exist
+\! sleep 0.5; ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
+2
+\c contrib_regression
+DROP DATABASE dbx0 ;
+DROP DATABASE dbx1 ;
+DROP DATABASE dbx2 ;
+DROP DATABASE dbx3 ;
+DROP DATABASE dbx4 ;
+DROP DATABASE dbx5 ;
+DROP DATABASE dbx6 ;
+DROP DATABASE dbx7 ;
+DROP DATABASE dbx8 ;
+DROP DATABASE dbx9 ;
+DROP DATABASE dbx10 ;
