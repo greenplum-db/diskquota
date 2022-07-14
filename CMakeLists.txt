@@ -80,6 +80,7 @@ list(
   diskquota.control
   diskquota--1.0.sql
   diskquota--1.0--2.0.sql
+  diskquota--1.0.3--2.0.sql
   diskquota--2.0.sql
   diskquota--2.0--1.0.sql)
 
