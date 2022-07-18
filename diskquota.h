@@ -176,7 +176,6 @@ struct DiskquotaDBEntry
 typedef struct DiskquotaDBStatus DiskquotaDBStatus;
 struct DiskquotaDBStatus
 {
-	Oid  dbid;
 	bool inited;
 };
 
@@ -222,7 +221,7 @@ extern List    *diskquota_get_index_list(Oid relid);
 extern void     diskquota_get_appendonly_aux_oid_list(Oid reloid, Oid *segrelid, Oid *blkdirrelid, Oid *visimaprelid);
 extern Oid      diskquota_parse_primary_table_oid(Oid namespace, char *relname);
 
-extern bool              worker_increase_epoch(Oid database_oid);
+extern bool              worker_increase_epoch(DiskquotaDBEntry *dbEntry);
 extern unsigned int      worker_get_epoch(Oid database_oid);
 extern bool              diskquota_is_paused(void);
 extern void              do_check_diskquota_state_is_ready(void);

@@ -482,7 +482,10 @@ init_disk_quota_model(Oid dbid)
 	initStringInfo(&str);
 	format_name("DiskquotaDBStatus", dbid, &str);
 	diskquotaDBStatus = ShmemInitStruct(str.data, MAXALIGN(sizeof(DiskquotaDBStatus)), &found);
-	if (!found) diskquotaDBStatus->inited = false;
+	if (!found)
+	{
+		memset(diskquotaDBStatus, 0, sizeof(MAXALIGN(sizeof(DiskquotaDBStatus))));
+	}
 	/*
 	 * if it already exists, attach to it rather than allocate and initialize
 	 * new space
@@ -548,7 +551,7 @@ reset_disk_quota_model(Oid dbid)
 	/* DiskquotaDBStatus */
 	format_name("DiskquotaDBStatus", dbid, &str);
 	diskquotaDBStatus = ShmemInitStruct(str.data, MAXALIGN(sizeof(DiskquotaDBStatus)), &found);
-	memset(diskquotaDBStatus, 0, MAXALIGN(sizeof(DiskquotaDBStatus)));
+	memset(diskquotaDBStatus, 0, sizeof(MAXALIGN(sizeof(DiskquotaDBStatus))));
 
 	/* table_size_map */
 	memset(&hash_ctl, 0, sizeof(hash_ctl));
@@ -627,7 +630,6 @@ check_diskquota_state_is_ready()
 		connected = true;
 		PushActiveSnapshot(GetTransactionSnapshot());
 		pushed_active_snap = true;
-		update_monitor_db(MyDatabaseId, ADD_DB_TO_MONITOR);
 		do_check_diskquota_state_is_ready();
 		is_ready = true;
 	}
