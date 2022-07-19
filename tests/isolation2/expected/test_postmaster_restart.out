@@ -44,6 +44,7 @@ ERROR:  schema's disk space quota exceeded with name: 157893  (seg0 127.0.0.1:60
 2774659
 
 -- end_ignore
+(exited with code 0)
 
 -- stop postmaster
 !\retcode pg_ctl -D $MASTER_DATA_DIRECTORY -w stop;
@@ -64,6 +65,7 @@ server stopped
 -- start_ignore
 
 -- end_ignore
+(exited with code 1)
 
 -- start postmaster
 -- -E needs to be changed to "-c gp_role=dispatch" for GPDB7
@@ -100,6 +102,7 @@ server started
 2771074
 
 -- end_ignore
+(exited with code 0)
 
 1: SET search_path TO postmaster_restart_s;
 SET
