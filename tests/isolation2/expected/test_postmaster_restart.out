@@ -46,7 +46,7 @@ ERROR:  schema's disk space quota exceeded with name: 157893  (seg0 127.0.0.1:60
 -- end_ignore
 
 -- stop postmaster
-!\retcode pg_ctl -D $MASTER_DATA_DIRECTORY -w stop -m fast;
+!\retcode pg_ctl -D $MASTER_DATA_DIRECTORY -w stop;
 -- start_ignore
 waiting for server to shut down.... done
 server stopped
