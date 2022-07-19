@@ -1,8 +1,5 @@
---start_ignore
-\! gpconfig -c diskquota.naptime -v 1;
-\! gpconfig -c diskquota.max_workers -v 1;
-\! gpstop -u;
-
+-- start_ignore
+\c
 CREATE DATABASE t1;
 CREATE DATABASE t2;
 CREATE DATABASE t3;
@@ -10,14 +7,26 @@ CREATE DATABASE t4;
 CREATE DATABASE t5;
 CREATE DATABASE t6;
 CREATE DATABASE t7;
+CREATE DATABASE t8;
+CREATE DATABASE t9;
+CREATE DATABASE t10;
+CREATE DATABASE t11;
 --end_ignore
-
 \c t1
 CREATE EXTENSION diskquota;
 CREATE TABLE f1(a int);
 INSERT into f1 SELECT generate_series(0,1000);
 SELECT diskquota.wait_for_worker_new_epoch();
 SELECT tableid::regclass, size, segid FROM diskquota.table_size WHERE tableid = 'f1'::regclass and segid = -1;
+
+--start_ignore
+\! gpconfig -c diskquota.naptime -v 1;
+\! gpconfig -c diskquota.max_workers -v 1;
+\! gpstop -arf;
+--end_ignore
+
+\c 
+SHOW diskquota.max_worker;
 
 \c t2
 CREATE EXTENSION diskquota;
@@ -26,18 +35,21 @@ INSERT into f2 SELECT generate_series(0,1000);
 SELECT diskquota.wait_for_worker_new_epoch();
 SELECT tableid::regclass, size, segid FROM diskquota.table_size WHERE tableid = 'f2'::regclass and segid = -1;
 
---start_ignore
-\! gpconfig -c diskquota.naptime -v 1;
-\! gpconfig -c diskquota.max_workers -v 3;
-\! gpstop -u;
---end_ignore
-
 \c t3
 CREATE EXTENSION diskquota;
 CREATE TABLE f3(a int);
 INSERT into f3 SELECT generate_series(0,1000);
 SELECT diskquota.wait_for_worker_new_epoch();
 SELECT tableid::regclass, size, segid FROM diskquota.table_size WHERE tableid = 'f3'::regclass and segid = -1;
+
+--start_ignore
+\! gpconfig -c diskquota.naptime -v 1;
+\! gpconfig -c diskquota.max_workers -v 3;
+\! gpstop -arf;
+--end_ignore
+
+\c 
+SHOW diskquota.max_worker;
 
 \c t4
 CREATE EXTENSION diskquota;
@@ -103,6 +115,42 @@ SELECT diskquota.wait_for_worker_new_epoch();
 SELECT tableid::regclass, size, segid FROM diskquota.table_size WHERE tableid = 'f7'::regclass and segid = -1;
 
 --start_ignore
+\! gpconfig -c diskquota.naptime -v 1;
+\! gpconfig -c diskquota.max_workers -v 11;
+\! gpstop -arf;
+--end_ignore
+
+\c 
+SHOW diskquota.max_worker;
+
+\c t8
+CREATE EXTENSION diskquota;
+CREATE TABLE f8(a int);
+INSERT into f8 SELECT generate_series(0,1000);
+SELECT diskquota.wait_for_worker_new_epoch();
+SELECT tableid::regclass, size, segid FROM diskquota.table_size WHERE tableid = 'f8'::regclass and segid = -1;
+
+\c t9
+CREATE EXTENSION diskquota;
+CREATE TABLE f9(a int);
+INSERT into f9 SELECT generate_series(0,1000);
+SELECT diskquota.wait_for_worker_new_epoch();
+SELECT tableid::regclass, size, segid FROM diskquota.table_size WHERE tableid = 'f9'::regclass and segid = -1;
+
+\c t10
+CREATE EXTENSION diskquota;
+CREATE TABLE f10(a int);
+INSERT into f10 SELECT generate_series(0,1000);
+SELECT diskquota.wait_for_worker_new_epoch();
+SELECT tableid::regclass, size, segid FROM diskquota.table_size WHERE tableid = 'f10'::regclass and segid = -1;
+
+\c t11
+CREATE EXTENSION diskquota;
+CREATE TABLE f11(a int);
+INSERT into f11 SELECT generate_series(0,1000);
+SELECT diskquota.wait_for_worker_new_epoch();
+SELECT tableid::regclass, size, segid FROM diskquota.table_size WHERE tableid = 'f11'::regclass and segid = -1;
+--start_ignore
 \c t1
 DROP EXTENSION diskquota;
 \c t2
@@ -117,7 +165,14 @@ DROP EXTENSION diskquota;
 DROP EXTENSION diskquota;
 \c t7
 DROP EXTENSION diskquota;
-
+\c t8
+DROP EXTENSION diskquota;
+\c t9
+DROP EXTENSION diskquota;
+\c t10
+DROP EXTENSION diskquota;
+\c t11
+DROP EXTENSION diskquota;
 \c contrib_regression
 DROP DATABASE t1;
 DROP DATABASE t2;
@@ -126,8 +181,12 @@ DROP DATABASE t4;
 DROP DATABASE t5;
 DROP DATABASE t6;
 DROP DATABASE t7;
+DROP DATABASE t8;
+DROP DATABASE t9;
+DROP DATABASE t10;
+DROP DATABASE t11;
 \! gpconfig -r diskquota.worker_timeout;
 \! gpconfig -r diskquota.naptime;
 \! gpconfig -r diskquota.max_workers;
-\! gpstop -u;
+\! gpstop -arf;
 --end_ignore

@@ -142,7 +142,10 @@ extern ExtensionDDLMessage *extension_ddl_message;
 typedef struct DiskQuotaWorkerEntry DiskQuotaWorkerEntry;
 typedef struct DiskquotaDBEntry     DiskquotaDBEntry;
 
-/* disk quota worker info used by launcher to manage the worker processes. */
+/* 
+ * In shmem, only used on master
+ * disk quota worker info used by launcher to manage the worker processes
+ */
 struct DiskQuotaWorkerEntry
 {
 	int               launcherpid;
@@ -161,7 +164,7 @@ typedef struct
 	volatile bool                dynamicWorker;
 } DiskquotaLauncherShmemStruct;
 
-/* databsae info used by launcher to schedule diskquota workers, in laucher local memory */
+/* In shmem, only used on master */
 struct DiskquotaDBEntry
 {
 	dlist_node              node;
@@ -171,8 +174,10 @@ struct DiskquotaDBEntry
 	pg_atomic_uint32        epoch; /* this counter will be increased after each worker loop */
 	BackgroundWorkerHandle *handle;
 	bool                    inited;
+	uint32 id;
 };
 
+/* In shmem, both on master and segments */
 typedef struct MonitorDBEntry *MonitorDBEntry;
 struct MonitorDBEntry
 {
@@ -190,7 +195,7 @@ extern void invalidate_database_rejectmap(Oid dbid);
 
 /* quota model interface*/
 extern void init_disk_quota_shmem(void);
-extern void init_disk_quota_model(Oid dbid);
+extern void init_disk_quota_model(uint32 id);
 extern void refresh_disk_quota_model(bool force);
 extern bool check_diskquota_state_is_ready(void);
 extern bool quota_check_common(Oid reloid, RelFileNode *relfilenode);
@@ -224,6 +229,6 @@ extern void              init_table_size_map(Oid dbid);
 extern DiskquotaDBEntry *get_db_entry(Oid dbid);
 extern uint32            db_is_paused(DiskquotaDBEntry *dbEntry);
 extern void              update_monitor_db(Oid dbid, FetchTableStatType action);
-extern void              reset_disk_quota_model(Oid dbid);
+extern void              reset_disk_quota_model(uint32 id);
 extern void              update_diskquota_db_list(Oid dbid, FetchTableStatType action);
 #endif

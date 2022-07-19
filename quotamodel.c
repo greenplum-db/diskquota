@@ -192,7 +192,7 @@ static void init_lwlocks(void);
 
 static void export_exceeded_error(GlobalRejectMapEntry *entry, bool skip_name);
 void        truncateStringInfo(StringInfo str, int nchars);
-static void format_name(const char *prefix, Oid dbid, StringInfo str);
+static void format_name(const char *prefix, uint32 id, StringInfo str);
 
 /* add a new entry quota or update the old entry quota */
 static void
@@ -472,7 +472,7 @@ DiskQuotaShmemSize(void)
  * Init disk quota model when the worker process firstly started.
  */
 void
-init_disk_quota_model(Oid dbid)
+init_disk_quota_model(uint32 id)
 {
 	HASHCTL        hash_ctl;
 	StringInfoData str;
@@ -486,7 +486,7 @@ init_disk_quota_model(Oid dbid)
 	hash_ctl.entrysize = sizeof(TableSizeEntry);
 	hash_ctl.hash      = tag_hash;
 
-	format_name("TableSizeEntrymap", dbid, &str);
+	format_name("TableSizeEntrymap", id, &str);
 	table_size_map = ShmemInitHash(str.data, MAX_TABLES, MAX_TABLES, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
 
 	/* for localrejectmap */
@@ -495,7 +495,7 @@ init_disk_quota_model(Oid dbid)
 	hash_ctl.entrysize = sizeof(LocalRejectMapEntry);
 	hash_ctl.hash      = tag_hash;
 	/* WARNNING: The max length of name of the map is 48 */
-	format_name("localrejectmap", dbid, &str);
+	format_name("localrejectmap", id, &str);
 	local_disk_quota_reject_map =
 	        ShmemInitHash(str.data, MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, &hash_ctl,
 	                      HASH_ELEM | HASH_FUNCTION);
@@ -508,7 +508,7 @@ init_disk_quota_model(Oid dbid)
 		hash_ctl.entrysize = sizeof(struct QuotaMapEntry);
 		hash_ctl.keysize   = sizeof(struct QuotaMapEntryKey);
 		hash_ctl.hash      = tag_hash;
-		format_name(quota_info[type].map_name, dbid, &str);
+		format_name(quota_info[type].map_name, id, &str);
 		quota_info[type].map = ShmemInitHash(str.data, 1024L, 1024L, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
 	}
 	pfree(str.data);
@@ -527,7 +527,7 @@ init_disk_quota_model(Oid dbid)
  * - clean all items in the maps
  */
 void
-reset_disk_quota_model(Oid dbid)
+reset_disk_quota_model(uint32 id)
 {
 	HASH_SEQ_STATUS       iter;
 	TableSizeEntry       *tsentry = NULL;
@@ -544,7 +544,7 @@ reset_disk_quota_model(Oid dbid)
 	hash_ctl.entrysize = sizeof(TableSizeEntry);
 	hash_ctl.hash      = tag_hash;
 
-	format_name("TableSizeEntrymap", dbid, &str);
+	format_name("TableSizeEntrymap", id, &str);
 	table_size_map = ShmemInitHash(str.data, MAX_TABLES, MAX_TABLES, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
 	hash_seq_init(&iter, table_size_map);
 	while ((tsentry = hash_seq_search(&iter)) != NULL)
@@ -558,7 +558,7 @@ reset_disk_quota_model(Oid dbid)
 	hash_ctl.entrysize = sizeof(LocalRejectMapEntry);
 	hash_ctl.hash      = tag_hash;
 	/* WARNNING: The max length of name of the map is 48 */
-	format_name("localrejectmap", dbid, &str);
+	format_name("localrejectmap", id, &str);
 	local_disk_quota_reject_map =
 	        ShmemInitHash(str.data, MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, &hash_ctl,
 	                      HASH_ELEM | HASH_FUNCTION);
@@ -576,7 +576,7 @@ reset_disk_quota_model(Oid dbid)
 		hash_ctl.entrysize = sizeof(struct QuotaMapEntry);
 		hash_ctl.keysize   = sizeof(struct QuotaMapEntryKey);
 		hash_ctl.hash      = tag_hash;
-		format_name(quota_info[type].map_name, dbid, &str);
+		format_name(quota_info[type].map_name, id, &str);
 		quota_info[type].map = ShmemInitHash(str.data, 1024L, 1024L, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
 		hash_seq_init(&iter, quota_info[type].map);
 		while ((qentry = hash_seq_search(&iter)) != NULL)
@@ -2097,8 +2097,10 @@ update_monitor_db(Oid dbid, FetchTableStatType action)
 }
 
 static void
-format_name(const char *prefix, Oid dbid, StringInfo str)
+format_name(const char *prefix, uint32 id, StringInfo str)
 {
 	resetStringInfo(str);
-	appendStringInfo(str, "%s_%u", prefix, dbid);
+	appendStringInfo(str, "%s_%u", prefix, id);
+	Assert(str.len < = 48);
+
 }

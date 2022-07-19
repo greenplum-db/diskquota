@@ -306,7 +306,7 @@ define_guc_variables(void)
 	DefineCustomBoolVariable("diskquota.hard_limit", "Set this to 'on' to enable disk-quota hardlimit.", NULL,
 	                         &diskquota_hardlimit, false, PGC_SIGHUP, 0, NULL, NULL, NULL);
 	DefineCustomIntVariable("diskquota.max_workers", "Max number or workers to run diskquota extension.", NULL,
-	                        &diskquota_max_workers, 10, 1, INT_MAX, PGC_SIGHUP, 0, NULL, NULL, NULL);
+	                        &diskquota_max_workers, 10, 1, INT_MAX, PGC_POSTMASTER, 0, NULL, NULL, NULL);
 }
 
 /* ---- Functions for disk quota worker process ---- */
@@ -320,7 +320,6 @@ disk_quota_worker_main(Datum main_arg)
 {
 	char *dbname       = MyBgworkerEntry->bgw_name;
 	int   launcher_pid = 0;
-	bool  loop         = true;
 	ereport(LOG, (errmsg("[diskquota] start disk quota worker process to monitor database:%s", dbname)));
 
 	/* Establish signal handlers before unblocking signals. */
@@ -348,7 +347,7 @@ disk_quota_worker_main(Datum main_arg)
 	/* diskquota worker should has Gp_role as dispatcher */
 	Gp_role = GP_ROLE_DISPATCH;
 
-	init_disk_quota_model(MyWorkerInfo->dbEntry->dbid);
+	init_disk_quota_model(MyWorkerInfo->dbEntry->id);
 	/*
 	 * Initialize diskquota related local hash map and refresh model
 	 * immediately
@@ -450,20 +449,24 @@ disk_quota_worker_main(Datum main_arg)
 		}
 	}
 
-	/* if received sigterm, just exit the worker process */
-	if (got_sigterm)
-	{
-		ereport(LOG, (errmsg("[diskquota] bgworker for \"%s\" is being terminated by SIGTERM.", dbname)));
-		/* clear the out-of-quota rejectmap in shared memory */
-		invalidate_database_rejectmap(MyDatabaseId);
-		proc_exit(0);
-	}
 	ereport(LOG, (errmsg("[diskquota] start bgworker for database: \"%s\"", dbname)));
 
-	while (!got_sigterm && loop)
+	for (;;)
 	{
 		int rc;
 
+		SIMPLE_FAULT_INJECTOR("diskquota_worker_main");
+		if (!diskquota_is_paused())
+		{
+			/* Refresh quota model with init mode */
+			refresh_disk_quota_model(!MyWorkerInfo->dbEntry->inited);
+			if (!MyWorkerInfo->dbEntry->inited) MyWorkerInfo->dbEntry->inited = true;
+		}
+		worker_increase_epoch(MyWorkerInfo->dbEntry);
+		MemoryAccounting_Reset();
+		elog(LOG, "worker dynamic %d",DiskquotaLauncherShmem->dynamicWorker);
+		if (DiskquotaLauncherShmem->dynamicWorker)
+			break;
 		CHECK_FOR_INTERRUPTS();
 
 		/*
@@ -491,16 +494,6 @@ disk_quota_worker_main(Datum main_arg)
 			got_sighup = false;
 			ProcessConfigFile(PGC_SIGHUP);
 		}
-		SIMPLE_FAULT_INJECTOR("diskquota_worker_main");
-		if (!diskquota_is_paused())
-		{
-			/* Refresh quota model with init mode */
-			refresh_disk_quota_model(!MyWorkerInfo->dbEntry->inited);
-			if (!MyWorkerInfo->dbEntry->inited) MyWorkerInfo->dbEntry->inited = true;
-		}
-		worker_increase_epoch(MyWorkerInfo->dbEntry);
-		MemoryAccounting_Reset();
-		loop = !DiskquotaLauncherShmem->dynamicWorker;
 	}
 
 	ereport(LOG, (errmsg("[diskquota] stop bgworker for database: \"%s\"", dbname)));
@@ -566,6 +559,8 @@ disk_quota_launcher_main(Datum main_arg)
 	StartIdleResourceCleanupTimers();
 	loop_end = time(NULL);
 
+	if (CanLaunchWorker())
+		start_worker();
 	struct timeval nap;
 	if (diskquota_naptime == 0) diskquota_naptime = 1;
 	nap.tv_sec                  = diskquota_naptime;
@@ -595,7 +590,7 @@ disk_quota_launcher_main(Datum main_arg)
 			ResetLatch(&MyProc->procLatch);
 
 			// wait at least one time slice, avoid 100% CPU usage
-			// if (!diskquota_naptime) usleep(1);
+			 if (!diskquota_naptime) usleep(1);
 
 			/* Emergency bailout if postmaster has died */
 			if (rc & WL_POSTMASTER_DEATH)
@@ -908,12 +903,14 @@ do_process_extension_ddl_message(MessageResult *code, ExtensionDDLMessage local_
 				on_add_db(local_extension_ddl_message.dbid, code);
 				num_db++;
 				if (num_db >= diskquota_max_workers) DiskquotaLauncherShmem->dynamicWorker = true;
+				elog(LOG, "diskquota_max_workers is %d, dynamic %d" , diskquota_max_workers, DiskquotaLauncherShmem->dynamicWorker);
 				*code = ERR_OK;
 				break;
 			case CMD_DROP_EXTENSION:
 				on_del_db(local_extension_ddl_message.dbid, code);
 				num_db--;
 				if (num_db < diskquota_max_workers) DiskquotaLauncherShmem->dynamicWorker = false;
+				elog(LOG, "diskquota_max_workers is %d, dynamic %d" , diskquota_max_workers, DiskquotaLauncherShmem->dynamicWorker);
 				*code = ERR_OK;
 				break;
 			default:
@@ -1487,6 +1484,7 @@ InitLaunchShmem()
 		dlist_init(&DiskquotaLauncherShmem->freeDBList);
 		for (i = 0; i < MAX_NUM_MONITORED_DB; i++)
 		{
+			db[i].id = i;
 			dlist_push_head(&DiskquotaLauncherShmem->freeDBList, &db[i].node);
 		}
 	}
@@ -1497,6 +1495,7 @@ add_db_entry(Oid dbid)
 {
 	DiskquotaDBEntry *dbEntry = NULL;
 	dlist_node       *dnode;
+	int id;
 	LWLockAcquire(diskquota_locks.dblist_lock, LW_EXCLUSIVE);
 	/* get_database_name needs to allocate memory in current memory context */
 	MemoryContext oldCtx = MemoryContextSwitchTo(LauncherCtx);
@@ -1507,8 +1506,10 @@ add_db_entry(Oid dbid)
 	}
 	dnode   = dlist_pop_head_node(&DiskquotaLauncherShmem->freeDBList);
 	dbEntry = dlist_container(DiskquotaDBEntry, node, dnode);
+	id = dbEntry->id;
 	memset(dbEntry, 0, sizeof(DiskquotaDBEntry));
 	dbEntry->dbid = dbid;
+	dbEntry->id = id;
 	/*
 	 * dbEntry is in shared memory, dbname is in laucher local memory.
 	 * It's ok to point to dbname in dbEntry, because laucher is a
@@ -1527,6 +1528,7 @@ static void
 release_db_entry(Oid dbid)
 {
 	dlist_mutable_iter iter;
+	int id;
 	dlist_foreach_modify(iter, &DiskquotaLauncherShmem->dbList)
 	{
 		DiskquotaDBEntry *db = dlist_container(DiskquotaDBEntry, node, iter.cur);
@@ -1551,10 +1553,12 @@ release_db_entry(Oid dbid)
 				pfree(db->handle);
 			}
 			if (db->dbname != NULL) pfree(db->dbname);
+			id = db->id;
 			memset(db, 0, sizeof(DiskquotaDBEntry));
+			db->id = id;
 			/* put it to freeDbList */
 			dlist_push_tail(&DiskquotaLauncherShmem->freeDBList, iter.cur);
-			reset_disk_quota_model(dbid);
+			reset_disk_quota_model(db->id);
 			LWLockRelease(diskquota_locks.dblist_lock);
 			break;
 		}
