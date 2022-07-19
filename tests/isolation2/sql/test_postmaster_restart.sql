@@ -18,7 +18,7 @@
 -- !\retcode pgrep -f "[p]ostgres.*diskquota.*isolation2test";
 
 -- stop postmaster
-!\retcode pg_ctl -D $MASTER_DATA_DIRECTORY -w stop;
+!\retcode pg_ctl -D $MASTER_DATA_DIRECTORY -w stop -m fast;
 
 -- launcher should be terminated
 !\retcode pgrep -f "[p]ostgres.*launcher";
