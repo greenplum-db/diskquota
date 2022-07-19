@@ -1,9 +1,8 @@
 --start_ignore
 \! gpconfig -c diskquota.naptime -v 1;
 \! gpconfig -c diskquota.max_workers -v 1;
-\! gpstop -arf
+\! gpstop -u;
 
-\c
 CREATE DATABASE t1;
 CREATE DATABASE t2;
 CREATE DATABASE t3;
@@ -30,7 +29,7 @@ SELECT tableid::regclass, size, segid FROM diskquota.table_size WHERE tableid = 
 --start_ignore
 \! gpconfig -c diskquota.naptime -v 1;
 \! gpconfig -c diskquota.max_workers -v 3;
-\! gpstop -arf
+\! gpstop -u;
 --end_ignore
 
 \c t3
@@ -130,5 +129,5 @@ DROP DATABASE t7;
 \! gpconfig -r diskquota.worker_timeout;
 \! gpconfig -r diskquota.naptime;
 \! gpconfig -r diskquota.max_workers;
-\! gpstop -arf
+\! gpstop -u;
 --end_ignore
