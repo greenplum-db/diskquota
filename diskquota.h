@@ -170,13 +170,7 @@ struct DiskquotaDBEntry
 	volatile bool           running;
 	pg_atomic_uint32        epoch; /* this counter will be increased after each worker loop */
 	BackgroundWorkerHandle *handle;
-};
-
-/* store the running status info of the db*/
-typedef struct DiskquotaDBStatus DiskquotaDBStatus;
-struct DiskquotaDBStatus
-{
-	bool inited;
+	bool                    inited;
 };
 
 typedef struct MonitorDBEntry *MonitorDBEntry;
@@ -185,8 +179,7 @@ struct MonitorDBEntry
 	Oid           dbid;
 	volatile bool paused;
 };
-extern HTAB              *disk_quota_worker_map;
-extern DiskquotaDBStatus *diskquotaDBStatus;
+extern HTAB *disk_quota_worker_map;
 
 /* drop extension hook */
 extern void register_diskquota_object_access_hook(void);

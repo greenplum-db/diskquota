@@ -441,9 +441,7 @@ static Size
 database_size()
 {
 	Size size;
-	size = sizeof(DiskquotaDBStatus);
-	size = MAXALIGN(size);
-	size = add_size(size, hash_estimate_size(MAX_TABLES, sizeof(TableSizeEntry)));
+	size = hash_estimate_size(MAX_TABLES, sizeof(TableSizeEntry));
 	size = add_size(size, hash_estimate_size(MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, sizeof(LocalRejectMapEntry)));
 	size = add_size(size, hash_estimate_size(1024L, sizeof(struct QuotaMapEntry)) * NUM_QUOTA_TYPES);
 	return size;
@@ -477,15 +475,8 @@ void
 init_disk_quota_model(Oid dbid)
 {
 	HASHCTL        hash_ctl;
-	bool           found;
 	StringInfoData str;
 	initStringInfo(&str);
-	format_name("DiskquotaDBStatus", dbid, &str);
-	diskquotaDBStatus = ShmemInitStruct(str.data, MAXALIGN(sizeof(DiskquotaDBStatus)), &found);
-	if (!found)
-	{
-		memset(diskquotaDBStatus, 0, sizeof(MAXALIGN(sizeof(DiskquotaDBStatus))));
-	}
 	/*
 	 * if it already exists, attach to it rather than allocate and initialize
 	 * new space
@@ -544,14 +535,8 @@ reset_disk_quota_model(Oid dbid)
 	struct QuotaMapEntry *qentry;
 
 	HASHCTL        hash_ctl;
-	bool           found;
 	StringInfoData str;
 	initStringInfo(&str);
-
-	/* DiskquotaDBStatus */
-	format_name("DiskquotaDBStatus", dbid, &str);
-	diskquotaDBStatus = ShmemInitStruct(str.data, MAXALIGN(sizeof(DiskquotaDBStatus)), &found);
-	memset(diskquotaDBStatus, 0, sizeof(MAXALIGN(sizeof(DiskquotaDBStatus))));
 
 	/* table_size_map */
 	memset(&hash_ctl, 0, sizeof(hash_ctl));

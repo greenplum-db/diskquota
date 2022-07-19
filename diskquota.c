@@ -81,8 +81,6 @@ static DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
 /* the current db to be run */
 static dlist_node   *curDB = NULL;
 static MemoryContext LauncherCtx;
-DiskquotaDBStatus   *diskquotaDBStatus;
-// static ResourceOwner diskquotaResourceOwner;
 
 /* functions of disk quota*/
 void _PG_init(void);
@@ -409,7 +407,7 @@ disk_quota_worker_main(Datum main_arg)
 	init_ps_display("bgworker:", "[diskquota]", dbname, "");
 	/* If the diskquota extension is recreated, the related things in shared memory need to be reset */
 
-	if (!diskquotaDBStatus->inited)
+	if (!MyWorkerInfo->dbEntry->inited)
 	{
 		/* Waiting for diskquota state become ready */
 		while (!got_sigterm)
@@ -497,8 +495,8 @@ disk_quota_worker_main(Datum main_arg)
 		if (!diskquota_is_paused())
 		{
 			/* Refresh quota model with init mode */
-			refresh_disk_quota_model(!diskquotaDBStatus->inited);
-			if (!diskquotaDBStatus->inited) diskquotaDBStatus->inited = true;
+			refresh_disk_quota_model(!MyWorkerInfo->dbEntry->inited);
+			if (!MyWorkerInfo->dbEntry->inited) MyWorkerInfo->dbEntry->inited = true;
 		}
 		worker_increase_epoch(MyWorkerInfo->dbEntry);
 		MemoryAccounting_Reset();
@@ -973,7 +971,6 @@ on_add_db(Oid dbid, MessageResult *code)
 		DiskquotaDBEntry *db;
 		add_dbid_to_database_list(dbid);
 		db = add_db_entry(dbid);
-		// ereport(LOG, (errmsg("[diskquota launcher] add database %s", db->dbname)));
 		update_monitor_db(dbid, ADD_DB_TO_MONITOR);
 	}
 	PG_CATCH();
@@ -1521,6 +1518,7 @@ add_db_entry(Oid dbid)
 	pg_atomic_write_u32(&(dbEntry->epoch), 0);
 	dlist_push_tail(&DiskquotaLauncherShmem->dbList, &dbEntry->node);
 	MemoryContextSwitchTo(oldCtx);
+	if (curDB == NULL) curDB = &dbEntry->node;
 	LWLockRelease(diskquota_locks.dblist_lock);
 	return dbEntry;
 }
