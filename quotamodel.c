@@ -408,7 +408,7 @@ disk_quota_shmem_startup(void)
 
 	monitoring_dbid_cache = ShmemInitHash("table oid cache which shoud tracking", MAX_NUM_MONITORED_DB,
 	                                      MAX_NUM_MONITORED_DB, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
-	InitLaunchShmem();
+	init_launcher_shmem();
 	LWLockRelease(AddinShmemInitLock);
 }
 
@@ -431,14 +431,13 @@ init_lwlocks(void)
 	diskquota_locks.extension_ddl_lock         = LWLockAssign();
 	diskquota_locks.monitoring_dbid_cache_lock = LWLockAssign();
 	diskquota_locks.relation_cache_lock        = LWLockAssign();
-	// diskquota_locks.worker_map_lock            = LWLockAssign();
 	diskquota_locks.altered_reloid_cache_lock = LWLockAssign();
 	diskquota_locks.dblist_lock               = LWLockAssign();
 	diskquota_locks.workerlist_lock           = LWLockAssign();
 }
 
 static Size
-database_size()
+diskquota_worker_shmem_size()
 {
 	Size size;
 	size = hash_estimate_size(MAX_TABLES, sizeof(TableSizeEntry));
@@ -462,8 +461,8 @@ DiskQuotaShmemSize(void)
 	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(DiskQuotaRelidCacheEntry)));
 	size = add_size(size, hash_estimate_size(MAX_NUM_MONITORED_DB, sizeof(MonitorDBEntry)));
 	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(Oid)));
-	size = add_size(size, DiskquotaLauncherShmemSize());
-	size = add_size(size, database_size() * MAX_NUM_MONITORED_DB);
+	size = add_size(size, diskquota_launcher_shmem_size());
+	size = add_size(size, diskquota_worker_shmem_size() * MAX_NUM_MONITORED_DB);
 	return size;
 }
 
@@ -2077,7 +2076,7 @@ show_rejectmap(PG_FUNCTION_ARGS)
 }
 
 void
-update_monitor_db(Oid dbid, FetchTableStatType action)
+update_monitor_db_mpp(Oid dbid, FetchTableStatType action)
 {
 	StringInfoData sql_command;
 	initStringInfo(&sql_command);
@@ -2093,7 +2092,7 @@ update_monitor_db(Oid dbid, FetchTableStatType action)
 	           errmsg("[diskquota] check diskquota state SPI_execute failed: error code %d", ret)));
 
 	/* Add current database to the monitored db cache on coordinator */
-	update_diskquota_db_list(dbid, action);
+	update_monitor_db(dbid, action);
 }
 
 static void

@@ -448,19 +448,19 @@ diskquota_fetch_table_stat(PG_FUNCTION_ARGS)
 				break;
 			case ADD_DB_TO_MONITOR:
 				dbid = get_dbid(PG_GETARG_ARRAYTYPE_P(1));
-				update_diskquota_db_list(dbid, ADD_DB_TO_MONITOR);
+				update_monitor_db(dbid, ADD_DB_TO_MONITOR);
 				PG_RETURN_NULL();
 			case REMOVE_DB_FROM_BEING_MONITORED:
 				dbid = get_dbid(PG_GETARG_ARRAYTYPE_P(1));
-				update_diskquota_db_list(dbid, REMOVE_DB_FROM_BEING_MONITORED);
+				update_monitor_db(dbid, REMOVE_DB_FROM_BEING_MONITORED);
 				PG_RETURN_NULL();
 			case PAUSE_DB_TO_MONITOR:
 				dbid = get_dbid(PG_GETARG_ARRAYTYPE_P(1));
-				update_diskquota_db_list(dbid, PAUSE_DB_TO_MONITOR);
+				update_monitor_db(dbid, PAUSE_DB_TO_MONITOR);
 				PG_RETURN_NULL();
 			case RESUME_DB_TO_MONITOR:
 				dbid = get_dbid(PG_GETARG_ARRAYTYPE_P(1));
-				update_diskquota_db_list(dbid, RESUME_DB_TO_MONITOR);
+				update_monitor_db(dbid, RESUME_DB_TO_MONITOR);
 				PG_RETURN_NULL();
 			default:
 				ereport(ERROR, (errmsg("Unused mode number %d, transaction will be aborted", mode)));

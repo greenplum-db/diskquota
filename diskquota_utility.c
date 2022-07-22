@@ -427,7 +427,7 @@ diskquota_pause(PG_FUNCTION_ARGS)
 			ereport(ERROR,
 			        (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] unable to connect to execute SPI query")));
 		}
-		update_monitor_db(dbid, PAUSE_DB_TO_MONITOR);
+		update_monitor_db_mpp(dbid, PAUSE_DB_TO_MONITOR);
 		SPI_finish();
 	}
 	PG_RETURN_VOID();
@@ -459,7 +459,7 @@ diskquota_resume(PG_FUNCTION_ARGS)
 			ereport(ERROR,
 			        (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] unable to connect to execute SPI query")));
 		}
-		update_monitor_db(dbid, RESUME_DB_TO_MONITOR);
+		update_monitor_db_mpp(dbid, RESUME_DB_TO_MONITOR);
 		SPI_finish();
 	}
 
@@ -534,7 +534,7 @@ dq_object_access_hook_on_drop(void)
 	 * Remove the current database from monitored db cache
 	 * on all segments and on coordinator.
 	 */
-	update_diskquota_db_list(MyDatabaseId, REMOVE_DB_FROM_BEING_MONITORED);
+	update_monitor_db(MyDatabaseId, REMOVE_DB_FROM_BEING_MONITORED);
 
 	if (!IS_QUERY_DISPATCHER())
 	{
@@ -1178,7 +1178,7 @@ get_size_in_mb(char *str)
  * Will print a WARNING to log if out of memory
  */
 void
-update_diskquota_db_list(Oid dbid, FetchTableStatType action)
+update_monitor_db(Oid dbid, FetchTableStatType action)
 {
 	bool           found = false;
 	MonitorDBEntry entry;

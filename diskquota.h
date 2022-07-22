@@ -13,15 +13,12 @@
 #ifndef DISK_QUOTA_H
 #define DISK_QUOTA_H
 
-//#include "lib/ilist.h"
 #include "c.h"
 #include "postgres.h"
 #include "port/atomics.h"
 
 #include "lib/ilist.h"
 #include "fmgr.h"
-#include "storage/ipc.h"
-#include "storage/dsm.h"
 #include "storage/lock.h"
 #include "storage/lwlock.h"
 #include "storage/relfilenode.h"
@@ -29,7 +26,6 @@
 
 #include "utils/hsearch.h"
 #include "utils/relcache.h"
-#include "utils/timestamp.h"
 
 #include <signal.h>
 
@@ -148,6 +144,8 @@ typedef struct DiskquotaDBEntry     DiskquotaDBEntry;
  */
 struct DiskQuotaWorkerEntry
 {
+	/* starts from 1, 0 means invalid*/
+	uint32 id;
 	int               launcherpid;
 	DiskquotaDBEntry *dbEntry;
 	dlist_node        node;
@@ -169,12 +167,14 @@ struct DiskquotaDBEntry
 {
 	dlist_node              node;
 	Oid                     dbid;
-	char                   *dbname;
-	volatile bool           running;
 	pg_atomic_uint32        epoch; /* this counter will be increased after each worker loop */
-	BackgroundWorkerHandle *handle;
 	bool                    inited;
+	/* starts from 1 */
 	uint32 id;
+	/* 
+	 * the id of the worker which is running for the, 0 means no worker for it.
+	 */
+	volatile uint32          workerId; 
 };
 
 /* In shmem, both on master and segments */
@@ -184,6 +184,7 @@ struct MonitorDBEntry
 	Oid           dbid;
 	volatile bool paused;
 };
+
 extern HTAB *disk_quota_worker_map;
 
 /* drop extension hook */
@@ -223,12 +224,10 @@ extern bool              worker_increase_epoch(DiskquotaDBEntry *dbEntry);
 extern unsigned int      worker_get_epoch(Oid database_oid);
 extern bool              diskquota_is_paused(void);
 extern void              do_check_diskquota_state_is_ready(void);
-extern Size              DiskquotaLauncherShmemSize(void);
-extern void              InitLaunchShmem(void);
-extern void              init_table_size_map(Oid dbid);
+extern Size              diskquota_launcher_shmem_size(void);
+extern void              init_launcher_shmem(void);
 extern DiskquotaDBEntry *get_db_entry(Oid dbid);
-extern uint32            db_is_paused(DiskquotaDBEntry *dbEntry);
 extern void              update_monitor_db(Oid dbid, FetchTableStatType action);
 extern void              reset_disk_quota_model(uint32 id);
-extern void              update_diskquota_db_list(Oid dbid, FetchTableStatType action);
+extern void              update_monitor_db_mpp(Oid dbid, FetchTableStatType action);
 #endif
