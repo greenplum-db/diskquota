@@ -49,7 +49,7 @@ typedef struct DiskQuotaSetOFCache
 
 HTAB *active_tables_map = NULL;
 /*
- * monitoring_dbid_cache is a white list for diskquota
+ * monitored_dbid_cache is a white list for diskquota
  * to know which databases it need to monitor.
  *
  * dbid will be added to it when creating diskquota extension
@@ -58,9 +58,9 @@ HTAB *active_tables_map = NULL;
  * dbid will be added back to it when diskquota.resume() called
  *
  */
-HTAB *monitoring_dbid_cache = NULL;
-HTAB *paused_dbid_cache     = NULL;
-HTAB *altered_reloid_cache  = NULL;
+HTAB *monitored_dbid_cache = NULL;
+HTAB *paused_dbid_cache    = NULL;
+HTAB *altered_reloid_cache = NULL;
 
 /* active table hooks which detect the disk file size change. */
 static file_create_hook_type   prev_file_create_hook   = NULL;
@@ -256,7 +256,7 @@ report_relation_cache_helper(Oid relid)
 	 * this operation is read-only and does not require absolutely exact.
 	 * read the cache with out shared lock.
 	 */
-	hash_search(monitoring_dbid_cache, &MyDatabaseId, HASH_FIND, &found);
+	hash_search(monitored_dbid_cache, &MyDatabaseId, HASH_FIND, &found);
 	if (!found)
 	{
 		return;
@@ -288,7 +288,7 @@ report_active_table_helper(const RelFileNodeBackend *relFileNode)
 	/* do not collect active table info when the database is not under monitoring.
 	 * this operation is read-only and does not require absolutely exact.
 	 * read the cache with out shared lock */
-	hash_search(monitoring_dbid_cache, &dbid, HASH_FIND, &found);
+	hash_search(monitored_dbid_cache, &dbid, HASH_FIND, &found);
 
 	if (!found)
 	{

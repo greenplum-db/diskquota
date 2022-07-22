@@ -74,7 +74,7 @@ struct DiskQuotaLocks
 	LWLock *reject_map_lock;
 	LWLock *extension_ddl_message_lock;
 	LWLock *extension_ddl_lock; /* ensure create diskquota extension serially */
-	LWLock *monitoring_dbid_cache_lock;
+	LWLock *monitored_dbid_cache_lock;
 	LWLock *relation_cache_lock;
 	LWLock *dblist_lock;
 	LWLock *workerlist_lock;
@@ -138,14 +138,14 @@ extern ExtensionDDLMessage *extension_ddl_message;
 typedef struct DiskQuotaWorkerEntry DiskQuotaWorkerEntry;
 typedef struct DiskquotaDBEntry     DiskquotaDBEntry;
 
-/* 
+/*
  * In shmem, only used on master
  * disk quota worker info used by launcher to manage the worker processes
  */
 struct DiskQuotaWorkerEntry
 {
 	/* starts from 1, 0 means invalid*/
-	uint32 id;
+	uint32            id;
 	int               launcherpid;
 	DiskquotaDBEntry *dbEntry;
 	dlist_node        node;
@@ -165,16 +165,16 @@ typedef struct
 /* In shmem, only used on master */
 struct DiskquotaDBEntry
 {
-	dlist_node              node;
-	Oid                     dbid;
-	pg_atomic_uint32        epoch; /* this counter will be increased after each worker loop */
-	bool                    inited;
+	dlist_node       node;
+	Oid              dbid;
+	pg_atomic_uint32 epoch; /* this counter will be increased after each worker loop */
+	bool             inited;
 	/* starts from 1 */
 	uint32 id;
-	/* 
+	/*
 	 * the id of the worker which is running for the, 0 means no worker for it.
 	 */
-	volatile uint32          workerId; 
+	volatile uint32 workerId;
 };
 
 /* In shmem, both on master and segments */

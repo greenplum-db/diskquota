@@ -406,8 +406,8 @@ disk_quota_shmem_startup(void)
 	hash_ctl.entrysize = sizeof(MonitorDBEntry);
 	hash_ctl.hash      = oid_hash;
 
-	monitoring_dbid_cache = ShmemInitHash("table oid cache which shoud tracking", MAX_NUM_MONITORED_DB,
-	                                      MAX_NUM_MONITORED_DB, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
+	monitored_dbid_cache = ShmemInitHash("table oid cache which shoud tracking", MAX_NUM_MONITORED_DB,
+	                                     MAX_NUM_MONITORED_DB, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
 	init_launcher_shmem();
 	LWLockRelease(AddinShmemInitLock);
 }
@@ -420,7 +420,7 @@ disk_quota_shmem_startup(void)
  * extension_ddl_message.
  * extension_ddl_lock is used to avoid concurrent diskquota
  * extension ddl(create/drop) command.
- * monitoring_dbid_cache_lock is used to shared `monitoring_dbid_cache` on segment process.
+ * monitored_dbid_cache_lock is used to shared `monitored_dbid_cache` on segment process.
  */
 static void
 init_lwlocks(void)
@@ -429,11 +429,11 @@ init_lwlocks(void)
 	diskquota_locks.reject_map_lock            = LWLockAssign();
 	diskquota_locks.extension_ddl_message_lock = LWLockAssign();
 	diskquota_locks.extension_ddl_lock         = LWLockAssign();
-	diskquota_locks.monitoring_dbid_cache_lock = LWLockAssign();
+	diskquota_locks.monitored_dbid_cache_lock  = LWLockAssign();
 	diskquota_locks.relation_cache_lock        = LWLockAssign();
-	diskquota_locks.altered_reloid_cache_lock = LWLockAssign();
-	diskquota_locks.dblist_lock               = LWLockAssign();
-	diskquota_locks.workerlist_lock           = LWLockAssign();
+	diskquota_locks.altered_reloid_cache_lock  = LWLockAssign();
+	diskquota_locks.dblist_lock                = LWLockAssign();
+	diskquota_locks.workerlist_lock            = LWLockAssign();
 }
 
 static Size
@@ -2101,5 +2101,4 @@ format_name(const char *prefix, uint32 id, StringInfo str)
 	resetStringInfo(str);
 	appendStringInfo(str, "%s_%u", prefix, id);
 	Assert(str.len < = 48);
-
 }
