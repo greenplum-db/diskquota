@@ -1620,7 +1620,7 @@ get_current_db(void)
 }
 
 static DiskQuotaWorkerEntry *
-next_worker()
+next_worker(void)
 {
 	DiskQuotaWorkerEntry *dq_worker = NULL;
 	dlist_node           *wnode;
