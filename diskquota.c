@@ -1208,19 +1208,19 @@ start_worker()
 	 * where to call it.
 	 */
 	BgwHandleStatus status;
-	pid_t pid;
+	pid_t           pid;
 	status = WaitForBackgroundWorkerStartup(bgworker_handles[dq_worker->id - 1], &pid);
 	if (status == BGWH_STOPPED)
 	{
 		ereport(WARNING, (errcode(ERRCODE_INSUFFICIENT_RESOURCES), errmsg("could not start background process"),
-					errhint("More details may be available in the server log.")));
+		                  errhint("More details may be available in the server log.")));
 		goto Failed;
 	}
 	if (status == BGWH_POSTMASTER_DIED)
 	{
 		ereport(WARNING, (errcode(ERRCODE_INSUFFICIENT_RESOURCES),
-					errmsg("cannot start background processes without postmaster"),
-					errhint("Kill all remaining database processes and restart the database.")));
+		                  errmsg("cannot start background processes without postmaster"),
+		                  errhint("Kill all remaining database processes and restart the database.")));
 		goto Failed;
 	}
 
