@@ -1210,28 +1210,28 @@ start_worker()
 	 * error. It is good to wait the bgworker to startup, but I don't know
 	 * where to call it.
 	 */
-//	clock_t start = 0, finish = 0;
-//	BgwHandleStatus status;
-//	pid_t pid;
-//	status = WaitForBackgroundWorkerStartup(bgworker_handles[dq_worker->id - 1], &pid);
-//	if (status == BGWH_STOPPED)
-//	{
-//		ereport(WARNING, (errcode(ERRCODE_INSUFFICIENT_RESOURCES), errmsg("could not start background process"),
-//					errhint("More details may be available in the server log.")));
-//		goto Failed;
-//	}
-//	if (status == BGWH_POSTMASTER_DIED)
-//	{
-//		ereport(WARNING, (errcode(ERRCODE_INSUFFICIENT_RESOURCES),
-//					errmsg("cannot start background processes without postmaster"),
-//					errhint("Kill all remaining database processes and restart the database.")));
-//		goto Failed;
-//	}
-//
-//	Assert(status == BGWH_STARTED);
-//	finish = clock();
-//	double duration = (double)(finish - start) / CLOCKS_PER_SEC;
-//	elog(LOG, " diskquota takes %f seconds\n", duration );
+	//	clock_t start = 0, finish = 0;
+	//	BgwHandleStatus status;
+	//	pid_t pid;
+	//	status = WaitForBackgroundWorkerStartup(bgworker_handles[dq_worker->id - 1], &pid);
+	//	if (status == BGWH_STOPPED)
+	//	{
+	//		ereport(WARNING, (errcode(ERRCODE_INSUFFICIENT_RESOURCES), errmsg("could not start background process"),
+	//					errhint("More details may be available in the server log.")));
+	//		goto Failed;
+	//	}
+	//	if (status == BGWH_POSTMASTER_DIED)
+	//	{
+	//		ereport(WARNING, (errcode(ERRCODE_INSUFFICIENT_RESOURCES),
+	//					errmsg("cannot start background processes without postmaster"),
+	//					errhint("Kill all remaining database processes and restart the database.")));
+	//		goto Failed;
+	//	}
+	//
+	//	Assert(status == BGWH_STARTED);
+	//	finish = clock();
+	//	double duration = (double)(finish - start) / CLOCKS_PER_SEC;
+	//	elog(LOG, " diskquota takes %f seconds\n", duration );
 
 	LWLockRelease(diskquota_locks.dblist_lock);
 	return true;
