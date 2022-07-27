@@ -1201,12 +1201,6 @@ start_worker()
 		goto Failed;
 	}
 
-	/* FIXME: if calling WaitForBackgroundWorkerStartup here will slow down the
-	 * diskquota to register bgworkers in parallel, so just delete code here.
-	 * But if postmaster failed to start bgworker, diskquota can not catch that
-	 * error. It is good to wait the bgworker to startup, but I don't know
-	 * where to call it.
-	 */
 	BgwHandleStatus status;
 	pid_t           pid;
 	status = WaitForBackgroundWorkerStartup(bgworker_handles[dq_worker->id - 1], &pid);
@@ -1535,13 +1529,10 @@ init_launcher_shmem()
 		DiskquotaLauncherShmem->dbArrayTail =
 		        (DiskquotaDBEntry *)((char *)DiskquotaLauncherShmem->dbArray +
 		                             mul_size(MAX_NUM_MONITORED_DB, sizeof(struct DiskquotaDBEntry)));
-		//		dlist_init(&DiskquotaLauncherShmem->dbList);
-		//		dlist_init(&DiskquotaLauncherShmem->freeDBList);
 		for (i = 0; i < MAX_NUM_MONITORED_DB; i++)
 		{
 			memset(&DiskquotaLauncherShmem->dbArray[i], 0, sizeof(DiskquotaDBEntry));
 			DiskquotaLauncherShmem->dbArray[i].id = i + 1;
-			// dlist_push_head(&DiskquotaLauncherShmem->freeDBList, &db[i].node);
 		}
 	}
 }
@@ -1648,7 +1639,7 @@ next_db(void)
 		if (!curDB->in_use) continue;
 		if (curDB->workerId > 0) continue;
 		if (curDB->dbid == InvalidOid) continue;
-		// check if it is paused
+		// TODO: check if it is paused
 		break;
 	}
 	return curDB;
