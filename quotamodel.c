@@ -2100,5 +2100,5 @@ format_name(const char *prefix, uint32 id, StringInfo str)
 {
 	resetStringInfo(str);
 	appendStringInfo(str, "%s_%u", prefix, id);
-	Assert(str.len <= 48);
+	Assert(str->len <= 48);
 }
