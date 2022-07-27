@@ -526,7 +526,7 @@ init_disk_quota_model(uint32 id)
  * - clean all items in the maps
  */
 void
-reset_disk_quota_model(uint32 id)
+vacuum_disk_quota_model(uint32 id)
 {
 	HASH_SEQ_STATUS       iter;
 	TableSizeEntry       *tsentry = NULL;

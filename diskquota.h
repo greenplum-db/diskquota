@@ -88,6 +88,7 @@ typedef struct DiskQuotaLocks DiskQuotaLocks;
  * the diskquota launcher process and backends.
  * When backend create an extension, it send a message to launcher
  * to start the diskquota worker process and write the corresponding
+ *
  * dbOid into diskquota database_list table in postgres database.
  * When backend drop an extension, it will send a message to launcher
  * to stop the diskquota worker process and remove the dbOid from diskquota
@@ -153,19 +154,17 @@ struct DiskQuotaWorkerEntry
 
 typedef struct
 {
-	dlist_head                   freeWorkers;
-	dlist_head                   runningWorkers;
-	dlist_head                   dbList;
-	dlist_head                   freeDBList;
-	struct DiskQuotaWorkerEntry *startingWorker;
-	int                          running_workers_num;
-	volatile bool                dynamicWorker;
+	dlist_head        freeWorkers;
+	dlist_head        runningWorkers;
+	DiskquotaDBEntry *dbArray;
+	DiskquotaDBEntry *dbArrayTail;
+	int               running_workers_num;
+	volatile bool     dynamicWorker;
 } DiskquotaLauncherShmemStruct;
 
 /* In shmem, only used on master */
 struct DiskquotaDBEntry
 {
-	dlist_node       node;
 	Oid              dbid;
 	pg_atomic_uint32 epoch; /* this counter will be increased after each worker loop */
 	bool             inited;
@@ -175,6 +174,7 @@ struct DiskquotaDBEntry
 	 * the id of the worker which is running for the, 0 means no worker for it.
 	 */
 	volatile uint32 workerId;
+	bool            in_use;
 };
 
 /* In shmem, both on master and segments */
@@ -228,6 +228,6 @@ extern Size              diskquota_launcher_shmem_size(void);
 extern void              init_launcher_shmem(void);
 extern DiskquotaDBEntry *get_db_entry(Oid dbid);
 extern void              update_monitor_db(Oid dbid, FetchTableStatType action);
-extern void              reset_disk_quota_model(uint32 id);
+extern void              vacuum_disk_quota_model(uint32 id);
 extern void              update_monitor_db_mpp(Oid dbid, FetchTableStatType action);
 #endif
