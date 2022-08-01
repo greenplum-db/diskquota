@@ -490,7 +490,6 @@ disk_quota_worker_main(Datum main_arg)
 			if (!MyWorkerInfo->dbEntry->inited) MyWorkerInfo->dbEntry->inited = true;
 		}
 		worker_increase_epoch(MyWorkerInfo->dbEntry);
-
 		MemoryAccounting_Reset();
 		if (DiskquotaLauncherShmem->dynamicWorker) break;
 		CHECK_FOR_INTERRUPTS();
@@ -1194,7 +1193,7 @@ start_worker()
 	worker.bgw_main_arg   = (Datum)PointerGetDatum(dq_worker);
 
 	old_ctx = MemoryContextSwitchTo(TopMemoryContext);
-	ret     = RegisterDynamicBackgroundWorker(&worker, &(bgworker_handles[dq_worker->id]));
+	ret     = RegisterDynamicBackgroundWorker(&worker, &(bgworker_handles[dq_worker->id - 1]));
 	MemoryContextSwitchTo(old_ctx);
 	if (!ret)
 	{
@@ -1204,7 +1203,7 @@ start_worker()
 
 	BgwHandleStatus status;
 	pid_t           pid;
-	status = WaitForBackgroundWorkerStartup(bgworker_handles[dq_worker->id], &pid);
+	status = WaitForBackgroundWorkerStartup(bgworker_handles[dq_worker->id - 1], &pid);
 	if (status == BGWH_STOPPED)
 	{
 		ereport(WARNING, (errcode(ERRCODE_INSUFFICIENT_RESOURCES), errmsg("could not start background process"),
@@ -1468,7 +1467,7 @@ FreeWorker(DiskQuotaWorkerEntry *worker)
 	if (worker != NULL)
 	{
 		LWLockAcquire(diskquota_locks.dblist_lock, LW_EXCLUSIVE);
-		if (worker->dbEntry != NULL) worker->dbEntry->workerId = -1;
+		if (worker->dbEntry != NULL) worker->dbEntry->workerId = 0;
 		LWLockRelease(diskquota_locks.dblist_lock);
 		LWLockAcquire(diskquota_locks.workerlist_lock, LW_EXCLUSIVE);
 		dlist_delete(&worker->node);
@@ -1583,7 +1582,7 @@ release_db_entry(Oid dbid)
 		return;
 	}
 	LWLockAcquire(diskquota_locks.dblist_lock, LW_EXCLUSIVE);
-	if (db->workerId >= 0)
+	if (db->workerId)
 	{
 		BackgroundWorkerHandle *handle = get_bgworker_handle(db->workerId);
 		TerminateBackgroundWorker(handle);
@@ -1638,7 +1637,7 @@ next_db(void)
 	for (; curDB < DiskquotaLauncherShmem->dbArrayTail; curDB++)
 	{
 		if (!curDB->in_use) continue;
-		if (curDB->workerId >= 0) continue;
+		if (curDB->workerId > 0) continue;
 		if (curDB->dbid == InvalidOid) continue;
 		// TODO: check if it is paused
 		break;
@@ -1746,7 +1745,7 @@ vacuum_db_entry(DiskquotaDBEntry *db)
 	db->dbid = InvalidOid;
 	pg_atomic_init_u32(&db->epoch, 0);
 	db->inited   = false;
-	db->workerId = -1;
+	db->workerId = 0;
 	pg_write_barrier();
 	db->in_use = false;
 }
@@ -1765,13 +1764,13 @@ init_bgworker_handles(void)
 static BackgroundWorkerHandle *
 get_bgworker_handle(uint32 worker_id)
 {
-	return bgworker_handles[worker_id];
+	return bgworker_handles[worker_id - 1];
 }
 
 static void
 free_bgworker_handle(uint32 worker_id)
 {
-	BackgroundWorkerHandle **handle = &bgworker_handles[worker_id];
+	BackgroundWorkerHandle **handle = &bgworker_handles[worker_id - 1];
 	if (*handle != NULL)
 	{
 		pfree(*handle);

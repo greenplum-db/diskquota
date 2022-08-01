@@ -168,12 +168,13 @@ struct DiskquotaDBEntry
 	Oid              dbid;
 	pg_atomic_uint32 epoch; /* this counter will be increased after each worker loop */
 	bool             inited;
-	int              id;
+	/* starts from 1 */
+	uint32 id;
 	/*
 	 * the id of the worker which is running for the, 0 means no worker for it.
 	 */
-	uint32 workerId;
-	bool   in_use;
+	volatile uint32 workerId;
+	bool            in_use;
 };
 
 /* In shmem, both on master and segments */
