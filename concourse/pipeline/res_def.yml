@@ -21,23 +21,23 @@ resources:
 - name: diskquota_pr
   type: pull-request
   # We should rely on the webhook. See README if webhook doesn't work
-  webhook_token: ((diskquota-webhook-token))
+  webhook_token: ((extension/diskquota-webhook-token))
   check_every: 24h
   source:
     disable_forks: false
     repository: greenplum-db/diskquota
-    access_token: ((github-access-token))
+    access_token: ((extension/github-access-token))
     base_branch: gpdb
 # Commit trigger
 - name: diskquota_commit
   type: git
   # We should rely on the webhook. See README if webhook doesn't work
-  webhook_token: ((diskquota-webhook-token))
+  webhook_token: ((extension/diskquota-webhook-token))
   check_every: 1h
   source:
     branch: ((diskquota-branch))
     uri: https://github.com/greenplum-db/diskquota.git
-    username: ((github-access-token))
+    username: ((extension/github-access-token))
     password: x-oauth-basic
 # Commit dev trigger. Not using webhook
 - name: diskquota_commit_dev
@@ -46,7 +46,7 @@ resources:
   source:
     branch: ((diskquota-branch))
     uri: https://github.com/greenplum-db/diskquota.git
-    username: ((github-access-token))
+    username: ((extension/github-access-token))
     password: x-oauth-basic
 
 
@@ -87,14 +87,14 @@ resources:
     repository: gcr.io/data-gpdb-private-images/gpdb6-rhel8-build
     tag: latest
     username: _json_key
-    password: ((container-registry-readonly-service-account-key))
+    password: ((data-gpdb-private-images-container-registry-readonly-service-account-key))
 - name: rhel8-gpdb6-image-test
   type: registry-image
   source:
     repository: gcr.io/data-gpdb-private-images/gpdb6-rhel8-test
     tag: latest
     username: _json_key
-    password: ((container-registry-readonly-service-account-key))
+    password: ((data-gpdb-private-images-container-registry-readonly-service-account-key))
 # Ubuntu18
 - name: ubuntu18-gpdb6-image-build
   type: registry-image
@@ -113,7 +113,7 @@ resources:
     repository: gcr.io/data-gpdb-extensions/common/clang-format
     tag: 13
     username: _json_key
-    password: ((extensions-gcs-service-account-key))
+    password: ((extension/extensions-gcs-service-account-key))
 
 # gpdb binary on gcs is located as different folder for different version
 # Latest build with assertion enabled:
@@ -204,28 +204,28 @@ resources:
   type: gcs
   source:
     bucket: gpdb-extensions-concourse-resources
-    json_key: ((extensions-gcs-service-account-key))
+    json_key: ((extension/extensions-gcs-service-account-key))
     versioned_file: intermediates/diskquota/diskquota_rhel6_gpdb6.tar.gz
 
 - name: bin_diskquota_gpdb6_rhel7_intermediates
   type: gcs
   source:
     bucket: gpdb-extensions-concourse-resources
-    json_key: ((extensions-gcs-service-account-key))
+    json_key: ((extension/extensions-gcs-service-account-key))
     versioned_file: intermediates/diskquota/diskquota_rhel7_gpdb6.tar.gz
 
 - name: bin_diskquota_gpdb6_rhel8_intermediates
   type: gcs
   source:
     bucket: gpdb-extensions-concourse-resources
-    json_key: ((extensions-gcs-service-account-key))
+    json_key: ((extension/extensions-gcs-service-account-key))
     versioned_file: intermediates/diskquota/diskquota_rhel8_gpdb6.tar.gz
 
 - name: bin_diskquota_gpdb6_ubuntu18_intermediates
   type: gcs
   source:
     bucket: gpdb-extensions-concourse-resources
-    json_key: ((extensions-gcs-service-account-key))
+    json_key: ((extension/extensions-gcs-service-account-key))
     versioned_file: intermediates/diskquota/diskquota_ubuntu18_gpdb6.tar.gz
 
 # Rel
@@ -291,10 +291,10 @@ resources:
   type: gcs
   source:
     bucket: gpdb-extensions-concourse-resources
-    json_key: ((extensions-gcs-service-account-key))
+    json_key: ((extension/extensions-gcs-service-account-key))
     regexp: dependencies/cmake-(.*)-linux-x86_64.sh
 
 - name: slack_notify
   type: slack-alert
   source:
-    url: ((extensions-slack-webhook))
+    url: ((extension/extensions-slack-webhook))
