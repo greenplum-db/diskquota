@@ -491,7 +491,11 @@ disk_quota_worker_main(Datum main_arg)
 		}
 		worker_increase_epoch(MyWorkerInfo->dbEntry);
 		MemoryAccounting_Reset();
-		if (DiskquotaLauncherShmem->dynamicWorker) break;
+		if (DiskquotaLauncherShmem->dynamicWorker)
+		{
+			elog(LOG, "dynmaic worker is true, break");
+			break;
+		}
 		CHECK_FOR_INTERRUPTS();
 
 		/*
@@ -669,10 +673,14 @@ disk_quota_launcher_main(Datum main_arg)
 			{
 				loop_start_time = GetCurrentTimestamp();
 				curDB           = NULL;
+				elog(LOG, "another loop");
 			}
 			/* Have finished one loop, do nothing, just sleep */
 			else
+			{
+				elog(LOG, "loop to sleep");
 				continue;
+			}
 		}
 
 		/* If there are no enough workers to run db, we can firstly sleep to wait workers */
@@ -684,6 +692,7 @@ disk_quota_launcher_main(Datum main_arg)
 
 		while (curDB != DiskquotaLauncherShmem->dbArrayTail && CanLaunchWorker())
 		{
+			elog(LOG, "start worker");
 			start_worker();
 		}
 
@@ -1490,9 +1499,20 @@ FreeWorkerOnExit(int code, Datum arg)
 static bool
 CanLaunchWorker(void)
 {
-	if (dlist_is_empty(&DiskquotaLauncherShmem->freeWorkers)) return false;
-	if (num_db <= 0) return false;
-	if (DiskquotaLauncherShmem->running_workers_num >= num_db) return false;
+	if (dlist_is_empty(&DiskquotaLauncherShmem->freeWorkers))
+	{
+		elog(LOG, "no free worker");
+		return false;
+	}
+	if (num_db <= 0)
+	{
+		return false;
+	}
+	if (DiskquotaLauncherShmem->running_workers_num >= num_db)
+	{
+		elog(LOG, "all running");
+		return false;
+	}
 	return true;
 }
 

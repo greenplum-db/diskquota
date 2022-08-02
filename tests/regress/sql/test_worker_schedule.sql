@@ -137,22 +137,40 @@ SELECT diskquota.wait_for_worker_new_epoch();
 SELECT tableid::regclass, size, segid FROM diskquota.table_size WHERE tableid = 'f2'::regclass and segid = -1;
 
 \c t3
+select diskquota.pause();
+SELECT diskquota.wait_for_worker_new_epoch();
 DROP EXTENSION diskquota;
 \c t4
+select diskquota.pause();
+SELECT diskquota.wait_for_worker_new_epoch();
 DROP EXTENSION diskquota;
 \c t5
+select diskquota.pause();
+SELECT diskquota.wait_for_worker_new_epoch();
 DROP EXTENSION diskquota;
 \c t6
+select diskquota.pause();
+SELECT diskquota.wait_for_worker_new_epoch();
 DROP EXTENSION diskquota;
 \c t7
+select diskquota.pause();
+SELECT diskquota.wait_for_worker_new_epoch();
 DROP EXTENSION diskquota;
 \c t8
+select diskquota.pause();
+SELECT diskquota.wait_for_worker_new_epoch();
 DROP EXTENSION diskquota;
 \c t9
+select diskquota.pause();
+SELECT diskquota.wait_for_worker_new_epoch();
 DROP EXTENSION diskquota;
 \c t10
+select diskquota.pause();
+SELECT diskquota.wait_for_worker_new_epoch();
 DROP EXTENSION diskquota;
 \c t11
+select diskquota.pause();
+SELECT diskquota.wait_for_worker_new_epoch();
 DROP EXTENSION diskquota;
 
 \c t12
