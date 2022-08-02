@@ -108,7 +108,7 @@ set -v
     sp \
     -p "${pipeline_name}" \
     -c "${yml_path}" \
-    -l "${workspace}/gpdb6/concourse/vars/common_prod.yml" \
+    -v "gcs-bucket=pivotal-gpdb-concourse-resources-prod" \
     -v "diskquota-branch=${branch}"
 set +v
 
