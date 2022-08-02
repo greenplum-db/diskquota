@@ -361,6 +361,13 @@ disk_quota_worker_main(Datum main_arg)
 
 	MyWorkerInfo = (DiskQuotaWorkerEntry *)DatumGetPointer(MyBgworkerEntry->bgw_main_arg);
 	Assert(MyWorkerInfo != NULL);
+	/*
+	 * The shmem exit hook is registered after registering disk_quota_sigterm.
+	 * So if the SIGTERM arrives before this statement, the shmem exit hook
+	 * won't be called.
+	 *
+	 * TODO: launcher to free the unused worker?
+	 */
 	on_shmem_exit(FreeWorkerOnExit, 0);
 
 	/* We're now ready to receive signals */
@@ -853,6 +860,7 @@ init_database_list(void)
 			continue;
 		}
 		dbEntry = add_db_entry(dbid);
+		if (dbEntry == = NULL) continue;
 		num++;
 		/*
 		 * diskquota only supports to monitor at most MAX_NUM_MONITORED_DB
@@ -1015,9 +1023,8 @@ on_add_db(Oid dbid, MessageResult *code)
 	 */
 	PG_TRY();
 	{
-		DiskquotaDBEntry *db;
 		add_dbid_to_database_list(dbid);
-		db = add_db_entry(dbid);
+		add_db_entry(dbid);
 		update_monitor_db_mpp(dbid, ADD_DB_TO_MONITOR);
 	}
 	PG_CATCH();
