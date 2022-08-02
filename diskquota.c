@@ -264,7 +264,6 @@ disk_quota_sigterm(SIGNAL_ARGS)
 static void
 disk_quota_worker_sigterm(SIGNAL_ARGS)
 {
-	got_sigterm = true;
 	proc_exit(0);
 }
 
@@ -385,7 +384,7 @@ disk_quota_worker_main(Datum main_arg)
 	// FIXME: version check should be run for each starting bgworker?
 	//  check current binary version and SQL DLL version are matched
 	int times = 0;
-	while (!got_sigterm)
+	while ()
 	{
 		CHECK_FOR_INTERRUPTS();
 
@@ -436,7 +435,7 @@ disk_quota_worker_main(Datum main_arg)
 	init_ps_display("bgworker:", "[diskquota]", dbname, "");
 
 	/* Waiting for diskquota state become ready */
-	while (!got_sigterm)
+	while ()
 	{
 		int rc;
 		/* If the database has been inited before, no need to check the ready state again */
