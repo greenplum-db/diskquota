@@ -82,8 +82,8 @@ static DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
  * the current db to be run or running
  *
  * curDB has 3 different kinds of values:
- * 1) when curDB is NULL, it means we can start to
- * start workers for databases
+ * 1) when curDB is NULL, it means we can start workers
+ * for databases
  *
  * 2) when curDB is DiskquotaLauncherShmem->dbArrayTail,
  * it means it has done in one loop to start each worker
@@ -384,7 +384,7 @@ disk_quota_worker_main(Datum main_arg)
 	// FIXME: version check should be run for each starting bgworker?
 	//  check current binary version and SQL DLL version are matched
 	int times = 0;
-	while ()
+	while (true)
 	{
 		CHECK_FOR_INTERRUPTS();
 
@@ -435,7 +435,7 @@ disk_quota_worker_main(Datum main_arg)
 	init_ps_display("bgworker:", "[diskquota]", dbname, "");
 
 	/* Waiting for diskquota state become ready */
-	while ()
+	while (true)
 	{
 		int rc;
 		/* If the database has been inited before, no need to check the ready state again */

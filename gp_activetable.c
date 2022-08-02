@@ -56,10 +56,8 @@ HTAB *active_tables_map = NULL;
  * dbid will be removed from it when droping diskquota extension
  * dbid will be removed from it when diskquota.paused() called
  * dbid will be added back to it when diskquota.resume() called
- *
  */
 HTAB *monitored_dbid_cache = NULL;
-HTAB *paused_dbid_cache    = NULL;
 HTAB *altered_reloid_cache = NULL;
 
 /* active table hooks which detect the disk file size change. */
