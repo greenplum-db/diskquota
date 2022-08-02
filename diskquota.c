@@ -860,7 +860,7 @@ init_database_list(void)
 			continue;
 		}
 		dbEntry = add_db_entry(dbid);
-		if (dbEntry == = NULL) continue;
+		if (dbEntry == NULL) continue;
 		num++;
 		/*
 		 * diskquota only supports to monitor at most MAX_NUM_MONITORED_DB
