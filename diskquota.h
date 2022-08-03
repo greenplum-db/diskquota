@@ -173,7 +173,7 @@ struct DiskquotaDBEntry
 	/*
 	 * the id of the worker which is running for the, 0 means no worker for it.
 	 */
-	volatile uint32 workerId;
+	uint32 workerId;
 	bool            in_use;
 };
 

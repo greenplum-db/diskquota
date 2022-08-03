@@ -74,7 +74,7 @@ DiskQuotaLocks       diskquota_locks;
 ExtensionDDLMessage *extension_ddl_message = NULL;
 
 /* For each diskquota worker */
-static DiskQuotaWorkerEntry *MyWorkerInfo = NULL;
+static volatile DiskQuotaWorkerEntry *MyWorkerInfo = NULL;
 /* using hash table to support incremental update the table size entry.*/
 static int                           num_db = 0;
 static DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
@@ -1177,8 +1177,8 @@ start_worker()
 	dbEntry = next_db();
 	if (dbEntry == DiskquotaLauncherShmem->dbArrayTail) goto Failed;
 
-	dq_worker->dbEntry = dbEntry;
 	dbEntry->workerId  = dq_worker->id;
+	dq_worker->dbEntry = dbEntry;
 	/* free the BackgroundWorkerHandle used by last database */
 	free_bgworker_handle(dq_worker->id);
 	memset(&worker, 0, sizeof(BackgroundWorker));
