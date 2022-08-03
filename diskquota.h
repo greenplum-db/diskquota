@@ -174,7 +174,7 @@ struct DiskquotaDBEntry
 	 * the id of the worker which is running for the, 0 means no worker for it.
 	 */
 	uint32 workerId;
-	bool            in_use;
+	bool   in_use;
 };
 
 /* In shmem, both on master and segments */
