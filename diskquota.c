@@ -74,7 +74,7 @@ DiskQuotaLocks       diskquota_locks;
 ExtensionDDLMessage *extension_ddl_message = NULL;
 
 /* For each diskquota worker */
-static volatile DiskQuotaWorkerEntry *MyWorkerInfo = NULL;
+static DiskQuotaWorkerEntry * volatile MyWorkerInfo = NULL;
 /* using hash table to support incremental update the table size entry.*/
 static int                           num_db = 0;
 static DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
@@ -1480,7 +1480,7 @@ FreeWorker(DiskQuotaWorkerEntry *worker)
 		LWLockAcquire(diskquota_locks.dblist_lock, LW_EXCLUSIVE);
 		if (worker->dbEntry != NULL)
 		{
-			bool in_use = worker->dbEntry->i_use;
+			bool in_use = worker->dbEntry->in_use;
 			pg_read_barrier();
 			if (in_use && worker->dbEntry->workerId == worker->id) worker->dbEntry->workerId = 0;
 		}
