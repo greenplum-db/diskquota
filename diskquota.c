@@ -1478,7 +1478,12 @@ FreeWorker(DiskQuotaWorkerEntry *worker)
 	if (worker != NULL)
 	{
 		LWLockAcquire(diskquota_locks.dblist_lock, LW_EXCLUSIVE);
-		if (worker->dbEntry != NULL) worker->dbEntry->workerId = 0;
+		if (worker->dbEntry != NULL)
+		{
+			bool in_use = worker->dbEntry->i_use;
+			pg_read_barrier();
+			if (in_use && worker->dbEntry->workerId == worker->id) worker->dbEntry->workerId = 0;
+		}
 		LWLockRelease(diskquota_locks.dblist_lock);
 		LWLockAcquire(diskquota_locks.workerlist_lock, LW_EXCLUSIVE);
 		dlist_delete(&worker->node);
@@ -1590,6 +1595,8 @@ release_db_entry(Oid dbid)
 	for (int i = 0; i < MAX_NUM_MONITORED_DB; i++)
 	{
 		DiskquotaDBEntry *dbEntry = &DiskquotaLauncherShmem->dbArray[i];
+		/* reading dbEntry->in_use in launcher doesn't need pg_read_barrier,
+		 * as only laucher will modify it*/
 		if (dbEntry->in_use && dbEntry->dbid == dbid)
 		{
 			db = dbEntry;

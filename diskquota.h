@@ -76,6 +76,7 @@ struct DiskQuotaLocks
 	LWLock *extension_ddl_lock; /* ensure create diskquota extension serially */
 	LWLock *monitored_dbid_cache_lock;
 	LWLock *relation_cache_lock;
+	/* dblist_lock is used to protect a DiskquotaDBEntry's content */
 	LWLock *dblist_lock;
 	LWLock *workerlist_lock;
 	LWLock *altered_reloid_cache_lock;
