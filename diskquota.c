@@ -74,7 +74,7 @@ DiskQuotaLocks       diskquota_locks;
 ExtensionDDLMessage *extension_ddl_message = NULL;
 
 /* For each diskquota worker */
-static DiskQuotaWorkerEntry * volatile MyWorkerInfo = NULL;
+static DiskQuotaWorkerEntry *volatile MyWorkerInfo = NULL;
 /* using hash table to support incremental update the table size entry.*/
 static int                           num_db = 0;
 static DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
