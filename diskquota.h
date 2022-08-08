@@ -31,6 +31,8 @@
 
 /* max number of monitored database with diskquota enabled */
 #define MAX_NUM_MONITORED_DB 50
+#define LAUNCHER_SCHEMA "diskquota_utility"
+#define EXTENSION_SCHEMA "diskquota"
 typedef enum
 {
 	NAMESPACE_QUOTA = 0,
@@ -230,5 +232,5 @@ extern void              init_launcher_shmem(void);
 extern DiskquotaDBEntry *get_db_entry(Oid dbid);
 extern void              update_monitor_db(Oid dbid, FetchTableStatType action);
 extern void              vacuum_disk_quota_model(uint32 id);
-extern void              update_monitor_db_mpp(Oid dbid, FetchTableStatType action);
+extern void              update_monitor_db_mpp(Oid dbid, FetchTableStatType action, const char *schema);
 #endif

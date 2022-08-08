@@ -716,8 +716,23 @@ create_monitor_db_table(void)
 	bool        pushed_active_snap = false;
 	bool        ret                = true;
 
+	/*
+	 * Create function diskquota.diskquota_fetch_table_stat in launcher
+	 * We need this function to distribute dbid to segments when creating
+	 * a diskquota extension.
+	 */
 	sql = "create schema if not exists diskquota_namespace;"
-	      "create table if not exists diskquota_namespace.database_list(dbid oid not null unique);";
+	      "create table if not exists diskquota_namespace.database_list(dbid oid not null unique);"
+	      "DROP SCHEMA IF EXISTS " LAUNCHER_SCHEMA
+	      ";"
+	      "CREATE SCHEMA " LAUNCHER_SCHEMA
+	      ";"
+	      "CREATE TYPE " LAUNCHER_SCHEMA
+	      ".diskquota_active_table_type AS (TABLE_OID oid, TABLE_SIZE int8, GP_SEGMENT_ID "
+	      "smallint);"
+	      "CREATE FUNCTION " LAUNCHER_SCHEMA ".diskquota_fetch_table_stat(int4, oid[]) RETURNS setof " LAUNCHER_SCHEMA
+	      ".diskquota_active_table_type AS '$libdir/" DISKQUOTA_BINARY_NAME
+	      ".so', 'diskquota_fetch_table_stat' LANGUAGE C VOLATILE;";
 
 	StartTransactionCommand();
 
@@ -741,26 +756,6 @@ create_monitor_db_table(void)
 
 		/* debug_query_string need to be set for SPI_execute utility functions. */
 		debug_query_string = sql;
-
-		ret_code = SPI_execute(sql, false, 0);
-		if (ret_code != SPI_OK_UTILITY)
-		{
-			ereport(ERROR, (errmsg("[diskquota launcher] SPI_execute error, sql: \"%s\", reason: %s, ret_code: %d.",
-			                       sql, strerror(errno), ret_code)));
-		}
-		/*
-		 * Create function diskquota.diskquota_fetch_table_stat in launcher
-		 * We need this function to distribute dbid to segments when creating
-		 * a diskquota extension.
-		 */
-		sql = "CREATE SCHEMA IF NOT EXISTS diskquota;"
-		      "DROP FUNCTION IF EXISTS diskquota.diskquota_fetch_table_stat(int4, oid[]);"
-		      "DROP TYPE IF EXISTS diskquota.diskquota_active_table_type;"
-		      "CREATE TYPE diskquota.diskquota_active_table_type AS (TABLE_OID oid, TABLE_SIZE int8, GP_SEGMENT_ID "
-		      "smallint);"
-		      "CREATE FUNCTION diskquota.diskquota_fetch_table_stat(int4, oid[]) RETURNS setof "
-		      "diskquota.diskquota_active_table_type AS '$libdir/" DISKQUOTA_BINARY_NAME
-		      ".so', 'diskquota_fetch_table_stat' LANGUAGE C VOLATILE;";
 
 		ret_code = SPI_execute(sql, false, 0);
 		if (ret_code != SPI_OK_UTILITY)
@@ -862,13 +857,13 @@ init_database_list(void)
 		}
 	}
 	num_db = num;
-	/* As update_monitor_db needs to execute sql, so can not put in the loop above */
+	/* As update_monitor_db_mpp needs to execute sql, so can not put in the loop above */
 	for (int i = 0; i < MAX_NUM_MONITORED_DB; i++)
 	{
 		DiskquotaDBEntry *dbEntry = &DiskquotaLauncherShmem->dbArray[i];
 		if (dbEntry->in_use)
 		{
-			update_monitor_db_mpp(dbEntry->dbid, ADD_DB_TO_MONITOR);
+			update_monitor_db_mpp(dbEntry->dbid, ADD_DB_TO_MONITOR, LAUNCHER_SCHEMA);
 		}
 	}
 	SPI_finish();
@@ -1012,7 +1007,7 @@ on_add_db(Oid dbid, MessageResult *code)
 	{
 		add_dbid_to_database_list(dbid);
 		add_db_entry(dbid);
-		update_monitor_db_mpp(dbid, ADD_DB_TO_MONITOR);
+		update_monitor_db_mpp(dbid, ADD_DB_TO_MONITOR, LAUNCHER_SCHEMA);
 	}
 	PG_CATCH();
 	{
@@ -1046,7 +1041,7 @@ on_del_db(Oid dbid, MessageResult *code)
 	{
 		del_dbid_from_database_list(dbid);
 		release_db_entry(dbid);
-		update_monitor_db_mpp(dbid, REMOVE_DB_FROM_BEING_MONITORED);
+		update_monitor_db_mpp(dbid, REMOVE_DB_FROM_BEING_MONITORED, LAUNCHER_SCHEMA);
 		/* clear the out-of-quota rejectmap in shared memory */
 		invalidate_database_rejectmap(dbid);
 	}

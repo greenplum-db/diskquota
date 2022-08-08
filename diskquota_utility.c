@@ -427,7 +427,7 @@ diskquota_pause(PG_FUNCTION_ARGS)
 			ereport(ERROR,
 			        (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] unable to connect to execute SPI query")));
 		}
-		update_monitor_db_mpp(dbid, PAUSE_DB_TO_MONITOR);
+		update_monitor_db_mpp(dbid, PAUSE_DB_TO_MONITOR, EXTENSION_SCHEMA);
 		SPI_finish();
 	}
 	PG_RETURN_VOID();
@@ -459,7 +459,7 @@ diskquota_resume(PG_FUNCTION_ARGS)
 			ereport(ERROR,
 			        (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] unable to connect to execute SPI query")));
 		}
-		update_monitor_db_mpp(dbid, RESUME_DB_TO_MONITOR);
+		update_monitor_db_mpp(dbid, RESUME_DB_TO_MONITOR, EXTENSION_SCHEMA);
 		SPI_finish();
 	}
 

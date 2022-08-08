@@ -2076,13 +2076,12 @@ show_rejectmap(PG_FUNCTION_ARGS)
 }
 
 void
-update_monitor_db_mpp(Oid dbid, FetchTableStatType action)
+update_monitor_db_mpp(Oid dbid, FetchTableStatType action, const char *schema)
 {
 	StringInfoData sql_command;
 	initStringInfo(&sql_command);
-	appendStringInfo(&sql_command,
-	                 "SELECT diskquota.diskquota_fetch_table_stat(%d, '%s'::oid[]) FROM gp_dist_random('gp_id')",
-	                 action, psprintf("{%d}", dbid));
+	appendStringInfo(&sql_command, "SELECT %s.diskquota_fetch_table_stat(%d, '%s'::oid[]) FROM gp_dist_random('gp_id')",
+	                 schema, action, psprintf("{%d}", dbid));
 	/* Add current database to the monitored db cache on all segments */
 	int ret = SPI_execute(sql_command.data, true, 0);
 	pfree(sql_command.data);
