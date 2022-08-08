@@ -116,7 +116,6 @@ void disk_quota_worker_main(Datum);
 void disk_quota_launcher_main(Datum);
 
 static void disk_quota_sigterm(SIGNAL_ARGS);
-static void disk_quota_worker_sigterm(SIGNAL_ARGS);
 static void disk_quota_sighup(SIGNAL_ARGS);
 static void define_guc_variables(void);
 static bool start_worker(void);
@@ -257,17 +256,6 @@ disk_quota_sigterm(SIGNAL_ARGS)
 }
 
 /*
- * Signal handler for SIGTERM
- * Set a flag to let the main loop to terminate, and set our latch to wake
- * it up.
- */
-static void
-disk_quota_worker_sigterm(SIGNAL_ARGS)
-{
-	proc_exit(0);
-}
-
-/*
  * Signal handler for SIGHUP
  * Set a flag to tell the main loop to reread the config file, and set
  * our latch to wake it up.
@@ -356,7 +344,7 @@ disk_quota_worker_main(Datum main_arg)
 
 	/* Establish signal handlers before unblocking signals. */
 	pqsignal(SIGHUP, disk_quota_sighup);
-	pqsignal(SIGTERM, disk_quota_worker_sigterm);
+	pqsignal(SIGTERM, disk_quota_sigterm);
 	pqsignal(SIGUSR1, disk_quota_sigusr1);
 
 	MyWorkerInfo = (DiskQuotaWorkerEntry *)DatumGetPointer(MyBgworkerEntry->bgw_main_arg);
@@ -391,7 +379,7 @@ disk_quota_worker_main(Datum main_arg)
 	// FIXME: version check should be run for each starting bgworker?
 	//  check current binary version and SQL DLL version are matched
 	int times = 0;
-	while (true)
+	while (!got_sigterm)
 	{
 		CHECK_FOR_INTERRUPTS();
 
@@ -442,7 +430,7 @@ disk_quota_worker_main(Datum main_arg)
 	init_ps_display("bgworker:", "[diskquota]", dbname, "");
 
 	/* Waiting for diskquota state become ready */
-	while (true)
+	while (!got_sigterm)
 	{
 		int rc;
 		/* If the database has been inited before, no need to check the ready state again */
@@ -484,7 +472,7 @@ disk_quota_worker_main(Datum main_arg)
 
 	ereport(LOG, (errmsg("[diskquota] start bgworker for database: \"%s\"", dbname)));
 
-	for (;;)
+	while (!got_sigterm)
 	{
 		int rc;
 
@@ -1059,6 +1047,7 @@ on_del_db(Oid dbid, MessageResult *code)
 	{
 		del_dbid_from_database_list(dbid);
 		release_db_entry(dbid);
+		update_monitor_db_mpp(MyDatabaseId, REMOVE_DB_FROM_BEING_MONITORED);
 		/* clear the out-of-quota rejectmap in shared memory */
 		invalidate_database_rejectmap(dbid);
 	}

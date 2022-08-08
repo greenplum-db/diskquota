@@ -534,7 +534,6 @@ dq_object_access_hook_on_drop(void)
 	 * Remove the current database from monitored db cache
 	 * on all segments and on coordinator.
 	 */
-	update_monitor_db(MyDatabaseId, REMOVE_DB_FROM_BEING_MONITORED);
 
 	if (!IS_QUERY_DISPATCHER())
 	{

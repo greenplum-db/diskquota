@@ -1,5 +1,27 @@
 -- start_ignore
 \c
+DROP DATABASE IF EXISTS t1;
+NOTICE:  database "t1" does not exist, skipping
+DROP DATABASE IF EXISTS t3;
+NOTICE:  database "t3" does not exist, skipping
+DROP DATABASE IF EXISTS t4;
+NOTICE:  database "t4" does not exist, skipping
+DROP DATABASE IF EXISTS t5;
+NOTICE:  database "t5" does not exist, skipping
+DROP DATABASE IF EXISTS t6;
+NOTICE:  database "t6" does not exist, skipping
+DROP DATABASE IF EXISTS t7;
+NOTICE:  database "t7" does not exist, skipping
+DROP DATABASE IF EXISTS t8;
+NOTICE:  database "t8" does not exist, skipping
+DROP DATABASE IF EXISTS t9;
+NOTICE:  database "t9" does not exist, skipping
+DROP DATABASE IF EXISTS t10;
+NOTICE:  database "t10" does not exist, skipping
+DROP DATABASE IF EXISTS t11;
+NOTICE:  database "t11" does not exist, skipping
+DROP DATABASE IF EXISTS t12;
+NOTICE:  database "t12" does not exist, skipping
 CREATE DATABASE t1;
 CREATE DATABASE t2;
 CREATE DATABASE t3;
@@ -32,8 +54,6 @@ SELECT tableid::regclass, size, segid FROM diskquota.table_size WHERE tableid = 
 (1 row)
 
 --start_ignore
-\! gpconfig -c diskquota.naptime -v 1;
-20220719:17:37:43:030030 gpconfig:wxiaoran-a01:xiwang-[INFO]:-completed successfully with parameters '-c diskquota.naptime -v 1'
 \! gpconfig -c diskquota.max_workers -v 1;
 20220719:17:37:46:030120 gpconfig:wxiaoran-a01:xiwang-[INFO]:-completed successfully with parameters '-c diskquota.max_workers -v 1'
 \! gpstop -arf;
@@ -112,8 +132,6 @@ SELECT tableid::regclass, size, segid FROM diskquota.table_size WHERE tableid = 
 (1 row)
 
 --start_ignore
-\! gpconfig -c diskquota.naptime -v 1;
-20220727:14:23:11:024651 gpconfig:wxiaoran-a01:xiwang-[INFO]:-completed successfully with parameters '-c diskquota.naptime -v 1'
 \! gpconfig -c diskquota.max_workers -v 11;
 20220727:14:23:23:025074 gpconfig:wxiaoran-a01:xiwang-[INFO]:-completed successfully with parameters '-c diskquota.max_workers -v 11'
 \! gpstop -arf;
@@ -328,6 +346,18 @@ SELECT tableid::regclass, size, segid FROM diskquota.table_size WHERE tableid = 
 (1 row)
 
 \c t1
+SELECT diskquota.pause();
+ pause 
+-------
+ 
+(1 row)
+
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
 DROP EXTENSION diskquota;
 DROP TABLE f1;
 CREATE EXTENSION diskquota;
@@ -348,6 +378,18 @@ SELECT tableid::regclass, size, segid FROM diskquota.table_size WHERE tableid = 
 (1 row)
 
 \c t2
+SELECT diskquota.pause();
+ pause 
+-------
+ 
+(1 row)
+
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
 DROP EXTENSION diskquota;
 DROP TABLE f2;
 CREATE EXTENSION diskquota;
@@ -368,7 +410,7 @@ SELECT tableid::regclass, size, segid FROM diskquota.table_size WHERE tableid = 
 (1 row)
 
 \c t3
-select diskquota.pause();
+SELECT diskquota.pause();
  pause 
 -------
  
@@ -382,7 +424,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 
 DROP EXTENSION diskquota;
 \c t4
-select diskquota.pause();
+SELECT diskquota.pause();
  pause 
 -------
  
@@ -396,7 +438,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 
 DROP EXTENSION diskquota;
 \c t5
-select diskquota.pause();
+SELECT diskquota.pause();
  pause 
 -------
  
@@ -410,7 +452,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 
 DROP EXTENSION diskquota;
 \c t6
-select diskquota.pause();
+SELECT diskquota.pause();
  pause 
 -------
  
@@ -424,7 +466,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 
 DROP EXTENSION diskquota;
 \c t7
-select diskquota.pause();
+SELECT diskquota.pause();
  pause 
 -------
  
@@ -438,7 +480,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 
 DROP EXTENSION diskquota;
 \c t8
-select diskquota.pause();
+SELECT diskquota.pause();
  pause 
 -------
  
@@ -452,7 +494,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 
 DROP EXTENSION diskquota;
 \c t9
-select diskquota.pause();
+SELECT diskquota.pause();
  pause 
 -------
  
@@ -466,7 +508,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 
 DROP EXTENSION diskquota;
 \c t10
-select diskquota.pause();
+SELECT diskquota.pause();
  pause 
 -------
  
@@ -480,7 +522,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 
 DROP EXTENSION diskquota;
 \c t11
-select diskquota.pause();
+SELECT diskquota.pause();
  pause 
 -------
  
@@ -511,10 +553,46 @@ SELECT tableid::regclass, size, segid FROM diskquota.table_size WHERE tableid = 
  f12     | 98304 |    -1
 (1 row)
 
+SELECT diskquota.pause();
+ pause 
+-------
+ 
+(1 row)
+
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
 DROP EXTENSION diskquota;
 \c t1
+SELECT diskquota.pause();
+ pause 
+-------
+ 
+(1 row)
+
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
 DROP EXTENSION diskquota;
 \c t2
+SELECT diskquota.pause();
+ pause 
+-------
+ 
+(1 row)
+
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
 DROP EXTENSION diskquota;
 --start_ignore
 \c contrib_regression
