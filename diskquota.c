@@ -587,7 +587,6 @@ disk_quota_launcher_main(Datum main_arg)
 	ereport(LOG, (errmsg("[diskquota launcher] start main loop")));
 	curDB = NULL;
 
-	if (CanLaunchWorker()) start_worker();
 	while (!got_sigterm)
 	{
 		int  rc;
