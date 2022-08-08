@@ -1047,7 +1047,7 @@ on_del_db(Oid dbid, MessageResult *code)
 	{
 		del_dbid_from_database_list(dbid);
 		release_db_entry(dbid);
-		update_monitor_db_mpp(MyDatabaseId, REMOVE_DB_FROM_BEING_MONITORED);
+		update_monitor_db_mpp(dbid, REMOVE_DB_FROM_BEING_MONITORED);
 		/* clear the out-of-quota rejectmap in shared memory */
 		invalidate_database_rejectmap(dbid);
 	}
