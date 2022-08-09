@@ -948,7 +948,7 @@ do_process_extension_ddl_message(MessageResult *code, ExtensionDDLMessage local_
 				break;
 			case CMD_DROP_EXTENSION:
 				on_del_db(local_extension_ddl_message.dbid, code);
-				num_db--;
+				if (num_db > 0) num_db--;
 				*code = ERR_OK;
 				break;
 			default:
@@ -1763,7 +1763,7 @@ wait_bgworker_terminate(BackgroundWorkerHandle *handle)
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
-	if (timeout) elog(WARNING, "Timeout to wait bgworker to terminate", );
+	if (timeout) elog(WARNING, "Timeout to wait bgworker to terminate");
 
 	set_latch_on_sigusr1 = save_set_latch_on_sigusr1;
 	return;
