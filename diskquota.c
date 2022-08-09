@@ -483,7 +483,7 @@ disk_quota_worker_main(Datum main_arg)
 			refresh_disk_quota_model(!MyWorkerInfo->dbEntry->inited);
 			if (!MyWorkerInfo->dbEntry->inited) MyWorkerInfo->dbEntry->inited = true;
 		}
-		worker_increase_epoch(MyWorkerInfo->dbEntry);
+		worker_increase_epoch(MyWorkerInfo->dbEntry->dbid);
 		MemoryAccounting_Reset();
 		if (DiskquotaLauncherShmem->dynamicWorker)
 		{
@@ -724,7 +724,7 @@ create_monitor_db_table(void)
 	sql = "create schema if not exists diskquota_namespace;"
 	      "create table if not exists diskquota_namespace.database_list(dbid oid not null unique);"
 	      "DROP SCHEMA IF EXISTS " LAUNCHER_SCHEMA
-	      ";"
+	      "CASCADE;"
 	      "CREATE SCHEMA " LAUNCHER_SCHEMA
 	      ";"
 	      "CREATE TYPE " LAUNCHER_SCHEMA
@@ -1279,31 +1279,38 @@ is_valid_dbid(Oid dbid)
 }
 
 bool
-worker_increase_epoch(DiskquotaDBEntry *dbEntry)
+worker_increase_epoch(Oid dbid)
 {
-	if (dbEntry != NULL)
+	bool           found = false;
+	MonitorDBEntry entry;
+	LWLockAcquire(diskquota_locks.monitored_dbid_cache_lock, LW_SHARED);
+	entry = hash_search(monitored_dbid_cache, &dbid, HASH_FIND, &found);
+
+	if (found)
 	{
-		pg_atomic_fetch_add_u32(&(dbEntry->epoch), 1);
-		return true;
+		pg_atomic_fetch_add_u32(&(entry->epoch), 1);
 	}
-	return false;
+	LWLockRelease(diskquota_locks.monitored_dbid_cache_lock);
+	return found;
 }
 
 uint32
-worker_get_epoch(Oid database_oid)
+worker_get_epoch(Oid dbid)
 {
-	bool              found = false;
-	uint32            epoch = 0;
-	DiskquotaDBEntry *db    = get_db_entry(database_oid);
-	if (db != NULL)
+	bool           found = false;
+	uint32         epoch = 0;
+	MonitorDBEntry entry;
+	LWLockAcquire(diskquota_locks.monitored_dbid_cache_lock, LW_SHARED);
+	entry = hash_search(monitored_dbid_cache, &dbid, HASH_FIND, &found);
+	if (found)
 	{
-		found = true;
-		epoch = pg_atomic_read_u32(&(db->epoch));
+		epoch = pg_atomic_read_u32(&(entry->epoch));
 	}
+	LWLockRelease(diskquota_locks.monitored_dbid_cache_lock);
 	if (!found)
 	{
 		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-		                errmsg("[diskquota] worker not found for database \"%s\"", get_database_name(database_oid))));
+		                errmsg("[diskquota] worker not found for database \"%s\"", get_db_name(dbid))));
 	}
 	return epoch;
 }
@@ -1324,10 +1331,21 @@ diskquota_status_check_soft_limit()
 {
 	// should run on coordinator only.
 	Assert(IS_QUERY_DISPATCHER());
+
+	bool           found, paused;
+	MonitorDBEntry entry;
+	LWLockAcquire(diskquota_locks.monitored_dbid_cache_lock, LW_SHARED);
+	{
+		entry  = hash_search(monitored_dbid_cache, &MyDatabaseId, HASH_FIND, &found);
+		paused = found ? entry->paused : false;
+	}
+	LWLockRelease(diskquota_locks.monitored_dbid_cache_lock);
+
 	// if worker no booted, aka 'CREATE EXTENSION' not called, diskquota is paused
-	DiskquotaDBEntry *db = get_db_entry(MyDatabaseId);
-	if (db == NULL) return "paused";
-	return diskquota_is_paused() ? "paused" : "on";
+	if (!found) return "paused";
+
+	// if worker booted, check 'worker_map->is_paused'
+	return paused ? "paused" : "on";
 }
 
 static const char *
@@ -1506,7 +1524,6 @@ FreeWorker(DiskQuotaWorkerEntry *worker)
 		if (worker->dbEntry != NULL)
 		{
 			bool in_use = worker->dbEntry->in_use;
-			pg_read_barrier();
 			if (in_use && worker->dbEntry->workerId == worker->id) worker->dbEntry->workerId = 0;
 		}
 		LWLockRelease(diskquota_locks.dblist_lock);
@@ -1599,8 +1616,7 @@ add_db_entry(Oid dbid)
 		DiskquotaDBEntry *dbEntry = &DiskquotaLauncherShmem->dbArray[i];
 		if (!dbEntry->in_use && result == NULL)
 		{
-			dbEntry->dbid = dbid;
-			pg_write_barrier();
+			dbEntry->dbid   = dbid;
 			dbEntry->in_use = true;
 			result          = dbEntry;
 		}
@@ -1624,8 +1640,6 @@ release_db_entry(Oid dbid)
 	for (int i = 0; i < MAX_NUM_MONITORED_DB; i++)
 	{
 		DiskquotaDBEntry *dbEntry = &DiskquotaLauncherShmem->dbArray[i];
-		/* reading dbEntry->in_use in launcher doesn't need pg_read_barrier,
-		 * as only laucher will modify it*/
 		if (dbEntry->in_use && dbEntry->dbid == dbid)
 		{
 			db = dbEntry;
@@ -1661,7 +1675,6 @@ get_db_entry(Oid dbid)
 	{
 		DiskquotaDBEntry *dbEntry = &DiskquotaLauncherShmem->dbArray[i];
 		if (!dbEntry->in_use) continue;
-		pg_read_barrier();
 		if (dbEntry->dbid == dbid)
 		{
 			db = dbEntry;
@@ -1804,12 +1817,10 @@ static void
 vacuum_db_entry(DiskquotaDBEntry *db)
 {
 	if (db == NULL) return;
-	db->dbid = InvalidOid;
-	pg_atomic_init_u32(&db->epoch, 0);
+	db->dbid     = InvalidOid;
 	db->inited   = false;
 	db->workerId = 0;
-	pg_write_barrier();
-	db->in_use = false;
+	db->in_use   = false;
 }
 
 static void

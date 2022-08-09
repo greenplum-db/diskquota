@@ -168,9 +168,8 @@ typedef struct
 /* In shmem, only used on master */
 struct DiskquotaDBEntry
 {
-	Oid              dbid;
-	pg_atomic_uint32 epoch; /* this counter will be increased after each worker loop */
-	bool             inited;
+	Oid  dbid;
+	bool inited;
 	/* starts from 1 */
 	uint32 id;
 	/*
@@ -184,8 +183,9 @@ struct DiskquotaDBEntry
 typedef struct MonitorDBEntry *MonitorDBEntry;
 struct MonitorDBEntry
 {
-	Oid           dbid;
-	volatile bool paused;
+	Oid              dbid;
+	volatile bool    paused;
+	pg_atomic_uint32 epoch; /* this counter will be increased after each worker loop */
 };
 
 extern HTAB *disk_quota_worker_map;
@@ -223,7 +223,7 @@ extern List    *diskquota_get_index_list(Oid relid);
 extern void     diskquota_get_appendonly_aux_oid_list(Oid reloid, Oid *segrelid, Oid *blkdirrelid, Oid *visimaprelid);
 extern Oid      diskquota_parse_primary_table_oid(Oid namespace, char *relname);
 
-extern bool              worker_increase_epoch(DiskquotaDBEntry *dbEntry);
+extern bool              worker_increase_epoch(Oid dbid);
 extern unsigned int      worker_get_epoch(Oid database_oid);
 extern bool              diskquota_is_paused(void);
 extern void              do_check_diskquota_state_is_ready(void);

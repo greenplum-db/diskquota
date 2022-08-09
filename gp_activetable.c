@@ -254,7 +254,9 @@ report_relation_cache_helper(Oid relid)
 	 * this operation is read-only and does not require absolutely exact.
 	 * read the cache with out shared lock.
 	 */
+	LWLockAcquire(diskquota_locks.monitored_dbid_cache_lock, LW_SHARED);
 	hash_search(monitored_dbid_cache, &MyDatabaseId, HASH_FIND, &found);
+	LWLockRelease(diskquota_locks.monitored_dbid_cache_lock);
 	if (!found)
 	{
 		return;
@@ -283,11 +285,13 @@ report_active_table_helper(const RelFileNodeBackend *relFileNode)
 		return;
 	}
 
+	LWLockAcquire(diskquota_locks.monitored_dbid_cache_lock, LW_SHARED);
 	/* do not collect active table info when the database is not under monitoring.
 	 * this operation is read-only and does not require absolutely exact.
 	 * read the cache with out shared lock */
+	elog(LOG, "monitored dbid %p", monitored_dbid_cache);
 	hash_search(monitored_dbid_cache, &dbid, HASH_FIND, &found);
-
+	LWLockRelease(diskquota_locks.monitored_dbid_cache_lock);
 	if (!found)
 	{
 		return;
@@ -300,6 +304,7 @@ report_active_table_helper(const RelFileNodeBackend *relFileNode)
 	item.tablespaceoid = relFileNode->node.spcNode;
 
 	LWLockAcquire(diskquota_locks.active_table_lock, LW_EXCLUSIVE);
+	elog(LOG, " active_tables_map %p", active_tables_map);
 	entry = hash_search(active_tables_map, &item, HASH_ENTER_NULL, &found);
 	if (entry && !found) *entry = item;
 

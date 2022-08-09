@@ -1197,6 +1197,7 @@ update_monitor_db(Oid dbid, FetchTableStatType action)
 			ereport(WARNING, (errmsg("can't alloc memory on dbid cache, there ary too many databases to monitor")));
 		}
 		entry->paused = false;
+		pg_atomic_init_u32(&(entry->epoch), 0);
 	}
 	else if (action == REMOVE_DB_FROM_BEING_MONITORED)
 	{
