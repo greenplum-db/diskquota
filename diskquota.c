@@ -944,13 +944,11 @@ do_process_extension_ddl_message(MessageResult *code, ExtensionDDLMessage local_
 			case CMD_CREATE_EXTENSION:
 				on_add_db(local_extension_ddl_message.dbid, code);
 				num_db++;
-				if (num_db > diskquota_max_workers) DiskquotaLauncherShmem->dynamicWorker = true;
 				*code = ERR_OK;
 				break;
 			case CMD_DROP_EXTENSION:
 				on_del_db(local_extension_ddl_message.dbid, code);
 				num_db--;
-				if (num_db <= diskquota_max_workers) DiskquotaLauncherShmem->dynamicWorker = false;
 				*code = ERR_OK;
 				break;
 			default:
@@ -978,6 +976,56 @@ do_process_extension_ddl_message(MessageResult *code, ExtensionDDLMessage local_
 		CommitTransactionCommand();
 	else
 		AbortCurrentTransaction();
+	/* update something in memory after transaction committed */
+	if (ret)
+	{
+		PG_TRY();
+		{
+			/* update_monitor_db_mpp runs sql to distribute dbid to segments */
+			StartTransactionCommand();
+			PushActiveSnapshot(GetTransactionSnapshot());
+			pushed_active_snap = true;
+			Oid dbid           = local_extension_ddl_message.dbid;
+			int ret_code       = SPI_connect();
+			if (ret_code != SPI_OK_CONNECT)
+			{
+				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+				                errmsg("unable to connect to execute internal query. return code: %d.", ret_code)));
+			}
+			switch (local_extension_ddl_message.cmd)
+			{
+				case CMD_CREATE_EXTENSION:
+					add_db_entry(dbid);
+					/* TODO: how about this failed? */
+					update_monitor_db_mpp(dbid, ADD_DB_TO_MONITOR, LAUNCHER_SCHEMA);
+					if (num_db > diskquota_max_workers) DiskquotaLauncherShmem->dynamicWorker = true;
+					break;
+				case CMD_DROP_EXTENSION:
+					release_db_entry(dbid);
+					update_monitor_db_mpp(dbid, REMOVE_DB_FROM_BEING_MONITORED, LAUNCHER_SCHEMA);
+					/* clear the out-of-quota rejectmap in shared memory */
+					invalidate_database_rejectmap(dbid);
+					if (num_db <= diskquota_max_workers) DiskquotaLauncherShmem->dynamicWorker = false;
+					break;
+				default:
+					ereport(LOG, (errmsg("[diskquota launcher]:received unsupported message cmd=%d",
+					                     local_extension_ddl_message.cmd)));
+					break;
+			}
+			SPI_finish();
+			if (pushed_active_snap) PopActiveSnapshot();
+			CommitTransactionCommand();
+		}
+		PG_CATCH();
+		{
+			error_context_stack = NULL;
+			HOLD_INTERRUPTS();
+			EmitErrorReport();
+			FlushErrorState();
+			RESUME_INTERRUPTS();
+		}
+		PG_END_TRY();
+	}
 }
 
 /*
@@ -1006,8 +1054,6 @@ on_add_db(Oid dbid, MessageResult *code)
 	PG_TRY();
 	{
 		add_dbid_to_database_list(dbid);
-		add_db_entry(dbid);
-		update_monitor_db_mpp(dbid, ADD_DB_TO_MONITOR, LAUNCHER_SCHEMA);
 	}
 	PG_CATCH();
 	{
@@ -1040,10 +1086,6 @@ on_del_db(Oid dbid, MessageResult *code)
 	PG_TRY();
 	{
 		del_dbid_from_database_list(dbid);
-		release_db_entry(dbid);
-		update_monitor_db_mpp(dbid, REMOVE_DB_FROM_BEING_MONITORED, LAUNCHER_SCHEMA);
-		/* clear the out-of-quota rejectmap in shared memory */
-		invalidate_database_rejectmap(dbid);
 	}
 	PG_CATCH();
 	{
@@ -1555,12 +1597,16 @@ add_db_entry(Oid dbid)
 	for (int i = 0; i < MAX_NUM_MONITORED_DB; i++)
 	{
 		DiskquotaDBEntry *dbEntry = &DiskquotaLauncherShmem->dbArray[i];
-		if (!dbEntry->in_use)
+		if (!dbEntry->in_use && result == NULL)
 		{
 			dbEntry->dbid = dbid;
 			pg_write_barrier();
 			dbEntry->in_use = true;
 			result          = dbEntry;
+		}
+		else if (dbEntry->in_use && dbEntry->dbid == dbid)
+		{
+			result = dbEntry;
 			break;
 		}
 	}
@@ -1682,6 +1728,7 @@ wait_bgworker_terminate(BackgroundWorkerHandle *handle)
 
 	save_set_latch_on_sigusr1 = set_latch_on_sigusr1;
 	set_latch_on_sigusr1      = true;
+	bool timeout              = true;
 
 	PG_TRY();
 	{
@@ -1693,12 +1740,17 @@ wait_bgworker_terminate(BackgroundWorkerHandle *handle)
 
 			status = GetBackgroundWorkerPid(handle, &pid);
 
-			if (status == BGWH_NOT_YET_STARTED || status == BGWH_STOPPED) break;
+			if (status == BGWH_NOT_YET_STARTED || status == BGWH_STOPPED)
+			{
+				timeout = false;
+				break;
+			}
 
 			rc = WaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH, 50L);
 
 			if (rc & WL_POSTMASTER_DEATH)
 			{
+				timeout = false;
 				break;
 			}
 
@@ -1711,6 +1763,7 @@ wait_bgworker_terminate(BackgroundWorkerHandle *handle)
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
+	if (timeout) elog(WARNING, "Timeout to wait bgworker to terminate", );
 
 	set_latch_on_sigusr1 = save_set_latch_on_sigusr1;
 	return;
