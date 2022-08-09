@@ -403,7 +403,7 @@ disk_quota_shmem_startup(void)
 
 	memset(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize   = sizeof(Oid);
-	hash_ctl.entrysize = sizeof(MonitorDBEntry);
+	hash_ctl.entrysize = sizeof(struct MonitorDBEntryStruct);
 	hash_ctl.hash      = oid_hash;
 
 	monitored_dbid_cache = ShmemInitHash("table oid cache which shoud tracking", MAX_NUM_MONITORED_DB,

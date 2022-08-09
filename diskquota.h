@@ -180,8 +180,8 @@ struct DiskquotaDBEntry
 };
 
 /* In shmem, both on master and segments */
-typedef struct MonitorDBEntry *MonitorDBEntry;
-struct MonitorDBEntry
+typedef struct MonitorDBEntryStruct *MonitorDBEntry;
+struct MonitorDBEntryStruct
 {
 	Oid              dbid;
 	volatile bool    paused;
