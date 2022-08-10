@@ -40,7 +40,6 @@ FROM gp_dist_random('gp_id');
 DROP TABLE t;
 DROP TABLE t_no_extension;
 
-SELECT diskquota.pause();
 DROP EXTENSION diskquota;
 
 \c contrib_regression
