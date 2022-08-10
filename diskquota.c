@@ -446,9 +446,12 @@ disk_quota_worker_main(Datum main_arg)
 		 * After running UDF init_table_size_table() The state will changed to
 		 * be ready.
 		 */
-		if (check_diskquota_state_is_ready())
+		if (!diskquota_is_paused())
 		{
-			break;
+			if (check_diskquota_state_is_ready())
+			{
+				break;
+			}
 		}
 		rc = WaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH, diskquota_naptime * 1000L);
 		ResetLatch(&MyProc->procLatch);
