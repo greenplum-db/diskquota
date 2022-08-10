@@ -521,7 +521,7 @@ disk_quota_worker_main(Datum main_arg)
 		}
 	}
 
-	if (got_sigterm;)
+	if (got_sigterm)
 		ereport(LOG, (errmsg("[diskquota] stop disk quota worker process to monitor database:%s", dbname)));
 	proc_exit(0);
 }
