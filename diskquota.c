@@ -341,8 +341,6 @@ void
 disk_quota_worker_main(Datum main_arg)
 {
 	char *dbname = MyBgworkerEntry->bgw_name;
-	if (!MyWorkerInfo->dbEntry->inited)
-		ereport(LOG, (errmsg("[diskquota] start disk quota worker process to monitor database:%s", dbname)));
 
 	/* Establish signal handlers before unblocking signals. */
 	pqsignal(SIGHUP, disk_quota_sighup);
@@ -351,6 +349,8 @@ disk_quota_worker_main(Datum main_arg)
 
 	MyWorkerInfo = (DiskQuotaWorkerEntry *)DatumGetPointer(MyBgworkerEntry->bgw_main_arg);
 	Assert(MyWorkerInfo != NULL);
+	if (!MyWorkerInfo->dbEntry->inited)
+		ereport(LOG, (errmsg("[diskquota] start disk quota worker process to monitor database:%s", dbname)));
 	/*
 	 * The shmem exit hook is registered after registering disk_quota_sigterm.
 	 * So if the SIGTERM arrives before this statement, the shmem exit hook
