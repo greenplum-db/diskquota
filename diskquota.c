@@ -251,7 +251,6 @@ disk_quota_sigterm(SIGNAL_ARGS)
 	int save_errno = errno;
 
 	got_sigterm = true;
-	elog(LOG, "got sigterm signal");
 	if (MyProc) SetLatch(&MyProc->procLatch);
 
 	errno = save_errno;
@@ -342,7 +341,8 @@ void
 disk_quota_worker_main(Datum main_arg)
 {
 	char *dbname = MyBgworkerEntry->bgw_name;
-	ereport(LOG, (errmsg("[diskquota] start disk quota worker process to monitor database:%s", dbname)));
+	if (!MyWorkerInfo->dbEntry->inited)
+		ereport(LOG, (errmsg("[diskquota] start disk quota worker process to monitor database:%s", dbname)));
 
 	/* Establish signal handlers before unblocking signals. */
 	pqsignal(SIGHUP, disk_quota_sighup);
@@ -475,8 +475,6 @@ disk_quota_worker_main(Datum main_arg)
 		}
 	}
 
-	ereport(LOG, (errmsg("[diskquota] start bgworker for database: \"%s\"", dbname)));
-
 	while (!got_sigterm)
 	{
 		int rc;
@@ -523,7 +521,8 @@ disk_quota_worker_main(Datum main_arg)
 		}
 	}
 
-	ereport(LOG, (errmsg("[diskquota] stop bgworker for database: \"%s\"", dbname)));
+	if (got_sigterm;)
+		ereport(LOG, (errmsg("[diskquota] stop disk quota worker process to monitor database:%s", dbname)));
 	proc_exit(0);
 }
 
