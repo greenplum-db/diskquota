@@ -20,6 +20,12 @@ SELECT pg_sleep(5);
  
 (1 row)
 
+SELECT diskquota.pause();
+ pause 
+-------
+ 
+(1 row)
+
 DROP EXTENSION diskquota;
 \c contrib_regression
 DROP DATABASE db_not_ready;

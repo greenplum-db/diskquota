@@ -13,6 +13,7 @@ SELECT diskquota.pause();
 -- diskquota.state is not clean.
 SELECT pg_sleep(5);
 
+SELECT diskquota.pause();
 DROP EXTENSION diskquota;
 
 \c contrib_regression
