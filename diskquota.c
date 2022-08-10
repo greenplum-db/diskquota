@@ -43,6 +43,7 @@ PG_MODULE_MAGIC;
 
 #define DISKQUOTA_DB "diskquota"
 #define DISKQUOTA_APPLICATION_NAME "gp_reserved_gpdiskquota"
+#define INVALID_WORKER_ID -1
 
 /* clang-format off */
 #if !defined(DISKQUOTA_VERSION) || \
@@ -1229,7 +1230,7 @@ start_worker()
 	worker.bgw_main_arg   = (Datum)PointerGetDatum(dq_worker);
 
 	old_ctx = MemoryContextSwitchTo(TopMemoryContext);
-	ret     = RegisterDynamicBackgroundWorker(&worker, &(bgworker_handles[dq_worker->id - 1]));
+	ret     = RegisterDynamicBackgroundWorker(&worker, &(bgworker_handles[dq_worker->id]));
 	MemoryContextSwitchTo(old_ctx);
 	if (!ret)
 	{
@@ -1239,7 +1240,7 @@ start_worker()
 
 	BgwHandleStatus status;
 	pid_t           pid;
-	status = WaitForBackgroundWorkerStartup(bgworker_handles[dq_worker->id - 1], &pid);
+	status = WaitForBackgroundWorkerStartup(bgworker_handles[dq_worker->id], &pid);
 	if (status == BGWH_STOPPED)
 	{
 		ereport(WARNING, (errcode(ERRCODE_INSUFFICIENT_RESOURCES), errmsg("could not start background process"),
@@ -1524,7 +1525,10 @@ FreeWorker(DiskQuotaWorkerEntry *worker)
 		if (worker->dbEntry != NULL)
 		{
 			bool in_use = worker->dbEntry->in_use;
-			if (in_use && worker->dbEntry->workerId == worker->id) worker->dbEntry->workerId = 0;
+			if (in_use && worker->dbEntry->workerId == worker->id)
+			{
+				worker->dbEntry->workerId = INVALID_WORKER_ID;
+			}
 		}
 		LWLockRelease(diskquota_locks.dblist_lock);
 		LWLockAcquire(diskquota_locks.workerlist_lock, LW_EXCLUSIVE);
@@ -1583,7 +1587,7 @@ init_launcher_shmem()
 		for (i = 0; i < diskquota_max_workers; i++)
 		{
 			memset(&worker[i], 0, sizeof(DiskQuotaWorkerEntry));
-			worker[i].id = i + 1;
+			worker[i].id = i;
 			dlist_push_head(&DiskquotaLauncherShmem->freeWorkers, &worker[i].node);
 		}
 
@@ -1598,7 +1602,8 @@ init_launcher_shmem()
 		for (i = 0; i < MAX_NUM_MONITORED_DB; i++)
 		{
 			memset(&DiskquotaLauncherShmem->dbArray[i], 0, sizeof(DiskquotaDBEntry));
-			DiskquotaLauncherShmem->dbArray[i].id = i + 1;
+			DiskquotaLauncherShmem->dbArray[i].id       = i;
+			DiskquotaLauncherShmem->dbArray[i].workerId = INVALID_WORKER_ID;
 		}
 	}
 }
@@ -1650,13 +1655,13 @@ release_db_entry(Oid dbid)
 	{
 		return;
 	}
-	LWLockAcquire(diskquota_locks.dblist_lock, LW_EXCLUSIVE);
-	if (db->workerId)
+	if (db->workerId != INVALID_WORKER_ID)
 	{
 		BackgroundWorkerHandle *handle = get_bgworker_handle(db->workerId);
 		TerminateBackgroundWorker(handle);
 		wait_bgworker_terminate(handle);
 	}
+	LWLockAcquire(diskquota_locks.dblist_lock, LW_EXCLUSIVE);
 	vacuum_disk_quota_model(db->id);
 	/* should be called at last to set in_use to false */
 	vacuum_db_entry(db);
@@ -1705,7 +1710,7 @@ next_db(void)
 	for (; curDB < DiskquotaLauncherShmem->dbArrayTail; curDB++)
 	{
 		if (!curDB->in_use) continue;
-		if (curDB->workerId > 0) continue;
+		if (curDB->workerId != INVALID_WORKER_ID) continue;
 		if (curDB->dbid == InvalidOid) continue;
 		// TODO: check if it is paused
 		break;
@@ -1745,7 +1750,7 @@ wait_bgworker_terminate(BackgroundWorkerHandle *handle)
 
 	PG_TRY();
 	{
-		for (int i = 0; i < 10; i++)
+		for (int i = 0; i < 1200; i++)
 		{
 			pid_t pid;
 
@@ -1759,7 +1764,7 @@ wait_bgworker_terminate(BackgroundWorkerHandle *handle)
 				break;
 			}
 
-			rc = WaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH, 50L);
+			rc = WaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH, 100L);
 
 			if (rc & WL_POSTMASTER_DEATH)
 			{
@@ -1819,7 +1824,7 @@ vacuum_db_entry(DiskquotaDBEntry *db)
 	if (db == NULL) return;
 	db->dbid     = InvalidOid;
 	db->inited   = false;
-	db->workerId = 0;
+	db->workerId = INVALID_WORKER_ID;
 	db->in_use   = false;
 }
 
@@ -1837,13 +1842,16 @@ init_bgworker_handles(void)
 static BackgroundWorkerHandle *
 get_bgworker_handle(uint32 worker_id)
 {
-	return bgworker_handles[worker_id - 1];
+	if (worker_id >= 0)
+		return bgworker_handles[worker_id];
+	else
+		return NULL;
 }
 
 static void
 free_bgworker_handle(uint32 worker_id)
 {
-	BackgroundWorkerHandle **handle = &bgworker_handles[worker_id - 1];
+	BackgroundWorkerHandle **handle = &bgworker_handles[worker_id];
 	if (*handle != NULL)
 	{
 		pfree(*handle);
