@@ -251,6 +251,7 @@ disk_quota_sigterm(SIGNAL_ARGS)
 	int save_errno = errno;
 
 	got_sigterm = true;
+	elog(LOG, "got sigterm signal");
 	if (MyProc) SetLatch(&MyProc->procLatch);
 
 	errno = save_errno;
