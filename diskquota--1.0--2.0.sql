@@ -17,8 +17,8 @@ ALTER TABLE diskquota.table_size DROP CONSTRAINT table_size_pkey;
 ALTER TABLE diskquota.table_size ADD PRIMARY KEY (tableid, segid);
 ALTER TABLE diskquota.table_size SET WITH (REORGANIZE=true) DISTRIBUTED BY (tableid, segid);
 
--- TODO SELECT pg_catalog.pg_extension_config_dump('diskquota.target', '');
--- TODO SELECT gp_segment_id, pg_catalog.pg_extension_config_dump('diskquota.target', '') FROM gp_dist_random('gp_id');
+SELECT pg_catalog.pg_extension_config_dump('diskquota.target', '');
+SELECT gp_segment_id, pg_catalog.pg_extension_config_dump('diskquota.target', '') FROM gp_dist_random('gp_id');
 -- table part end
 
 -- type define
