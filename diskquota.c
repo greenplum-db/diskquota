@@ -372,11 +372,11 @@ disk_quota_worker_main(Datum main_arg)
 	/* diskquota worker should has Gp_role as dispatcher */
 	Gp_role = GP_ROLE_DISPATCH;
 
-	init_disk_quota_model(MyWorkerInfo->dbEntry->id);
 	/*
 	 * Initialize diskquota related local hash map and refresh model
 	 * immediately
 	 */
+	init_disk_quota_model(MyWorkerInfo->dbEntry->id);
 
 	// FIXME: version check should be run for each starting bgworker?
 	//  check current binary version and SQL DLL version are matched
@@ -457,7 +457,6 @@ disk_quota_worker_main(Datum main_arg)
 		ResetLatch(&MyProc->procLatch);
 
 		// be nice to scheduler when naptime == 0 and diskquota_is_paused() == true
-		// FIXME: why diskquota_naptime becomes 0?
 		if (!diskquota_naptime) usleep(1);
 
 		/* Emergency bailout if postmaster has died */
@@ -1669,27 +1668,6 @@ release_db_entry(Oid dbid)
 	/* should be called at last to set in_use to false */
 	vacuum_db_entry(db);
 	LWLockRelease(diskquota_locks.dblist_lock);
-}
-
-/*
- * It is supposed diskquota_locks.extension_ddl_message_lock has been accquired
- * before calling this function.
- */
-DiskquotaDBEntry *
-get_db_entry(Oid dbid)
-{
-	DiskquotaDBEntry *db = NULL;
-	for (int i = 0; i < MAX_NUM_MONITORED_DB; i++)
-	{
-		DiskquotaDBEntry *dbEntry = &DiskquotaLauncherShmem->dbArray[i];
-		if (!dbEntry->in_use) continue;
-		if (dbEntry->dbid == dbid)
-		{
-			db = dbEntry;
-			break;
-		}
-	}
-	return db;
 }
 
 /*

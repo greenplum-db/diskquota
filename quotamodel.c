@@ -440,7 +440,9 @@ static Size
 diskquota_worker_shmem_size()
 {
 	Size size;
-	size = hash_estimate_size(MAX_TABLES, sizeof(TableSizeEntry));
+	elog(LOG, "TableSizeEntry:%lu", sizeof(TableSizeEntry));
+	size = hash_estimate_size(1024 * 1024, sizeof(TableSizeEntry));
+	elog(LOG, "table size map:%lu", size);
 	size = add_size(size, hash_estimate_size(MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, sizeof(LocalRejectMapEntry)));
 	size = add_size(size, hash_estimate_size(1024L, sizeof(struct QuotaMapEntry)) * NUM_QUOTA_TYPES);
 	return size;
@@ -476,10 +478,7 @@ init_disk_quota_model(uint32 id)
 	HASHCTL        hash_ctl;
 	StringInfoData str;
 	initStringInfo(&str);
-	/*
-	 * if it already exists, attach to it rather than allocate and initialize
-	 * new space
-	 */
+
 	memset(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize   = sizeof(TableEntryKey);
 	hash_ctl.entrysize = sizeof(TableSizeEntry);
@@ -2080,8 +2079,9 @@ update_monitor_db_mpp(Oid dbid, FetchTableStatType action, const char *schema)
 {
 	StringInfoData sql_command;
 	initStringInfo(&sql_command);
-	appendStringInfo(&sql_command, "SELECT %s.diskquota_fetch_table_stat(%d, '%s'::oid[]) FROM gp_dist_random('gp_id')",
-	                 schema, action, psprintf("{%d}", dbid));
+	appendStringInfo(&sql_command,
+	                 "SELECT %s.diskquota_fetch_table_stat(%d, '{%d}'::oid[]) FROM gp_dist_random('gp_id')", schema,
+	                 action, dbid);
 	/* Add current database to the monitored db cache on all segments */
 	int ret = SPI_execute(sql_command.data, true, 0);
 	pfree(sql_command.data);

@@ -54,8 +54,6 @@ HTAB *active_tables_map = NULL;
  *
  * dbid will be added to it when creating diskquota extension
  * dbid will be removed from it when droping diskquota extension
- * dbid will be removed from it when diskquota.paused() called
- * dbid will be added back to it when diskquota.resume() called
  */
 HTAB *monitored_dbid_cache = NULL;
 HTAB *altered_reloid_cache = NULL;
@@ -304,7 +302,6 @@ report_active_table_helper(const RelFileNodeBackend *relFileNode)
 	item.tablespaceoid = relFileNode->node.spcNode;
 
 	LWLockAcquire(diskquota_locks.active_table_lock, LW_EXCLUSIVE);
-	elog(LOG, " active_tables_map %p", active_tables_map);
 	entry = hash_search(active_tables_map, &item, HASH_ENTER_NULL, &found);
 	if (entry && !found) *entry = item;
 

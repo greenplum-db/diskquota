@@ -148,7 +148,7 @@ typedef struct DiskquotaDBEntry     DiskquotaDBEntry;
  */
 struct DiskQuotaWorkerEntry
 {
-	/* starts from 1, 0 means invalid*/
+	/* starts from 0, -1 means invalid*/
 	uint32            id;
 	int               launcherpid;
 	DiskquotaDBEntry *dbEntry;
@@ -170,7 +170,7 @@ struct DiskquotaDBEntry
 {
 	Oid  dbid;
 	bool inited;
-	/* starts from 1 */
+	/* starts from 0 */
 	uint32 id;
 	/*
 	 * the id of the worker which is running for the, 0 means no worker for it.
@@ -184,7 +184,7 @@ typedef struct MonitorDBEntryStruct *MonitorDBEntry;
 struct MonitorDBEntryStruct
 {
 	Oid              dbid;
-	volatile bool    paused;
+	bool             paused;
 	pg_atomic_uint32 epoch; /* this counter will be increased after each worker loop */
 };
 
