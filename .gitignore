@@ -11,3 +11,12 @@ tags
 cscope*
 .ccls-cache/
 compile_commands.json
+
+# For cmake
+*.cmake
+CMakeFiles/
+Makefile
+CMakeCache.txt
+*.so
+diskquota-build-info
+install_manifest.txt
