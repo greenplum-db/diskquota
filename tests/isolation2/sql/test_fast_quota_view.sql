@@ -47,6 +47,8 @@ SELECT diskquota.set_role_tablespace_quota('r', 'spc2', '100 MB');
 1: CREATE TABLE t2(i int) TABLESPACE spc2 DISTRIBUTED BY (i);
 1: INSERT INTO t2 SELECT generate_series(1, 100000);
 
+1: SELECT diskquota.wait_for_worker_new_epoch();
+
 -- check role quota view before transaction commits
 2: SELECT role_name, quota_in_mb, rolsize_in_bytes FROM diskquota.show_fast_role_quota_view;
 2: SELECT role_name, tablespace_name, quota_in_mb, rolsize_tablespace_in_bytes FROM diskquota.show_fast_role_tablespace_quota_view;

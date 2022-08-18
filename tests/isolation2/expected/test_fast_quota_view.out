@@ -114,6 +114,12 @@ CREATE
 1: INSERT INTO t2 SELECT generate_series(1, 100000);
 INSERT 100000
 
+1: SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t                         
+(1 row)
+
 -- check role quota view before transaction commits
 2: SELECT role_name, quota_in_mb, rolsize_in_bytes FROM diskquota.show_fast_role_quota_view;
  role_name | quota_in_mb | rolsize_in_bytes 
