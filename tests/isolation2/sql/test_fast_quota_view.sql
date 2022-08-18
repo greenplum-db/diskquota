@@ -19,10 +19,10 @@ SELECT diskquota.set_role_tablespace_quota('r', 'spc2', '100 MB');
 
 -- test show_fast_schema_quota_view and show_fast_schema_tablespace_quota_view
 1: BEGIN;
-1: CREATE TABLE s1.t(i int);
+1: CREATE TABLE s1.t(i int) DISTRIBUTED BY (i);
 1: INSERT INTO s1.t SELECT generate_series(1, 100000);
 
-1: CREATE TABLE s2.t(i int) TABLESPACE spc1;
+1: CREATE TABLE s2.t(i int) TABLESPACE spc1 DISTRIBUTED BY (i);
 1: INSERT INTO s2.t SELECT generate_series(1, 100000);
 
 1: SELECT diskquota.wait_for_worker_new_epoch();
@@ -41,10 +41,10 @@ SELECT diskquota.set_role_tablespace_quota('r', 'spc2', '100 MB');
 
 -- test show_fast_role_quota_view and show_fast_role_tablespace_quota_view
 1: BEGIN;
-1: CREATE TABLE t1(i int);
+1: CREATE TABLE t1(i int) DISTRIBUTED BY (i);
 1: INSERT INTO t1 SELECT generate_series(1, 100000);
 
-1: CREATE TABLE t2(i int) TABLESPACE spc2;
+1: CREATE TABLE t2(i int) TABLESPACE spc2 DISTRIBUTED BY (i);
 1: INSERT INTO t2 SELECT generate_series(1, 100000);
 
 -- check role quota view before transaction commits

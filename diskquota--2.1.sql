@@ -117,9 +117,7 @@ CREATE FUNCTION diskquota.show_relation_cache_all_seg() RETURNS setof diskquota.
 CREATE VIEW diskquota.show_fast_schema_quota_view AS
 WITH
   relation_cache AS (
-        SELECT (f.a).* FROM (
-	SELECT diskquota.show_relation_cache() AS a
-	FROM  gp_dist_random('gp_id')) as f
+    SELECT (f).* FROM diskquota.show_relation_cache() as f
   ),
   all_relation AS (
     SELECT DISTINCT(oid), relowner, relnamespace, reltablespace from (
@@ -156,9 +154,7 @@ WHERE
 CREATE VIEW diskquota.show_fast_role_quota_view AS
 WITH
   relation_cache AS (
-        SELECT (f.a).* FROM (
-	SELECT diskquota.show_relation_cache() AS a
-	FROM  gp_dist_random('gp_id')) as f
+    SELECT (f).* FROM diskquota.show_relation_cache() as f
   ),
   all_relation AS (
     SELECT DISTINCT(oid), relowner, relnamespace, reltablespace from (
@@ -208,9 +204,7 @@ WITH
     WHERE datname = current_database()
   ),
   relation_cache AS (
-    SELECT (f.a).* FROM (
-	    SELECT diskquota.show_relation_cache() AS a
-	    FROM  gp_dist_random('gp_id')) as f
+    SELECT (f).* FROM diskquota.show_relation_cache() as f
   ),
   all_relation AS (
     SELECT DISTINCT(oid), relowner, relnamespace, reltablespace from (
@@ -272,9 +266,7 @@ WITH
     WHERE datname = current_database()
   ),
   relation_cache AS (
-    SELECT (f.a).* FROM (
-	    SELECT diskquota.show_relation_cache() AS a
-	    FROM  gp_dist_random('gp_id')) as f
+    SELECT (f).* FROM diskquota.show_relation_cache() as f
   ),
   all_relation AS (
     SELECT DISTINCT(oid), relowner, relnamespace, reltablespace from (
