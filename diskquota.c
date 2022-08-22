@@ -1357,8 +1357,8 @@ diskquota_status(PG_FUNCTION_ARGS)
 
 	bool  nulls[2] = {false, false};
 	Datum v[2]     = {
-	            DirectFunctionCall1(textin, CStringGetDatum(fs[context->index].name)),
-	            DirectFunctionCall1(textin, CStringGetDatum(fs[context->index].status())),
+            DirectFunctionCall1(textin, CStringGetDatum(fs[context->index].name)),
+            DirectFunctionCall1(textin, CStringGetDatum(fs[context->index].status())),
     };
 	ReturnSetInfo *rsi   = (ReturnSetInfo *)fcinfo->resultinfo;
 	HeapTuple      tuple = heap_form_tuple(rsi->expectedDesc, v, nulls);
