@@ -25,6 +25,8 @@
 #include "cdb/cdbvars.h"
 #include "commands/dbcommands.h"
 #include "executor/spi.h"
+#include "libpq/libpq-be.h"
+#include "miscadmin.h"
 #include "port/atomics.h"
 #include "storage/ipc.h"
 #include "storage/proc.h"
@@ -293,6 +295,9 @@ void
 disk_quota_worker_main(Datum main_arg)
 {
 	char *dbname = MyBgworkerEntry->bgw_name;
+
+	MyProcPort                = (Port *)calloc(1, sizeof(Port));
+	MyProcPort->database_name = dbname; // To show the database in the log
 
 	ereport(LOG, (errmsg("[diskquota] start disk quota worker process to monitor database:%s", dbname)));
 
@@ -1352,8 +1357,8 @@ diskquota_status(PG_FUNCTION_ARGS)
 
 	bool  nulls[2] = {false, false};
 	Datum v[2]     = {
-            DirectFunctionCall1(textin, CStringGetDatum(fs[context->index].name)),
-            DirectFunctionCall1(textin, CStringGetDatum(fs[context->index].status())),
+	            DirectFunctionCall1(textin, CStringGetDatum(fs[context->index].name)),
+	            DirectFunctionCall1(textin, CStringGetDatum(fs[context->index].status())),
     };
 	ReturnSetInfo *rsi   = (ReturnSetInfo *)fcinfo->resultinfo;
 	HeapTuple      tuple = heap_form_tuple(rsi->expectedDesc, v, nulls);

@@ -626,9 +626,9 @@ do_check_diskquota_state_is_ready(void)
 
 	if (state != DISKQUOTA_READY_STATE && !diskquota_is_readiness_logged())
 	{
+		diskquota_set_readiness_logged();
 		ereport(ERROR, (errmsg("[diskquota] diskquota is not ready"),
 		                errhint("please run 'SELECT diskquota.init_table_size_table();' to initialize diskquota")));
-		diskquota_set_readiness_logged();
 	}
 }
 
