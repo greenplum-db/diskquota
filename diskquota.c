@@ -1089,7 +1089,7 @@ start_worker_by_dboid(Oid dbid)
 	BackgroundWorkerHandle *handle;
 	BgwHandleStatus         status;
 	MemoryContext           old_ctx;
-	char	               *dbname;
+	char                   *dbname;
 	pid_t                   pid;
 	bool                    ret;
 
@@ -1352,8 +1352,8 @@ diskquota_status(PG_FUNCTION_ARGS)
 
 	bool  nulls[2] = {false, false};
 	Datum v[2]     = {
-	            DirectFunctionCall1(textin, CStringGetDatum(fs[context->index].name)),
-	            DirectFunctionCall1(textin, CStringGetDatum(fs[context->index].status())),
+            DirectFunctionCall1(textin, CStringGetDatum(fs[context->index].name)),
+            DirectFunctionCall1(textin, CStringGetDatum(fs[context->index].status())),
     };
 	ReturnSetInfo *rsi   = (ReturnSetInfo *)fcinfo->resultinfo;
 	HeapTuple      tuple = heap_form_tuple(rsi->expectedDesc, v, nulls);
