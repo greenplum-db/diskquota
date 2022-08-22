@@ -93,6 +93,43 @@ diskquota_is_paused()
 	return paused;
 }
 
+bool
+diskquota_is_readiness_logged()
+{
+	Assert(MyDatabaseId != InvalidOid);
+	bool is_readiness_logged;
+
+	LWLockAcquire(diskquota_locks.worker_map_lock, LW_SHARED);
+	{
+		DiskQuotaWorkerEntry *hash_entry;
+		bool                  found;
+
+		hash_entry =
+		        (DiskQuotaWorkerEntry *)hash_search(disk_quota_worker_map, (void *)&MyDatabaseId, HASH_FIND, &found);
+		is_readiness_logged = found ? hash_entry->is_readiness_logged : false;
+	}
+	LWLockRelease(diskquota_locks.worker_map_lock);
+
+	return is_readiness_logged;
+}
+
+void
+diskquota_set_readiness_logged()
+{
+	Assert(MyDatabaseId != InvalidOid);
+
+	LWLockAcquire(diskquota_locks.worker_map_lock, LW_SHARED);
+	{
+		DiskQuotaWorkerEntry *hash_entry;
+		bool                  found;
+
+		hash_entry =
+		        (DiskQuotaWorkerEntry *)hash_search(disk_quota_worker_map, (void *)&MyDatabaseId, HASH_FIND, &found);
+		hash_entry->is_readiness_logged = true;
+	}
+	LWLockRelease(diskquota_locks.worker_map_lock);
+}
+
 /* functions of disk quota*/
 void _PG_init(void);
 void _PG_fini(void);
@@ -1010,7 +1047,8 @@ worker_create_entry(Oid dbid)
 	{
 		workerentry->handle = NULL;
 		pg_atomic_write_u32(&(workerentry->epoch), 0);
-		workerentry->is_paused = false;
+		workerentry->is_paused           = false;
+		workerentry->is_readiness_logged = false;
 	}
 
 	LWLockRelease(diskquota_locks.worker_map_lock);
@@ -1051,7 +1089,7 @@ start_worker_by_dboid(Oid dbid)
 	BackgroundWorkerHandle *handle;
 	BgwHandleStatus         status;
 	MemoryContext           old_ctx;
-	char                   *dbname;
+	char	               *dbname;
 	pid_t                   pid;
 	bool                    ret;
 
@@ -1314,8 +1352,8 @@ diskquota_status(PG_FUNCTION_ARGS)
 
 	bool  nulls[2] = {false, false};
 	Datum v[2]     = {
-            DirectFunctionCall1(textin, CStringGetDatum(fs[context->index].name)),
-            DirectFunctionCall1(textin, CStringGetDatum(fs[context->index].status())),
+	            DirectFunctionCall1(textin, CStringGetDatum(fs[context->index].name)),
+	            DirectFunctionCall1(textin, CStringGetDatum(fs[context->index].status())),
     };
 	ReturnSetInfo *rsi   = (ReturnSetInfo *)fcinfo->resultinfo;
 	HeapTuple      tuple = heap_form_tuple(rsi->expectedDesc, v, nulls);

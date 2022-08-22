@@ -137,8 +137,9 @@ typedef struct DiskQuotaWorkerEntry DiskQuotaWorkerEntry;
 struct DiskQuotaWorkerEntry
 {
 	Oid              dbid;
-	pg_atomic_uint32 epoch;     /* this counter will be increased after each worker loop */
-	bool             is_paused; /* true if this worker is paused */
+	pg_atomic_uint32 epoch;               /* this counter will be increased after each worker loop */
+	bool             is_paused;           /* true if this worker is paused */
+	bool             is_readiness_logged; /* true if we have logged the error message for not ready */
 
 	// NOTE: this field only can access in diskquota launcher, in other process it is dangling pointer
 	BackgroundWorkerHandle *handle;
@@ -183,5 +184,7 @@ extern bool         worker_increase_epoch(Oid database_oid);
 extern unsigned int worker_get_epoch(Oid database_oid);
 extern bool         diskquota_is_paused(void);
 extern void         do_check_diskquota_state_is_ready(void);
+extern bool         diskquota_is_readiness_logged(void);
+extern void         diskquota_set_readiness_logged(void);
 
 #endif
