@@ -297,7 +297,10 @@ disk_quota_worker_main(Datum main_arg)
 	char *dbname = MyBgworkerEntry->bgw_name;
 
 	MyProcPort                = (Port *)calloc(1, sizeof(Port));
-	MyProcPort->database_name = dbname; // To show the database in the log
+	MyProcPort->database_name = dbname; /* To show the database in the log */
+
+	/* Disable ORCA to avoid fallback since it does not support gp_dist_random() */
+	optimizer = false; 
 
 	ereport(LOG, (errmsg("[diskquota] start disk quota worker process to monitor database:%s", dbname)));
 
