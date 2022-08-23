@@ -34,6 +34,7 @@
 #include "tcop/utility.h"
 #include "utils/builtins.h"
 #include "utils/faultinjector.h"
+#include "utils/guc.h"
 #include "utils/ps_status.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
