@@ -96,7 +96,7 @@ struct QuotaInfo
 {
 	char        *map_name;
 	unsigned int num_keys;
-	Oid         *sys_cache;
+	Oid	     *sys_cache;
 	HTAB        *map;
 };
 
@@ -564,8 +564,7 @@ check_diskquota_state_is_ready(void)
 		PushActiveSnapshot(GetTransactionSnapshot());
 		pushed_active_snap = true;
 		dispatch_my_db_to_all_segments();
-		do_check_diskquota_state_is_ready();
-		is_ready = true;
+		is_ready = do_check_diskquota_state_is_ready();
 	}
 	PG_CATCH();
 	{
@@ -589,7 +588,8 @@ check_diskquota_state_is_ready(void)
 }
 
 /*
- * Check whether the diskquota state is ready. Throw an error if it is not.
+ * Check whether the diskquota state is ready.
+ * Throw an error or return false if it is not.
  *
  * For empty database, table diskquota.state would be ready after
  * 'CREATE EXTENSION diskquota;'. But for non-empty database,
@@ -597,7 +597,7 @@ check_diskquota_state_is_ready(void)
  * manually to get all the table size information and
  * store them into table diskquota.table_size
  */
-void
+bool
 do_check_diskquota_state_is_ready(void)
 {
 	int       ret;
@@ -621,15 +621,17 @@ do_check_diskquota_state_is_ready(void)
 	int       state;
 	bool      isnull;
 
-	dat   = SPI_getbinval(tup, tupdesc, 1, &isnull);
-	state = isnull ? DISKQUOTA_UNKNOWN_STATE : DatumGetInt32(dat);
+	dat           = SPI_getbinval(tup, tupdesc, 1, &isnull);
+	state         = isnull ? DISKQUOTA_UNKNOWN_STATE : DatumGetInt32(dat);
+	bool is_ready = state == DISKQUOTA_READY_STATE;
 
-	if (state != DISKQUOTA_READY_STATE && !diskquota_is_readiness_logged())
+	if (!is_ready && !diskquota_is_readiness_logged())
 	{
 		diskquota_set_readiness_logged();
 		ereport(ERROR, (errmsg("[diskquota] diskquota is not ready"),
 		                errhint("please run 'SELECT diskquota.init_table_size_table();' to initialize diskquota")));
 	}
+	return is_ready;
 }
 
 /*
@@ -774,8 +776,8 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 	HASH_SEQ_STATUS            iter;
 	DiskQuotaActiveTableEntry *active_table_entry;
 	TableEntryKey              key;
-	List                      *oidlist;
-	ListCell                  *l;
+	List	                  *oidlist;
+	ListCell	              *l;
 
 	/*
 	 * unset is_exist flag for tsentry in table_size_map this is used to
@@ -1615,8 +1617,8 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 	ArrayType            *active_oid_array_type = PG_GETARG_ARRAYTYPE_P(1);
 	Oid                   rejectmap_elem_type   = ARR_ELEMTYPE(rejectmap_array_type);
 	Oid                   active_oid_elem_type  = ARR_ELEMTYPE(active_oid_array_type);
-	Datum                *datums;
-	bool                 *nulls;
+	Datum	            *datums;
+	bool	             *nulls;
 	int16                 elem_width;
 	bool                  elem_type_by_val;
 	char                  elem_alignment_code;
@@ -1625,7 +1627,7 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 	bool                  segexceeded;
 	GlobalRejectMapEntry *rejectmapentry;
 	HASH_SEQ_STATUS       hash_seq;
-	HTAB                 *local_rejectmap;
+	HTAB	             *local_rejectmap;
 	HASHCTL               hashctl;
 
 	if (!superuser())
