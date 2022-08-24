@@ -15,7 +15,7 @@ https://extensions.ci.gpdb.pivotal.io/teams/main/pipelines/pr.diskquota
 
 ### Main Branch Pipeline
 
-The development happens on the `gpdb` branch. The merge pipeline for the `gpdb`
+The development happens on the `gpdb` branch. The merge pipeline for the `gpdb` branch is
 https://extensions.ci.gpdb.pivotal.io/teams/main/pipelines/merge.diskquota:gpdb
 
 
