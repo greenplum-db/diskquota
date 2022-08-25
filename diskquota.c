@@ -121,6 +121,11 @@ diskquota_set_readiness_logged()
 {
 	Assert(MyDatabaseId != InvalidOid);
 
+	/*
+	 * We actually need ROW EXCLUSIVE lock here. Given that the current worker
+	 * is the the only process that modifies the entry, it is safe to only take
+	 * the shared lock.
+	 */
 	LWLockAcquire(diskquota_locks.worker_map_lock, LW_SHARED);
 	{
 		DiskQuotaWorkerEntry *hash_entry;
