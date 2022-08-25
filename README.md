@@ -42,8 +42,8 @@ database, and do quota enforcement. It will periodically (can be set via
 diskquota.naptime) recalculate the table size of active tables, and update 
 their corresponding schema or owner's disk usage. Then compare with quota 
 limit for those schemas or roles. If exceeds the limit, put the corresponding 
-schemas or roles into the blacklist in shared memory. Schemas or roles in 
-blacklist are used to do query enforcement to cancel queries which plan to 
+schemas or roles into the rejectmap in shared memory. Schemas or roles in 
+rejectmap are used to do query enforcement to cancel queries which plan to 
 load data into these schemas or roles.
 
 From MPP perspective, diskquota launcher and worker processes are all run at
@@ -59,9 +59,9 @@ check interval. Active tables are detected at Segment QE side: hooks in
 smgecreate(), smgrextend() and smgrtruncate() are used to detect active tables
 and store them (currently relfilenode) in the shared memory. Diskquota worker
 process will periodically call dispatch queries to all the segments and 
-consume active tables in shared memories, convert relfilenode to relaton oid, 
-and calcualte table size by calling pg_total_relation_size(), which will sum 
-the size of table (including: base, vm, fsm, toast and index) in each segment.
+consume active tables in shared memories, convert relfilenode to relaton oid,
+and calcualte table size by calling pg_table_size(), which will sum
+the size of table (including: base, vm, fsm, toast) in each segment.
 
 ## Enforcement
 Enforcement is implemented as hooks. There are two kinds of enforcement hooks:
@@ -82,12 +82,34 @@ cluster level, we limit the diskquota of a role to be database specific.
 That is to say, a role may have different quota limit on different databases 
 and their disk usage is isolated between databases.
 
-# Install
-1. Compile disk quota with pgxs.
+# Development
+
+[cmake](https://cmake.org) (>= 3.18) needs to be installed.
+
+1. Build & install disk quota
 ```
-cd $diskquota_src; 
-make; 
-make install;
+mkdir -p <diskquota_src>/build
+cd <diskquota_src>/build
+```
+
+If the `greenplum_path.sh` has been source:
+
+```
+cmake ..
+```
+
+Otherwise:
+
+```
+# Without source greenplum_path.sh
+cmake .. --DPG_CONFIG=<gpdb_installation_dir>/bin/pg_config
+#
+```
+
+Build and install:
+
+```
+make install
 ```
 
 2. Create database to store global information.
@@ -98,7 +120,7 @@ create database diskquota;
 3. Enable diskquota as preload library 
 ```
 # enable diskquota in preload library.
-gpconfig -c shared_preload_libraries -v 'diskquota'
+gpconfig -c shared_preload_libraries -v 'diskquota-<major.minor>'
 # restart database.
 gpstop -ar
 ```
@@ -119,6 +141,37 @@ create extension diskquota;
 select diskquota.init_table_size_table();
 ```
 
+## clang-format
+
+In order to pass the CI check for PR, the changed code needs to be formated by
+[clang-format](https://clang.llvm.org/docs/ClangFormat.html) **13**. A static-linked
+version can be found at https://github.com/beeender/clang-tools-static-binaries/releases/tag/master-7d0aff9a .
+
+To format all the source files in the git tree:
+
+```
+git ls-files '*.c' '*.h' | xargs clang-format --style=file -i
+```
+
+If you have `git-clang-format` installed, it can be as easy as:
+
+```
+git clang-format <base-branch>
+```
+
+To skip formatting a certain piece of code:
+
+```c
+/* clang-format off */
+#if SOME_MACRO
+#define DO_NOT_FORMAT_ME \
+    (1 \
+    + \
+    )\
+#endif
+/* clang-format on */
+```
+
 # Usage
 1. Set/update/delete schema quota limit using diskquota.set_schema_quota
 ```
@@ -126,7 +179,7 @@ create schema s1;
 select diskquota.set_schema_quota('s1', '1 MB');
 set search_path to s1;
 
-create table a(i int);
+create table a(i int) DISTRIBUTED BY (i);
 # insert small data succeeded
 insert into a select generate_series(1,100);
 # insert large data failed
@@ -145,7 +198,7 @@ reset search_path;
 2. Set/update/delete role quota limit using diskquota.set_role_quota
 ```
 create role u1 nologin;
-create table b (i int);
+create table b (i int) DISTRIBUTED BY (i);
 alter table b owner to u1;
 select diskquota.set_role_quota('u1', '1 MB');
 
@@ -171,10 +224,18 @@ select * from diskquota.show_fast_schema_quota_view;
 
 
 # Test
-Run regression tests.
+Run regression tests:
 ```
-cd diskquota_src;
+cd <diskquota_src>/build;
 make installcheck
+```
+Show quick diff of regress results:
+```
+make diff_<test_target>_<case_name>
+```
+Show all build target:
+```
+make help
 ```
 
 # HA
@@ -214,9 +275,9 @@ and do enfocement accordingly in later queries.
 ```
 # suppose quota of schema s1 is 1MB.
 set search_path to s1;
-create table b;
+create table b (i int) DISTRIBUTED BY (i);
 BEGIN;
-create table a;
+create table a (i int) DISTRIBUTED BY (i);
 # Issue: quota enforcement doesn't work on table a
 insert into a select generate_series(1,200000);
 # quota enforcement works on table b
@@ -230,7 +291,7 @@ END;
 'Create Table As' command has the similar problem.
 
 One solution direction is that we calculate the additional 'uncommited data size'
-for schema and role in worker process. Since pg_total_relation_size need to hold
+for schema and role in worker process. Since pg_table_size need to hold
 AccessShareLock to relation (And worker process don't even know this reloid exists),
 we need to skip it, and call stat() directly with tolerant to file unlink.
 Skip lock is dangerous and we plan to leave it as known issue at current stage.
@@ -243,7 +304,7 @@ show_fast_schema_quota_view and show_fast_role_quota_view.
 3. Out of shared memory
 
 Diskquota extension uses two kinds of shared memories. One is used to save 
-black list and another one is to save active table list. The black list shared
+rejectmap and another one is to save active table list. The rejectmap shared
 memory can support up to 1 MiB database objects which exceed quota limit.
 The active table list shared memory can support up to 1 MiB active tables in 
 default, and user could reset it in GUC diskquota_max_active_tables.
@@ -251,7 +312,7 @@ default, and user could reset it in GUC diskquota_max_active_tables.
 As shared memory is pre-allocated, user needs to restart DB if they updated 
 this GUC value.
 
-If black list shared memory is full, it's possible to load data into some 
+If rejectmap shared memory is full, it's possible to load data into some 
 schemas or roles which quota limit are reached.
 If active table shared memory is full, disk quota worker may failed to detect
 the corresponding disk usage change in time.
