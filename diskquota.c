@@ -183,7 +183,6 @@ static DiskquotaDBEntry       *next_db(void);
 static DiskQuotaWorkerEntry   *next_worker(void);
 static DiskquotaDBEntry       *add_db_entry(Oid dbid);
 static void                    release_db_entry(Oid dbid);
-static void                    wait_bgworker_terminate(BackgroundWorkerHandle *handle);
 static char                   *get_db_name(Oid dbid);
 static void                    reset_worker(DiskQuotaWorkerEntry *dq_worker);
 static void                    vacuum_db_entry(DiskquotaDBEntry *db);
@@ -1714,7 +1713,6 @@ release_db_entry(Oid dbid)
 	{
 		BackgroundWorkerHandle *handle = get_bgworker_handle(db->workerId);
 		TerminateBackgroundWorker(handle);
-		wait_bgworker_terminate(handle);
 	}
 	LWLockAcquire(diskquota_locks.dblist_lock, LW_EXCLUSIVE);
 	vacuum_disk_quota_model(db->id);
@@ -1771,56 +1769,6 @@ out:
 	return dq_worker;
 }
 
-static void
-wait_bgworker_terminate(BackgroundWorkerHandle *handle)
-{
-	BgwHandleStatus status;
-	int             rc;
-	bool            save_set_latch_on_sigusr1;
-
-	save_set_latch_on_sigusr1 = set_latch_on_sigusr1;
-	set_latch_on_sigusr1      = true;
-	bool timeout              = true;
-
-	PG_TRY();
-	{
-		for (int i = 0; i < 1200; i++)
-		{
-			pid_t pid;
-
-			CHECK_FOR_INTERRUPTS();
-
-			status = GetBackgroundWorkerPid(handle, &pid);
-
-			if (status == BGWH_NOT_YET_STARTED || status == BGWH_STOPPED)
-			{
-				timeout = false;
-				break;
-			}
-
-			rc = WaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH, 100L);
-
-			if (rc & WL_POSTMASTER_DEATH)
-			{
-				timeout = false;
-				break;
-			}
-
-			ResetLatch(&MyProc->procLatch);
-		}
-	}
-	PG_CATCH();
-	{
-		set_latch_on_sigusr1 = save_set_latch_on_sigusr1;
-		PG_RE_THROW();
-	}
-	PG_END_TRY();
-	if (timeout) elog(WARNING, "Timeout to wait bgworker to terminate");
-
-	set_latch_on_sigusr1 = save_set_latch_on_sigusr1;
-	return;
-}
-
 static char *
 get_db_name(Oid dbid)
 {
@@ -1845,7 +1793,7 @@ static void
 reset_worker(DiskQuotaWorkerEntry *dq_worker)
 {
 	if (dq_worker == NULL) return;
-	dq_worker->dbEntry     = NULL;
+	dq_worker->dbEntry = NULL;
 }
 
 /*
