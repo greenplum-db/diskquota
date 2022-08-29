@@ -22,6 +22,7 @@
 
 #include "funcapi.h"
 #include "access/xact.h"
+#include "cdb/cdbgang.h"
 #include "cdb/cdbvars.h"
 #include "commands/dbcommands.h"
 #include "executor/spi.h"
@@ -31,7 +32,6 @@
 #include "storage/ipc.h"
 #include "storage/proc.h"
 #include "storage/sinval.h"
-#include "tcop/idle_resource_cleaner.h"
 #include "tcop/utility.h"
 #include "utils/builtins.h"
 #include "utils/faultinjector.h"
@@ -520,6 +520,7 @@ disk_quota_worker_main(Datum main_arg)
 		}
 	}
 
+	bool is_gang_destroyed = false;
 	while (!got_sigterm)
 	{
 		int rc;
@@ -530,6 +531,12 @@ disk_quota_worker_main(Datum main_arg)
 			/* Refresh quota model with init mode */
 			refresh_disk_quota_model(!MyWorkerInfo->dbEntry->inited);
 			MyWorkerInfo->dbEntry->inited = true;
+			is_gang_destroyed             = false;
+		}
+		else if (!is_gang_destroyed)
+		{
+			DisconnectAndDestroyAllGangs(false);
+			is_gang_destroyed = true;
 		}
 		worker_increase_epoch(MyWorkerInfo->dbEntry->dbid);
 
@@ -629,8 +636,8 @@ disk_quota_launcher_main(Datum main_arg)
 	create_monitor_db_table();
 
 	init_database_list();
-	EnableClientWaitTimeoutInterrupt();
-	StartIdleResourceCleanupTimers();
+	DisconnectAndDestroyAllGangs(false);
+
 	loop_end = time(NULL);
 
 	struct timeval nap;
@@ -713,9 +720,7 @@ disk_quota_launcher_main(Datum main_arg)
 		if (got_sigusr2)
 		{
 			got_sigusr2 = false;
-			CancelIdleResourceCleanupTimers();
 			process_extension_ddl_message();
-			StartIdleResourceCleanupTimers();
 			sigusr2 = true;
 		}
 
@@ -723,9 +728,7 @@ disk_quota_launcher_main(Datum main_arg)
 		if (got_sighup)
 		{
 			got_sighup = false;
-			CancelIdleResourceCleanupTimers();
 			ProcessConfigFile(PGC_SIGHUP);
-			StartIdleResourceCleanupTimers();
 		}
 
 		/*
@@ -1080,6 +1083,7 @@ do_process_extension_ddl_message(MessageResult *code, ExtensionDDLMessage local_
 		}
 		PG_END_TRY();
 	}
+	DisconnectAndDestroyAllGangs(false);
 }
 
 /*
