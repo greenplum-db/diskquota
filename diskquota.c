@@ -122,7 +122,7 @@ diskquota_is_readiness_logged()
 	LWLockAcquire(diskquota_locks.monitored_dbid_cache_lock, LW_SHARED);
 	{
 		MonitorDBEntry hash_entry;
-		bool             found;
+		bool           found;
 
 		hash_entry = (MonitorDBEntry)hash_search(monitored_dbid_cache, (void *)&MyDatabaseId, HASH_FIND, &found);
 		is_readiness_logged = found ? hash_entry->is_readiness_logged : false;
@@ -145,7 +145,7 @@ diskquota_set_readiness_logged()
 	LWLockAcquire(diskquota_locks.monitored_dbid_cache_lock, LW_SHARED);
 	{
 		MonitorDBEntry hash_entry;
-		bool             found;
+		bool           found;
 
 		hash_entry = (MonitorDBEntry)hash_search(monitored_dbid_cache, (void *)&MyDatabaseId, HASH_FIND, &found);
 		hash_entry->is_readiness_logged = true;
