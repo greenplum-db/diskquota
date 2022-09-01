@@ -440,9 +440,7 @@ static Size
 diskquota_worker_shmem_size()
 {
 	Size size;
-	elog(LOG, "TableSizeEntry:%lu", sizeof(TableSizeEntry));
 	size = hash_estimate_size(1024 * 1024, sizeof(TableSizeEntry));
-	elog(LOG, "table size map:%lu", size);
 	size = add_size(size, hash_estimate_size(MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, sizeof(LocalRejectMapEntry)));
 	size = add_size(size, hash_estimate_size(1024L, sizeof(struct QuotaMapEntry)) * NUM_QUOTA_TYPES);
 	return size;
@@ -613,7 +611,7 @@ check_diskquota_state_is_ready()
 		connected = true;
 		PushActiveSnapshot(GetTransactionSnapshot());
 		pushed_active_snap = true;
-		is_ready = do_check_diskquota_state_is_ready();
+		is_ready           = do_check_diskquota_state_is_ready();
 	}
 	PG_CATCH();
 	{

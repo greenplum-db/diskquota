@@ -150,7 +150,6 @@ struct DiskQuotaWorkerEntry
 {
 	/* starts from 0, -1 means invalid*/
 	uint32            id;
-	int               launcherpid;
 	DiskquotaDBEntry *dbEntry;
 	dlist_node        node;
 };
@@ -227,9 +226,9 @@ extern Oid      diskquota_parse_primary_table_oid(Oid namespace, char *relname);
 extern bool              worker_increase_epoch(Oid dbid);
 extern unsigned int      worker_get_epoch(Oid database_oid);
 extern bool              diskquota_is_paused(void);
-extern bool         do_check_diskquota_state_is_ready(void);
-extern bool         diskquota_is_readiness_logged(void);
-extern void         diskquota_set_readiness_logged(void);
+extern bool              do_check_diskquota_state_is_ready(void);
+extern bool              diskquota_is_readiness_logged(void);
+extern void              diskquota_set_readiness_logged(void);
 extern Size              diskquota_launcher_shmem_size(void);
 extern void              init_launcher_shmem(void);
 extern DiskquotaDBEntry *get_db_entry(Oid dbid);

@@ -119,16 +119,16 @@ diskquota_is_readiness_logged()
 	Assert(MyDatabaseId != InvalidOid);
 	bool is_readiness_logged;
 
-	LWLockAcquire(diskquota_locks.worker_map_lock, LW_SHARED);
+	LWLockAcquire(diskquota_locks.monitored_dbid_cache_lock, LW_SHARED);
 	{
 		DiskQuotaWorkerEntry *hash_entry;
 		bool                  found;
 
 		hash_entry =
-		        (DiskQuotaWorkerEntry *)hash_search(disk_quota_worker_map, (void *)&MyDatabaseId, HASH_FIND, &found);
+		        (DiskQuotaWorkerEntry *)hash_search(monitored_dbid_cache, (void *)&MyDatabaseId, HASH_FIND, &found);
 		is_readiness_logged = found ? hash_entry->is_readiness_logged : false;
 	}
-	LWLockRelease(diskquota_locks.worker_map_lock);
+	LWLockRelease(diskquota_locks.monitored_dbid_cache_lock);
 
 	return is_readiness_logged;
 }
@@ -143,16 +143,16 @@ diskquota_set_readiness_logged()
 	 * is the the only process that modifies the entry, it is safe to only take
 	 * the shared lock.
 	 */
-	LWLockAcquire(diskquota_locks.worker_map_lock, LW_SHARED);
+	LWLockAcquire(diskquota_locks.monitored_dbid_cache_lock, LW_SHARED);
 	{
 		DiskQuotaWorkerEntry *hash_entry;
 		bool                  found;
 
 		hash_entry =
-		        (DiskQuotaWorkerEntry *)hash_search(disk_quota_worker_map, (void *)&MyDatabaseId, HASH_FIND, &found);
+		        (DiskQuotaWorkerEntry *)hash_search(monitored_dbid_cache, (void *)&MyDatabaseId, HASH_FIND, &found);
 		hash_entry->is_readiness_logged = true;
 	}
-	LWLockRelease(diskquota_locks.worker_map_lock);
+	LWLockRelease(diskquota_locks.monitored_dbid_cache_lock);
 }
 
 /* functions of disk quota*/
@@ -183,7 +183,6 @@ static DiskquotaDBEntry       *next_db(void);
 static DiskQuotaWorkerEntry   *next_worker(void);
 static DiskquotaDBEntry       *add_db_entry(Oid dbid);
 static void                    release_db_entry(Oid dbid);
-static void                    wait_bgworker_terminate(BackgroundWorkerHandle *handle);
 static char                   *get_db_name(Oid dbid);
 static void                    reset_worker(DiskQuotaWorkerEntry *dq_worker);
 static void                    vacuum_db_entry(DiskquotaDBEntry *db);
@@ -1713,7 +1712,6 @@ release_db_entry(Oid dbid)
 	{
 		BackgroundWorkerHandle *handle = get_bgworker_handle(db->workerId);
 		TerminateBackgroundWorker(handle);
-		wait_bgworker_terminate(handle);
 	}
 	LWLockAcquire(diskquota_locks.dblist_lock, LW_EXCLUSIVE);
 	vacuum_disk_quota_model(db->id);
@@ -1770,56 +1768,6 @@ out:
 	return dq_worker;
 }
 
-static void
-wait_bgworker_terminate(BackgroundWorkerHandle *handle)
-{
-	BgwHandleStatus status;
-	int             rc;
-	bool            save_set_latch_on_sigusr1;
-
-	save_set_latch_on_sigusr1 = set_latch_on_sigusr1;
-	set_latch_on_sigusr1      = true;
-	bool timeout              = true;
-
-	PG_TRY();
-	{
-		for (int i = 0; i < 1200; i++)
-		{
-			pid_t pid;
-
-			CHECK_FOR_INTERRUPTS();
-
-			status = GetBackgroundWorkerPid(handle, &pid);
-
-			if (status == BGWH_NOT_YET_STARTED || status == BGWH_STOPPED)
-			{
-				timeout = false;
-				break;
-			}
-
-			rc = WaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH, 100L);
-
-			if (rc & WL_POSTMASTER_DEATH)
-			{
-				timeout = false;
-				break;
-			}
-
-			ResetLatch(&MyProc->procLatch);
-		}
-	}
-	PG_CATCH();
-	{
-		set_latch_on_sigusr1 = save_set_latch_on_sigusr1;
-		PG_RE_THROW();
-	}
-	PG_END_TRY();
-	if (timeout) elog(WARNING, "Timeout to wait bgworker to terminate");
-
-	set_latch_on_sigusr1 = save_set_latch_on_sigusr1;
-	return;
-}
-
 static char *
 get_db_name(Oid dbid)
 {
@@ -1844,8 +1792,7 @@ static void
 reset_worker(DiskQuotaWorkerEntry *dq_worker)
 {
 	if (dq_worker == NULL) return;
-	dq_worker->dbEntry     = NULL;
-	dq_worker->launcherpid = 0;
+	dq_worker->dbEntry = NULL;
 }
 
 /*

@@ -287,7 +287,6 @@ report_active_table_helper(const RelFileNodeBackend *relFileNode)
 	/* do not collect active table info when the database is not under monitoring.
 	 * this operation is read-only and does not require absolutely exact.
 	 * read the cache with out shared lock */
-	elog(LOG, "monitored dbid %p", monitored_dbid_cache);
 	hash_search(monitored_dbid_cache, &dbid, HASH_FIND, &found);
 	LWLockRelease(diskquota_locks.monitored_dbid_cache_lock);
 	if (!found)
