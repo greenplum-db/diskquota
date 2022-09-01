@@ -185,7 +185,7 @@ struct MonitorDBEntryStruct
 	Oid              dbid;
 	bool             paused;
 	bool             is_readiness_logged; /* true if we have logged the error message for not ready */
-	pg_atomic_uint32 epoch; /* this counter will be increased after each worker loop */
+	pg_atomic_uint32 epoch;               /* this counter will be increased after each worker loop */
 };
 
 extern HTAB *disk_quota_worker_map;
