@@ -149,7 +149,7 @@ typedef struct DiskquotaDBEntry     DiskquotaDBEntry;
 struct DiskQuotaWorkerEntry
 {
 	/* starts from 0, -1 means invalid*/
-	uint32            id;
+	int               id;
 	DiskquotaDBEntry *dbEntry;
 	dlist_node        node;
 };
@@ -170,12 +170,12 @@ struct DiskquotaDBEntry
 	Oid  dbid;
 	bool inited;
 	/* starts from 0 */
-	uint32 id;
+	int id;
 	/*
 	 * the id of the worker which is running for the, 0 means no worker for it.
 	 */
-	uint32 workerId;
-	bool   in_use;
+	int  workerId;
+	bool in_use;
 };
 
 /* In shmem, both on master and segments */
@@ -223,16 +223,15 @@ extern List    *diskquota_get_index_list(Oid relid);
 extern void     diskquota_get_appendonly_aux_oid_list(Oid reloid, Oid *segrelid, Oid *blkdirrelid, Oid *visimaprelid);
 extern Oid      diskquota_parse_primary_table_oid(Oid namespace, char *relname);
 
-extern bool              worker_increase_epoch(Oid dbid);
-extern unsigned int      worker_get_epoch(Oid database_oid);
-extern bool              diskquota_is_paused(void);
-extern bool              do_check_diskquota_state_is_ready(void);
-extern bool              diskquota_is_readiness_logged(void);
-extern void              diskquota_set_readiness_logged(void);
-extern Size              diskquota_launcher_shmem_size(void);
-extern void              init_launcher_shmem(void);
-extern DiskquotaDBEntry *get_db_entry(Oid dbid);
-extern void              update_monitor_db(Oid dbid, FetchTableStatType action);
-extern void              vacuum_disk_quota_model(uint32 id);
-extern void              update_monitor_db_mpp(Oid dbid, FetchTableStatType action, const char *schema);
+extern bool         worker_increase_epoch(Oid dbid);
+extern unsigned int worker_get_epoch(Oid dbid);
+extern bool         diskquota_is_paused(void);
+extern bool         do_check_diskquota_state_is_ready(void);
+extern bool         diskquota_is_readiness_logged(void);
+extern void         diskquota_set_readiness_logged(void);
+extern Size         diskquota_launcher_shmem_size(void);
+extern void         init_launcher_shmem(void);
+extern void         vacuum_disk_quota_model(uint32 id);
+extern void         update_monitor_db(Oid dbid, FetchTableStatType action);
+extern void         update_monitor_db_mpp(Oid dbid, FetchTableStatType action, const char *schema);
 #endif

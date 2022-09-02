@@ -418,7 +418,6 @@ diskquota_pause(PG_FUNCTION_ARGS)
 	{
 		dbid = PG_GETARG_OID(0);
 	}
-	// active current worker
 	if (IS_QUERY_DISPATCHER())
 	{
 		// pause current worker
@@ -529,11 +528,6 @@ static void
 dq_object_access_hook_on_drop(void)
 {
 	int rc, launcher_pid;
-
-	/*
-	 * Remove the current database from monitored db cache
-	 * on all segments and on coordinator.
-	 */
 
 	if (!IS_QUERY_DISPATCHER())
 	{

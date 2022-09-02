@@ -90,14 +90,12 @@ static DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
  * for databases
  *
  * 2) when curDB is DiskquotaLauncherShmem->dbArrayTail,
- * it means it has done in one loop to start each worker
- * for each database. And it has to continue to sleep
- * until sleep enough time: diskquota.naptime.
+ * it means it has done in one loop. And it should go
+ * sleep for enough time: diskquota.naptime.
  *
  * 3) when curDB is pointing to any db entry in
  * DiskquotaLauncherShmem->dbArray, it means it is in
  * a loop to start each worker for each database.
- * and the diskquota launcher shouldn't sleep.
  */
 
 static DiskquotaDBEntry *curDB = NULL;
@@ -105,11 +103,10 @@ static DiskquotaDBEntry *curDB = NULL;
 /*
  * bgworker handles, in launcher local memory,
  * bgworker_handles[i] is the bgworker handle of
- * workers[i] in shared memory , and workers[i]->id
- * is i + 1;
+ * workers[i] in shared memory
  *
  * bgworker_handles' length is the same as
- * workers: diskquota_max_workers
+ * workers': diskquota_max_workers
  */
 BackgroundWorkerHandle **bgworker_handles;
 
@@ -716,9 +713,10 @@ disk_quota_launcher_main(Datum main_arg)
 			if (nap.tv_sec == 0 && nap.tv_usec == 0)
 			{
 				loop_start_time = GetCurrentTimestamp();
-				curDB           = NULL;
+				/* set the curDB pointing to the head of the db list */
+				curDB = NULL;
 			}
-			/* Have finished one loop, do nothing, just sleep */
+			/* do nothing, just to sleep untill the nap time is 0 */
 			else
 			{
 				continue;
@@ -943,9 +941,8 @@ process_extension_ddl_message()
 	/* create/drop extension message must be valid */
 	if (local_extension_ddl_message.req_pid == 0 || local_extension_ddl_message.launcher_pid != MyProcPid) return;
 
-	ereport(LOG, (errmsg("[diskquota launcher]: received create/drop extension diskquota message, extension launcher "
-	                     "pid %d, %d",
-	                     extension_ddl_message->launcher_pid, MyProcPid)));
+	ereport(LOG,
+	        (errmsg("[diskquota launcher]: received create/drop extension diskquota message, extension launcher")));
 
 	do_process_extension_ddl_message(&code, local_extension_ddl_message);
 
@@ -1053,6 +1050,7 @@ do_process_extension_ddl_message(MessageResult *code, ExtensionDDLMessage local_
 					if (num_db > diskquota_max_workers) DiskquotaLauncherShmem->dynamicWorker = true;
 					break;
 				case CMD_DROP_EXTENSION:
+					/* terminate bgworker in release_db_entry rountine */
 					release_db_entry(dbid);
 					update_monitor_db_mpp(dbid, REMOVE_DB_FROM_BEING_MONITORED, LAUNCHER_SCHEMA);
 					/* clear the out-of-quota rejectmap in shared memory */
@@ -1667,6 +1665,7 @@ add_db_entry(Oid dbid)
 	 */
 
 	DiskquotaDBEntry *result = NULL;
+	/* if there is already dbEntry's dbid equals dbid, returning the existing one */
 	for (int i = 0; i < MAX_NUM_MONITORED_DB; i++)
 	{
 		DiskquotaDBEntry *dbEntry = &DiskquotaLauncherShmem->dbArray[i];
@@ -1706,12 +1705,13 @@ release_db_entry(Oid dbid)
 	{
 		return;
 	}
+
+	LWLockAcquire(diskquota_locks.dblist_lock, LW_EXCLUSIVE);
 	if (db->workerId != INVALID_WORKER_ID)
 	{
 		BackgroundWorkerHandle *handle = get_bgworker_handle(db->workerId);
 		TerminateBackgroundWorker(handle);
 	}
-	LWLockAcquire(diskquota_locks.dblist_lock, LW_EXCLUSIVE);
 	vacuum_disk_quota_model(db->id);
 	/* should be called at last to set in_use to false */
 	vacuum_db_entry(db);

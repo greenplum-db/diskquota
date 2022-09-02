@@ -445,6 +445,7 @@ diskquota_fetch_table_stat(PG_FUNCTION_ARGS)
 			case FETCH_ACTIVE_SIZE:
 				localCacheTable = get_active_tables_stats(PG_GETARG_ARRAYTYPE_P(1));
 				break;
+			/*TODO: add another UDF to update the monitored_db_cache */
 			case ADD_DB_TO_MONITOR:
 				dbid = get_dbid(PG_GETARG_ARRAYTYPE_P(1));
 				update_monitor_db(dbid, ADD_DB_TO_MONITOR);
