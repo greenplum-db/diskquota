@@ -774,7 +774,7 @@ create_monitor_db_table(void)
 	sql = "create schema if not exists diskquota_namespace;"
 	      "create table if not exists diskquota_namespace.database_list(dbid oid not null unique);"
 	      "DROP SCHEMA IF EXISTS " LAUNCHER_SCHEMA
-	      "CASCADE;"
+	      " CASCADE;"
 	      "CREATE SCHEMA " LAUNCHER_SCHEMA
 	      ";"
 	      "CREATE TYPE " LAUNCHER_SCHEMA
