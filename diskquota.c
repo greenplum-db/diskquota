@@ -77,10 +77,13 @@ int  diskquota_max_workers       = 10;
 DiskQuotaLocks       diskquota_locks;
 ExtensionDDLMessage *extension_ddl_message = NULL;
 
-/* For each diskquota worker */
+// Only access in diskquota worker, different from each worker.
+// a pointer to DiskquotaLauncherShmem->workerEntries in shared memory
 static DiskQuotaWorkerEntry *volatile MyWorkerInfo = NULL;
-/* using hash table to support incremental update the table size entry.*/
-static int                           num_db = 0;
+
+// how many database diskquota are monitoring on
+static int num_db = 0;
+
 static DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
 /*
  * the current db to be run or running
