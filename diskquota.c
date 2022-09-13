@@ -106,11 +106,10 @@ static DiskquotaDBEntry *curDB = NULL;
 
 /*
  * bgworker handles, in launcher local memory,
- * bgworker_handles[i] is the bgworker handle of
- * workers[i] in shared memory
+ * bgworker_handles[i] is the handle of DiskquotaLauncherShmem-><hidden memory space>[i]
+ * the actually useable reference is DiskquotaLauncherShmem->{freeWorkers, runningWorkers}
  *
- * bgworker_handles' length is the same as
- * workers': diskquota_max_workers
+ * size: GUC diskquota_max_workers
  */
 BackgroundWorkerHandle **bgworker_handles;
 
