@@ -431,9 +431,9 @@ init_lwlocks(void)
 	diskquota_locks.extension_ddl_lock         = LWLockAssign();
 	diskquota_locks.monitored_dbid_cache_lock  = LWLockAssign();
 	diskquota_locks.relation_cache_lock        = LWLockAssign();
-	diskquota_locks.altered_reloid_cache_lock  = LWLockAssign();
 	diskquota_locks.dblist_lock                = LWLockAssign();
 	diskquota_locks.workerlist_lock            = LWLockAssign();
+	diskquota_locks.altered_reloid_cache_lock  = LWLockAssign();
 }
 
 static Size
