@@ -144,43 +144,41 @@ typedef struct DiskQuotaWorkerEntry DiskQuotaWorkerEntry;
 typedef struct DiskquotaDBEntry     DiskquotaDBEntry;
 
 /*
- * In shmem, only used on master
  * disk quota worker info used by launcher to manage the worker processes
+ * used in DiskquotaLauncherShmem->{freeWorkers, runningWorkers}
  */
 struct DiskQuotaWorkerEntry
 {
-	/* starts from 0, -1 means invalid*/
-	int               id;
-	DiskquotaDBEntry *dbEntry;
-	dlist_node        node;
+	dlist_node        node; // the double linked list header
+
+	int               id;      // starts from 0, -1 means invalid
+	DiskquotaDBEntry *dbEntry; // pointer to shared memory. DiskquotaLauncherShmem->dbArray
 };
 
 typedef struct
 {
-	dlist_head        freeWorkers;
-	dlist_head        runningWorkers;
-	DiskquotaDBEntry *dbArray;
+	dlist_head        freeWorkers;    // a list of DiskQuotaWorkerEntry
+	dlist_head        runningWorkers; // a list of DiskQuotaWorkerEntry
+	DiskquotaDBEntry *dbArray;        // size == MAX_NUM_MONITORED_DB
 	DiskquotaDBEntry *dbArrayTail;
 	int               running_workers_num;
-	volatile bool     dynamicWorker;
+	volatile bool     isDynamicWorker;
 } DiskquotaLauncherShmemStruct;
 
 /* In shmem, only used on master */
 struct DiskquotaDBEntry
 {
-	// the index of DiskquotaLauncherShmem->dbArray, start from 0
-	int id;
-	// the database oid in postgres catalog
-	Oid  dbid;
-	// the id of the worker which is running for the, 0 means no worker for it. -1 is default value
-	int  workerId;
-	// this entry is inited, will set to true after the worker finish the frist run.
-	bool inited;
-	// this slot is in using. AKA dbid != 0
-	bool in_use;
+	int id;   // the index of DiskquotaLauncherShmem->dbArray, start from 0
+	Oid dbid; // the database oid in postgres catalog
+
+#define INVALID_WORKER_ID -1
+	int workerId; // the id of the worker which is running for the, 0 means no worker for it.
+
+	bool inited; // this entry is inited, will set to true after the worker finish the frist run.
+	bool in_use; // this slot is in using. AKA dbid != 0
 };
 
-/* In shmem, both on master and segments */
+/* used in monitored_dbid_cache, in shmem, both on master and segments */
 typedef struct MonitorDBEntryStruct *MonitorDBEntry;
 struct MonitorDBEntryStruct
 {

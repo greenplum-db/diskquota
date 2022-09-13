@@ -46,7 +46,6 @@ PG_MODULE_MAGIC;
 
 #define DISKQUOTA_DB "diskquota"
 #define DISKQUOTA_APPLICATION_NAME "gp_reserved_gpdiskquota"
-#define INVALID_WORKER_ID -1
 
 /* clang-format off */
 #if !defined(DISKQUOTA_VERSION) || \
@@ -84,6 +83,7 @@ static DiskQuotaWorkerEntry *volatile MyWorkerInfo = NULL;
 // how many database diskquota are monitoring on
 static int num_db = 0;
 
+// in shared memory, only for launcher process
 static DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
 
 /*
@@ -95,12 +95,12 @@ static DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
  * for the first databases in DiskquotaLauncherShmem->dbArray
  *
  * 2) when curDB is DiskquotaLauncherShmem->dbArrayTail,
- * it means it has done in one loop. And it should go
- * sleep for enough time: diskquota.naptime.
+ * means it had finish one loop just now. And should
+ * sleep for ${diskquota.naptime} sconds.
  *
  * 3) when curDB is pointing to any db entry in
  * DiskquotaLauncherShmem->dbArray[], it means it is in
- * a loop to start each worker for each database.
+ * one loop to start each worker for each database.
  */
 static DiskquotaDBEntry *curDB = NULL;
 
@@ -537,7 +537,7 @@ disk_quota_worker_main(Datum main_arg)
 		}
 		worker_increase_epoch(MyWorkerInfo->dbEntry->dbid);
 		MemoryAccounting_Reset();
-		if (DiskquotaLauncherShmem->dynamicWorker)
+		if (DiskquotaLauncherShmem->isDynamicWorker)
 		{
 			break;
 		}
@@ -924,7 +924,7 @@ init_database_list(void)
 	PopActiveSnapshot();
 	CommitTransactionCommand();
 	/* TODO: clean invalid database */
-	if (num_db > diskquota_max_workers) DiskquotaLauncherShmem->dynamicWorker = true;
+	if (num_db > diskquota_max_workers) DiskquotaLauncherShmem->isDynamicWorker = true;
 }
 
 /*
@@ -1051,7 +1051,7 @@ do_process_extension_ddl_message(MessageResult *code, ExtensionDDLMessage local_
 					add_db_entry(dbid);
 					/* TODO: how about this failed? */
 					update_monitor_db_mpp(dbid, ADD_DB_TO_MONITOR, LAUNCHER_SCHEMA);
-					if (num_db > diskquota_max_workers) DiskquotaLauncherShmem->dynamicWorker = true;
+					if (num_db > diskquota_max_workers) DiskquotaLauncherShmem->isDynamicWorker = true;
 					break;
 				case CMD_DROP_EXTENSION:
 					/* terminate bgworker in release_db_entry rountine */
@@ -1059,7 +1059,7 @@ do_process_extension_ddl_message(MessageResult *code, ExtensionDDLMessage local_
 					update_monitor_db_mpp(dbid, REMOVE_DB_FROM_BEING_MONITORED, LAUNCHER_SCHEMA);
 					/* clear the out-of-quota rejectmap in shared memory */
 					invalidate_database_rejectmap(dbid);
-					if (num_db <= diskquota_max_workers) DiskquotaLauncherShmem->dynamicWorker = false;
+					if (num_db <= diskquota_max_workers) DiskquotaLauncherShmem->isDynamicWorker = false;
 					break;
 				default:
 					ereport(LOG, (errmsg("[diskquota launcher]:received unsupported message cmd=%d",
