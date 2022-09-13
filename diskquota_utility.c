@@ -1174,18 +1174,14 @@ void
 update_monitor_db(Oid dbid, FetchTableStatType action)
 {
 	bool           found = false;
-	MonitorDBEntry entry;
 
-	/* add/remove the dbid to monitoring database cache to filter out table not under
-	 * monitoring in hook functions
-	 */
+	// add/remove the dbid to monitoring database cache to filter out table not under
+	// monitoring in hook functions
 
 	LWLockAcquire(diskquota_locks.monitored_dbid_cache_lock, LW_EXCLUSIVE);
 	if (action == ADD_DB_TO_MONITOR)
 	{
-		MonitorDBEntry entry;
-
-		entry = hash_search(monitored_dbid_cache, &dbid, HASH_ENTER_NULL, &found);
+		MonitorDBEntry entry = hash_search(monitored_dbid_cache, &dbid, HASH_ENTER_NULL, &found);
 		if (entry == NULL)
 		{
 			ereport(WARNING, (errmsg("can't alloc memory on dbid cache, there ary too many databases to monitor")));
@@ -1199,7 +1195,7 @@ update_monitor_db(Oid dbid, FetchTableStatType action)
 	}
 	else if (action == PAUSE_DB_TO_MONITOR)
 	{
-		entry = hash_search(monitored_dbid_cache, &dbid, HASH_FIND, &found);
+		MonitorDBEntry entry = hash_search(monitored_dbid_cache, &dbid, HASH_FIND, &found);
 		if (found)
 		{
 			entry->paused = true;
@@ -1207,7 +1203,7 @@ update_monitor_db(Oid dbid, FetchTableStatType action)
 	}
 	else if (action == RESUME_DB_TO_MONITOR)
 	{
-		entry = hash_search(monitored_dbid_cache, &dbid, HASH_FIND, &found);
+		MonitorDBEntry entry = hash_search(monitored_dbid_cache, &dbid, HASH_FIND, &found);
 
 		if (found)
 		{
