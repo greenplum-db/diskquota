@@ -535,7 +535,12 @@ disk_quota_worker_main(Datum main_arg)
 			MyWorkerInfo->dbEntry->inited = true;
 		}
 		worker_increase_epoch(MyWorkerInfo->dbEntry->dbid);
+
+		// GPDB6 opend a MemoryAccount for us without asking us.
+		// and GPDB6 did not release the MemoryAccount after SPI finish.
+		// Reset the MemoryAccount although we never create it.
 		MemoryAccounting_Reset();
+
 		if (DiskquotaLauncherShmem->isDynamicWorker)
 		{
 			break;
