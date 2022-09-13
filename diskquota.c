@@ -1750,7 +1750,6 @@ next_db(void)
 		if (!curDB->in_use) continue;
 		if (curDB->workerId != INVALID_WORKER_ID) continue;
 		if (curDB->dbid == InvalidOid) continue;
-		// TODO: check if it is paused
 		break;
 	}
 	return curDB;
