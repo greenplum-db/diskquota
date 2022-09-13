@@ -163,6 +163,10 @@ typedef struct
 	DiskquotaDBEntry *dbArrayTail;
 	int               running_workers_num;
 	volatile bool     isDynamicWorker;
+	/*
+	DiskQuotaWorkerEntry worker[diskquota_max_workers]; // the hidden memory to store WorkerEntry
+	DiskquotaDBEntry     dbentry[MAX_NUM_MONITORED_DB]; // the hidden memory for dbentry
+	*/
 } DiskquotaLauncherShmemStruct;
 
 /* In shmem, only used on master */

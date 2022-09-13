@@ -215,13 +215,9 @@ diskquota_launcher_shmem_size(void)
 {
 	Size size;
 
-	/*
-	 * Need the fixed struct and the array of WorkerInfoData.
-	 */
-	size = sizeof(DiskquotaLauncherShmemStruct);
-	size = MAXALIGN(size);
-	size = add_size(size, mul_size(diskquota_max_workers, sizeof(struct DiskQuotaWorkerEntry)));
-	size = add_size(size, mul_size(MAX_NUM_MONITORED_DB, sizeof(struct DiskquotaDBEntry)));
+	size = MAXALIGN(sizeof(DiskquotaLauncherShmemStruct));
+	size = add_size(size, mul_size(diskquota_max_workers, sizeof(struct DiskQuotaWorkerEntry))); // hidden memory for DiskQuotaWorkerEntry
+	size = add_size(size, mul_size(MAX_NUM_MONITORED_DB, sizeof(struct DiskquotaDBEntry))); // hidden memory for dbArray
 	return size;
 }
 /*
@@ -1630,33 +1626,39 @@ init_launcher_shmem()
 	bool found;
 	DiskquotaLauncherShmem = (DiskquotaLauncherShmemStruct *)ShmemInitStruct("Diskquota launcher Data",
 	                                                                         diskquota_launcher_shmem_size(), &found);
-	memset(DiskquotaLauncherShmem, 0, sizeof(DiskquotaLauncherShmemStruct));
+	memset(DiskquotaLauncherShmem, 0, diskquota_launcher_shmem_size());
 	if (!found)
 	{
-		DiskQuotaWorkerEntry *worker;
-		int                   i;
 		dlist_init(&DiskquotaLauncherShmem->freeWorkers);
 		dlist_init(&DiskquotaLauncherShmem->runningWorkers);
-		worker = (DiskQuotaWorkerEntry *)((char *)DiskquotaLauncherShmem +
-		                                  MAXALIGN(sizeof(DiskquotaLauncherShmemStruct)));
 
-		/* initialize the worker free list */
-		for (i = 0; i < diskquota_max_workers; i++)
+		// a pointer to the start address of hidden memory
+		uint8_t* hidden_memory_prt = (uint8_t*)DiskquotaLauncherShmem + MAXALIGN(sizeof(DiskquotaLauncherShmemStruct));
+
+		// get DiskQuotaWorkerEntry from the hidden memory
+		DiskQuotaWorkerEntry *worker = (DiskQuotaWorkerEntry *)hidden_memory_prt;
+		hidden_memory_prt += mul_size(diskquota_max_workers, sizeof(DiskQuotaWorkerEntry));
+
+		// get dbArray from the hidden memory
+		DiskquotaDBEntry *dbArray = (DiskquotaDBEntry *)hidden_memory_prt;
+		hidden_memory_prt += mul_size(MAX_NUM_MONITORED_DB, sizeof(struct DiskquotaDBEntry));
+
+		// get the dbArrayTail from the hidden memory
+		DiskquotaDBEntry *dbArrayTail = (DiskquotaDBEntry *)hidden_memory_prt;
+
+		/* add all worker to the free worker list */
+		DiskquotaLauncherShmem->running_workers_num = 0;
+		for (int i = 0; i < diskquota_max_workers; i++)
 		{
 			memset(&worker[i], 0, sizeof(DiskQuotaWorkerEntry));
 			worker[i].id = i;
 			dlist_push_head(&DiskquotaLauncherShmem->freeWorkers, &worker[i].node);
 		}
 
-		DiskquotaLauncherShmem->running_workers_num = 0;
+		DiskquotaLauncherShmem->dbArray = dbArray;
+		DiskquotaLauncherShmem->dbArrayTail = dbArrayTail;
 
-		DiskquotaLauncherShmem->dbArray =
-		        (DiskquotaDBEntry *)((char *)worker + mul_size(diskquota_max_workers, sizeof(DiskQuotaWorkerEntry)));
-
-		DiskquotaLauncherShmem->dbArrayTail =
-		        (DiskquotaDBEntry *)((char *)DiskquotaLauncherShmem->dbArray +
-		                             mul_size(MAX_NUM_MONITORED_DB, sizeof(struct DiskquotaDBEntry)));
-		for (i = 0; i < MAX_NUM_MONITORED_DB; i++)
+		for (int i = 0; i < MAX_NUM_MONITORED_DB; i++)
 		{
 			memset(&DiskquotaLauncherShmem->dbArray[i], 0, sizeof(DiskquotaDBEntry));
 			DiskquotaLauncherShmem->dbArray[i].id       = i;
