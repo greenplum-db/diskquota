@@ -33,6 +33,7 @@
 #define MAX_NUM_MONITORED_DB 50
 #define LAUNCHER_SCHEMA "diskquota_utility"
 #define EXTENSION_SCHEMA "diskquota"
+
 typedef enum
 {
 	NAMESPACE_QUOTA = 0,
@@ -167,14 +168,15 @@ typedef struct
 /* In shmem, only used on master */
 struct DiskquotaDBEntry
 {
-	Oid  dbid;
-	bool inited;
-	/* starts from 0 */
+	// the index of DiskquotaLauncherShmem->dbArray, start from 0
 	int id;
-	/*
-	 * the id of the worker which is running for the, 0 means no worker for it.
-	 */
+	// the database oid in postgres catalog
+	Oid  dbid;
+	// the id of the worker which is running for the, 0 means no worker for it. -1 is default value
 	int  workerId;
+	// this entry is inited, will set to true after the worker finish the frist run.
+	bool inited;
+	// this slot is in using. AKA dbid != 0
 	bool in_use;
 };
 

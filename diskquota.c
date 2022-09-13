@@ -85,22 +85,23 @@ static DiskQuotaWorkerEntry *volatile MyWorkerInfo = NULL;
 static int num_db = 0;
 
 static DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
+
 /*
- * the current db to be run or running
+ * the current db to be run or running.
+ * a in-process static value, pointer to shared memory
  *
  * curDB has 3 different kinds of values:
  * 1) when curDB is NULL, it means we can start workers
- * for databases
+ * for the first databases in DiskquotaLauncherShmem->dbArray
  *
  * 2) when curDB is DiskquotaLauncherShmem->dbArrayTail,
  * it means it has done in one loop. And it should go
  * sleep for enough time: diskquota.naptime.
  *
  * 3) when curDB is pointing to any db entry in
- * DiskquotaLauncherShmem->dbArray, it means it is in
+ * DiskquotaLauncherShmem->dbArray[], it means it is in
  * a loop to start each worker for each database.
  */
-
 static DiskquotaDBEntry *curDB = NULL;
 
 /*
@@ -532,7 +533,7 @@ disk_quota_worker_main(Datum main_arg)
 		{
 			/* Refresh quota model with init mode */
 			refresh_disk_quota_model(!MyWorkerInfo->dbEntry->inited);
-			if (!MyWorkerInfo->dbEntry->inited) MyWorkerInfo->dbEntry->inited = true;
+			MyWorkerInfo->dbEntry->inited = true;
 		}
 		worker_increase_epoch(MyWorkerInfo->dbEntry->dbid);
 		MemoryAccounting_Reset();
@@ -1660,14 +1661,14 @@ init_launcher_shmem()
 	}
 }
 
+/*
+* Look for an unused slot.  If we find one, grab it.
+*/
 static DiskquotaDBEntry *
 add_db_entry(Oid dbid)
 {
-	/*
-	 * Look for an unused slot.  If we find one, grab it.
-	 */
-
 	DiskquotaDBEntry *result = NULL;
+
 	/* if there is already dbEntry's dbid equals dbid, returning the existing one */
 	for (int i = 0; i < MAX_NUM_MONITORED_DB; i++)
 	{
@@ -1726,7 +1727,6 @@ release_db_entry(Oid dbid)
  * If the curDB is NULL, pick the head db to run.
  * If the dbList empty, return NULL.
  * If the picked db is in running status, skip it, pick the next one to run.
- *
  */
 static DiskquotaDBEntry *
 next_db(void)
