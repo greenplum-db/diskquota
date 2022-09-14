@@ -149,7 +149,7 @@ typedef struct DiskquotaDBEntry     DiskquotaDBEntry;
  */
 struct DiskQuotaWorkerEntry
 {
-	dlist_node        node; // the double linked list header
+	dlist_node node; // the double linked list header
 
 	int               id;      // starts from 0, -1 means invalid
 	DiskquotaDBEntry *dbEntry; // pointer to shared memory. DiskquotaLauncherShmem->dbArray
@@ -186,7 +186,7 @@ struct DiskquotaDBEntry
 typedef struct MonitorDBEntryStruct *MonitorDBEntry;
 struct MonitorDBEntryStruct
 {
-	Oid              dbid; // the key
+	Oid dbid; // the key
 
 	bool             paused;
 	bool             is_readiness_logged; /* true if we have logged the error message for not ready */

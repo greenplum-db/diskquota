@@ -1173,7 +1173,7 @@ get_size_in_mb(char *str)
 void
 update_monitor_db(Oid dbid, FetchTableStatType action)
 {
-	bool           found = false;
+	bool found = false;
 
 	// add/remove the dbid to monitoring database cache to filter out table not under
 	// monitoring in hook functions
