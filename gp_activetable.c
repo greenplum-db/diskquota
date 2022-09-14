@@ -47,16 +47,17 @@ typedef struct DiskQuotaSetOFCache
 	HASH_SEQ_STATUS pos;
 } DiskQuotaSetOFCache;
 
-HTAB *active_tables_map = NULL;
+HTAB *active_tables_map = NULL; // Set<DiskQuotaActiveTableFileEntry>
+
 /*
- * monitored_dbid_cache is a white list for diskquota
+ * monitored_dbid_cache is a allow list for diskquota
  * to know which databases it need to monitor.
  *
  * dbid will be added to it when creating diskquota extension
  * dbid will be removed from it when droping diskquota extension
  */
-HTAB *monitored_dbid_cache = NULL;
-HTAB *altered_reloid_cache = NULL;
+HTAB *monitored_dbid_cache = NULL; // Map<Oid, MonitorDBEntryStruct>
+HTAB *altered_reloid_cache = NULL; // Set<Oid>
 
 /* active table hooks which detect the disk file size change. */
 static file_create_hook_type   prev_file_create_hook   = NULL;

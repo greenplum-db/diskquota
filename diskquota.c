@@ -46,7 +46,6 @@ PG_MODULE_MAGIC;
 
 #define DISKQUOTA_DB "diskquota"
 #define DISKQUOTA_APPLICATION_NAME "gp_reserved_gpdiskquota"
-#define INVALID_WORKER_ID -1
 
 /* clang-format off */
 #if !defined(DISKQUOTA_VERSION) || \
@@ -77,36 +76,40 @@ int  diskquota_max_workers       = 10;
 DiskQuotaLocks       diskquota_locks;
 ExtensionDDLMessage *extension_ddl_message = NULL;
 
-/* For each diskquota worker */
+// Only access in diskquota worker, different from each worker.
+// a pointer to DiskquotaLauncherShmem->workerEntries in shared memory
 static DiskQuotaWorkerEntry *volatile MyWorkerInfo = NULL;
-/* using hash table to support incremental update the table size entry.*/
-static int                           num_db = 0;
+
+// how many database diskquota are monitoring on
+static int num_db = 0;
+
+// in shared memory, only for launcher process
 static DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
+
 /*
- * the current db to be run or running
+ * the current db to be run or running.
+ * a in-process static value, pointer to shared memory
  *
  * curDB has 3 different kinds of values:
  * 1) when curDB is NULL, it means we can start workers
- * for databases
+ * for the first databases in DiskquotaLauncherShmem->dbArray
  *
  * 2) when curDB is DiskquotaLauncherShmem->dbArrayTail,
- * it means it has done in one loop. And it should go
- * sleep for enough time: diskquota.naptime.
+ * means it had finish one loop just now. And should
+ * sleep for ${diskquota.naptime} sconds.
  *
  * 3) when curDB is pointing to any db entry in
- * DiskquotaLauncherShmem->dbArray, it means it is in
- * a loop to start each worker for each database.
+ * DiskquotaLauncherShmem->dbArray[], it means it is in
+ * one loop to start each worker for each database.
  */
-
 static DiskquotaDBEntry *curDB = NULL;
 
 /*
  * bgworker handles, in launcher local memory,
- * bgworker_handles[i] is the bgworker handle of
- * workers[i] in shared memory
+ * bgworker_handles[i] is the handle of DiskquotaLauncherShmem-><hidden memory space>[i]
+ * the actually useable reference is DiskquotaLauncherShmem->{freeWorkers, runningWorkers}
  *
- * bgworker_handles' length is the same as
- * workers': diskquota_max_workers
+ * size: GUC diskquota_max_workers
  */
 BackgroundWorkerHandle **bgworker_handles;
 
@@ -212,13 +215,9 @@ diskquota_launcher_shmem_size(void)
 {
 	Size size;
 
-	/*
-	 * Need the fixed struct and the array of WorkerInfoData.
-	 */
-	size = sizeof(DiskquotaLauncherShmemStruct);
-	size = MAXALIGN(size);
-	size = add_size(size, mul_size(diskquota_max_workers, sizeof(struct DiskQuotaWorkerEntry)));
-	size = add_size(size, mul_size(MAX_NUM_MONITORED_DB, sizeof(struct DiskquotaDBEntry)));
+	size = MAXALIGN(sizeof(DiskquotaLauncherShmemStruct));
+	size = add_size(size, mul_size(diskquota_max_workers, sizeof(struct DiskQuotaWorkerEntry))); // hidden memory for DiskQuotaWorkerEntry
+	size = add_size(size, mul_size(MAX_NUM_MONITORED_DB, sizeof(struct DiskquotaDBEntry))); // hidden memory for dbArray
 	return size;
 }
 /*
@@ -529,11 +528,16 @@ disk_quota_worker_main(Datum main_arg)
 		{
 			/* Refresh quota model with init mode */
 			refresh_disk_quota_model(!MyWorkerInfo->dbEntry->inited);
-			if (!MyWorkerInfo->dbEntry->inited) MyWorkerInfo->dbEntry->inited = true;
+			MyWorkerInfo->dbEntry->inited = true;
 		}
 		worker_increase_epoch(MyWorkerInfo->dbEntry->dbid);
+
+		// GPDB6 opend a MemoryAccount for us without asking us.
+		// and GPDB6 did not release the MemoryAccount after SPI finish.
+		// Reset the MemoryAccount although we never create it.
 		MemoryAccounting_Reset();
-		if (DiskquotaLauncherShmem->dynamicWorker)
+
+		if (DiskquotaLauncherShmem->isDynamicWorker)
 		{
 			break;
 		}
@@ -920,7 +924,7 @@ init_database_list(void)
 	PopActiveSnapshot();
 	CommitTransactionCommand();
 	/* TODO: clean invalid database */
-	if (num_db > diskquota_max_workers) DiskquotaLauncherShmem->dynamicWorker = true;
+	if (num_db > diskquota_max_workers) DiskquotaLauncherShmem->isDynamicWorker = true;
 }
 
 /*
@@ -1047,7 +1051,7 @@ do_process_extension_ddl_message(MessageResult *code, ExtensionDDLMessage local_
 					add_db_entry(dbid);
 					/* TODO: how about this failed? */
 					update_monitor_db_mpp(dbid, ADD_DB_TO_MONITOR, LAUNCHER_SCHEMA);
-					if (num_db > diskquota_max_workers) DiskquotaLauncherShmem->dynamicWorker = true;
+					if (num_db > diskquota_max_workers) DiskquotaLauncherShmem->isDynamicWorker = true;
 					break;
 				case CMD_DROP_EXTENSION:
 					/* terminate bgworker in release_db_entry rountine */
@@ -1055,7 +1059,7 @@ do_process_extension_ddl_message(MessageResult *code, ExtensionDDLMessage local_
 					update_monitor_db_mpp(dbid, REMOVE_DB_FROM_BEING_MONITORED, LAUNCHER_SCHEMA);
 					/* clear the out-of-quota rejectmap in shared memory */
 					invalidate_database_rejectmap(dbid);
-					if (num_db <= diskquota_max_workers) DiskquotaLauncherShmem->dynamicWorker = false;
+					if (num_db <= diskquota_max_workers) DiskquotaLauncherShmem->isDynamicWorker = false;
 					break;
 				default:
 					ereport(LOG, (errmsg("[diskquota launcher]:received unsupported message cmd=%d",
@@ -1622,33 +1626,39 @@ init_launcher_shmem()
 	bool found;
 	DiskquotaLauncherShmem = (DiskquotaLauncherShmemStruct *)ShmemInitStruct("Diskquota launcher Data",
 	                                                                         diskquota_launcher_shmem_size(), &found);
-	memset(DiskquotaLauncherShmem, 0, sizeof(DiskquotaLauncherShmemStruct));
+	memset(DiskquotaLauncherShmem, 0, diskquota_launcher_shmem_size());
 	if (!found)
 	{
-		DiskQuotaWorkerEntry *worker;
-		int                   i;
 		dlist_init(&DiskquotaLauncherShmem->freeWorkers);
 		dlist_init(&DiskquotaLauncherShmem->runningWorkers);
-		worker = (DiskQuotaWorkerEntry *)((char *)DiskquotaLauncherShmem +
-		                                  MAXALIGN(sizeof(DiskquotaLauncherShmemStruct)));
 
-		/* initialize the worker free list */
-		for (i = 0; i < diskquota_max_workers; i++)
+		// a pointer to the start address of hidden memory
+		uint8_t* hidden_memory_prt = (uint8_t*)DiskquotaLauncherShmem + MAXALIGN(sizeof(DiskquotaLauncherShmemStruct));
+
+		// get DiskQuotaWorkerEntry from the hidden memory
+		DiskQuotaWorkerEntry *worker = (DiskQuotaWorkerEntry *)hidden_memory_prt;
+		hidden_memory_prt += mul_size(diskquota_max_workers, sizeof(DiskQuotaWorkerEntry));
+
+		// get dbArray from the hidden memory
+		DiskquotaDBEntry *dbArray = (DiskquotaDBEntry *)hidden_memory_prt;
+		hidden_memory_prt += mul_size(MAX_NUM_MONITORED_DB, sizeof(struct DiskquotaDBEntry));
+
+		// get the dbArrayTail from the hidden memory
+		DiskquotaDBEntry *dbArrayTail = (DiskquotaDBEntry *)hidden_memory_prt;
+
+		/* add all worker to the free worker list */
+		DiskquotaLauncherShmem->running_workers_num = 0;
+		for (int i = 0; i < diskquota_max_workers; i++)
 		{
 			memset(&worker[i], 0, sizeof(DiskQuotaWorkerEntry));
 			worker[i].id = i;
 			dlist_push_head(&DiskquotaLauncherShmem->freeWorkers, &worker[i].node);
 		}
 
-		DiskquotaLauncherShmem->running_workers_num = 0;
+		DiskquotaLauncherShmem->dbArray = dbArray;
+		DiskquotaLauncherShmem->dbArrayTail = dbArrayTail;
 
-		DiskquotaLauncherShmem->dbArray =
-		        (DiskquotaDBEntry *)((char *)worker + mul_size(diskquota_max_workers, sizeof(DiskQuotaWorkerEntry)));
-
-		DiskquotaLauncherShmem->dbArrayTail =
-		        (DiskquotaDBEntry *)((char *)DiskquotaLauncherShmem->dbArray +
-		                             mul_size(MAX_NUM_MONITORED_DB, sizeof(struct DiskquotaDBEntry)));
-		for (i = 0; i < MAX_NUM_MONITORED_DB; i++)
+		for (int i = 0; i < MAX_NUM_MONITORED_DB; i++)
 		{
 			memset(&DiskquotaLauncherShmem->dbArray[i], 0, sizeof(DiskquotaDBEntry));
 			DiskquotaLauncherShmem->dbArray[i].id       = i;
@@ -1657,14 +1667,14 @@ init_launcher_shmem()
 	}
 }
 
+/*
+* Look for an unused slot.  If we find one, grab it.
+*/
 static DiskquotaDBEntry *
 add_db_entry(Oid dbid)
 {
-	/*
-	 * Look for an unused slot.  If we find one, grab it.
-	 */
-
 	DiskquotaDBEntry *result = NULL;
+
 	/* if there is already dbEntry's dbid equals dbid, returning the existing one */
 	for (int i = 0; i < MAX_NUM_MONITORED_DB; i++)
 	{
@@ -1723,7 +1733,6 @@ release_db_entry(Oid dbid)
  * If the curDB is NULL, pick the head db to run.
  * If the dbList empty, return NULL.
  * If the picked db is in running status, skip it, pick the next one to run.
- *
  */
 static DiskquotaDBEntry *
 next_db(void)
@@ -1741,7 +1750,6 @@ next_db(void)
 		if (!curDB->in_use) continue;
 		if (curDB->workerId != INVALID_WORKER_ID) continue;
 		if (curDB->dbid == InvalidOid) continue;
-		// TODO: check if it is paused
 		break;
 	}
 	return curDB;
