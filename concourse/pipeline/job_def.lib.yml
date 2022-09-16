@@ -100,25 +100,6 @@ plan:
       path: diskquota_src/concourse/scripts/check-clang-format.sh
 #@ end
 
-#@ def exit_job(param):
-#@   trigger = param["trigger"]
-#@   confs = param["confs"]
-#@   passed_jobs = []
-#@   for conf in confs:
-#@     passed_jobs.append(build_test_job_name(conf))
-#@   end
-name: exit
-on_failure: #@ trigger["on_failure"]
-on_error: #@ trigger["on_error"]
-on_success: #@ trigger["on_success"]
-plan:
-#@   for to_get in trigger["to_get"]:
-- passed: passed_jobs
-  trigger: true
-  _: #@ template.replace(to_get)
-#@   end
-#@ end
-
 #@ def exit_pr_job(param):
 #@   trigger = param["trigger"]
 #@   confs = param["confs"]
