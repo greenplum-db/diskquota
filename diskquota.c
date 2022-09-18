@@ -1364,7 +1364,7 @@ worker_get_epoch(Oid dbid)
 	if (!found)
 	{
 		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-		                errmsg("[diskquota] worker not found for database \"%s\"", get_db_name(dbid))));
+		                errmsg("[diskquota] worker not found for database \"%s\"", get_database_name(dbid))));
 	}
 	return epoch;
 }
