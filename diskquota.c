@@ -1363,7 +1363,7 @@ worker_get_epoch(Oid dbid)
 	LWLockRelease(diskquota_locks.monitored_dbid_cache_lock);
 	if (!found)
 	{
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+		ereport(WARNING, (errcode(ERRCODE_INTERNAL_ERROR),
 		                errmsg("[diskquota] worker not found for database \"%s\"", get_database_name(dbid))));
 	}
 	return epoch;
