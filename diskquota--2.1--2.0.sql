@@ -196,4 +196,5 @@ FROM
   pg_tablespace ON tablespaceoid = pg_tablespace.oid LEFT OUTER JOIN
   quota_usage ON pg_roles.oid = relowner AND pg_tablespace.oid = reltablespace;
 
+DROP VIEW diskquota.show_all_relation_view;
 -- view end

@@ -38,27 +38,28 @@
 
 
 -- views
-/* ALTER */ CREATE OR REPLACE VIEW diskquota.show_fast_schema_quota_view AS
+CREATE VIEW diskquota.show_all_relation_view AS
 WITH
   relation_cache AS (
     SELECT (f).* FROM diskquota.show_relation_cache() as f
-  ),
-  all_relation AS (
-    SELECT DISTINCT(oid), relowner, relnamespace, reltablespace from (
-      SELECT relid as oid, owneroid as relowner, namespaceoid as relnamespace, spcnode as reltablespace FROM relation_cache
-      UNION
-      SELECT oid, relowner, relnamespace, reltablespace from pg_class
-    ) as union_relation
-  ),
+  )
+SELECT DISTINCT(oid), relowner, relnamespace, reltablespace from (
+  SELECT relid as oid, owneroid as relowner, namespaceoid as relnamespace, spcnode as reltablespace FROM relation_cache
+  UNION
+  SELECT oid, relowner, relnamespace, reltablespace from pg_class
+) as union_relation;
+
+/* ALTER */ CREATE OR REPLACE VIEW diskquota.show_fast_schema_quota_view AS
+WITH
   quota_usage AS (
     SELECT
       relnamespace,
       SUM(size) AS total_size
     FROM
       diskquota.table_size,
-      all_relation
+      diskquota.show_all_relation_view
     WHERE
-      tableid = all_relation.oid AND
+      tableid = diskquota.show_all_relation_view.oid AND
       segid = -1
     GROUP BY
       relnamespace
@@ -77,25 +78,15 @@ WHERE
 
 /* ALTER */ CREATE OR REPLACE VIEW diskquota.show_fast_role_quota_view AS
 WITH
-  relation_cache AS (
-    SELECT (f).* FROM diskquota.show_relation_cache() as f
-  ),
-  all_relation AS (
-    SELECT DISTINCT(oid), relowner, relnamespace, reltablespace from (
-      SELECT relid as oid, owneroid as relowner, namespaceoid as relnamespace, spcnode as reltablespace FROM relation_cache
-      UNION
-      SELECT oid, relowner, relnamespace, reltablespace from pg_class
-    ) as union_relation
-  ),
   quota_usage AS (
     SELECT
       relowner,
       SUM(size) AS total_size
     FROM
       diskquota.table_size,
-      all_relation
+      diskquota.show_all_relation_view
     WHERE
-      tableid = all_relation.oid AND
+      tableid = diskquota.show_all_relation_view.oid AND
       segid = -1
     GROUP BY
       relowner
@@ -118,16 +109,6 @@ WITH
     SELECT dattablespace FROM pg_database
     WHERE datname = current_database()
   ),
-  relation_cache AS (
-    SELECT (f).* FROM diskquota.show_relation_cache() as f
-  ),
-  all_relation AS (
-    SELECT DISTINCT(oid), relowner, relnamespace, reltablespace from (
-      SELECT relid as oid, owneroid as relowner, namespaceoid as relnamespace, spcnode as reltablespace FROM relation_cache
-      UNION
-      SELECT oid, relowner, relnamespace, reltablespace from pg_class
-    ) as union_relation
-  ),
   quota_usage AS (
     SELECT
       relnamespace,
@@ -138,10 +119,10 @@ WITH
       SUM(size) AS total_size
     FROM
       diskquota.table_size,
-      all_relation,
+      diskquota.show_all_relation_view,
       default_tablespace
     WHERE
-      tableid = all_relation.oid AND
+      tableid = diskquota.show_all_relation_view.oid AND
       segid = -1
     GROUP BY
       relnamespace,
@@ -180,16 +161,6 @@ WITH
     SELECT dattablespace FROM pg_database
     WHERE datname = current_database()
   ),
-  relation_cache AS (
-    SELECT (f).* FROM diskquota.show_relation_cache() as f
-  ),
-  all_relation AS (
-    SELECT DISTINCT(oid), relowner, relnamespace, reltablespace from (
-      SELECT relid as oid, owneroid as relowner, namespaceoid as relnamespace, spcnode as reltablespace FROM relation_cache
-      UNION
-      SELECT oid, relowner, relnamespace, reltablespace from pg_class
-    ) as union_relation
-  ),
   quota_usage AS (
     SELECT
       relowner,
@@ -200,10 +171,10 @@ WITH
       SUM(size) AS total_size
     FROM
       diskquota.table_size,
-      all_relation,
+      diskquota.show_all_relation_view,
       default_tablespace
     WHERE
-      tableid = all_relation.oid AND
+      tableid = diskquota.show_all_relation_view.oid AND
       segid = -1
     GROUP BY
       relowner,
