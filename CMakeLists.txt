@@ -97,7 +97,7 @@ set_target_properties(
   PROPERTIES OUTPUT_NAME ${DISKQUOTA_BINARY_NAME}
              PREFIX ""
              C_STANDARD 99
-             LINKER_LANGUAGE "CXX")
+             LINKER_LANGUAGE "C")
 
 # packing part, move to a separate file if this part is too large
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Distro.cmake)
@@ -146,7 +146,7 @@ add_custom_target(create_artifact
   COMMAND
   ${CMAKE_COMMAND} --build . --target package
   COMMAND
-  ${CMAKE_COMMAND} -E tar cvf ${artifact_NAME} "${tgz_NAME}.tar.gz")
+  ${CMAKE_COMMAND} -E tar czvf ${artifact_NAME} "${tgz_NAME}.tar.gz")
 # packing end
 
 # Create build-info
