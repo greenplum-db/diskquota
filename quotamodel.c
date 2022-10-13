@@ -2124,7 +2124,7 @@ get_table_size_entry_flag(TableSizeEntry *entry, TableSizeEntryFlag flag)
 static void
 reset_table_size_entry_flag(TableSizeEntry *entry, TableSizeEntryFlag flag)
 {
-	entry->flag &= -((uint32)flag);
+	entry->flag &= (UINT32_MAX ^ flag);
 }
 
 static void
