@@ -44,7 +44,10 @@
 
 /* cluster level max size of rejectmap */
 #define MAX_DISK_QUOTA_REJECT_ENTRIES (1024 * 1024)
-#define MAX_TABLES (20 * 1024)
+/* init size of table_size_map */
+#define INIT_TABLES (20 * 1024)
+/* max size of table_size_map */
+#define MAX_TABLES (1024 * 1024)
 /* cluster level init size of rejectmap */
 #define INIT_DISK_QUOTA_REJECT_ENTRIES 8192
 /* per database level max size of rejectmap */
@@ -494,7 +497,7 @@ init_disk_quota_model(uint32 id)
 	hash_ctl.hash      = tag_hash;
 
 	format_name("TableSizeEntrymap", id, &str);
-	table_size_map = ShmemInitHash(str.data, MAX_TABLES, MAX_TABLES, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
+	table_size_map = ShmemInitHash(str.data, INIT_TABLES, MAX_TABLES, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
 
 	/* for localrejectmap */
 	memset(&hash_ctl, 0, sizeof(hash_ctl));
@@ -552,7 +555,7 @@ vacuum_disk_quota_model(uint32 id)
 	hash_ctl.hash      = tag_hash;
 
 	format_name("TableSizeEntrymap", id, &str);
-	table_size_map = ShmemInitHash(str.data, MAX_TABLES, MAX_TABLES, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
+	table_size_map = ShmemInitHash(str.data, INIT_TABLES, MAX_TABLES, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
 	hash_seq_init(&iter, table_size_map);
 	while ((tsentry = hash_seq_search(&iter)) != NULL)
 	{
