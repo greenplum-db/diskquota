@@ -53,6 +53,7 @@ typedef enum
 	TABLESPACE_QUOTA,
 
 	NUM_QUOTA_TYPES,
+	INVALID_QUOTA_TYPE,
 } QuotaType;
 
 typedef enum
