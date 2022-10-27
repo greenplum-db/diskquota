@@ -11,7 +11,11 @@ endif()
 
 # generate 'compile_commands.json'
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+set(DOWNLOAD_DIR
+    ${CMAKE_CURRENT_SOURCE_DIR}/downloads
+    CACHE STRING "Directory for downloading external project")
 
+include(${CMAKE_ROOT}/Modules/ExternalProject.cmake)
 # Retrieve repository information
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Git.cmake)
 GitHash_Get(DISKQUOTA_GIT_HASH)
@@ -19,9 +23,6 @@ GitHash_Get(DISKQUOTA_GIT_HASH)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Gpdb.cmake)
 
 
-# set include directories for all sub-projects
-include_directories(${PG_INCLUDE_DIR_SERVER})
-include_directories(${PG_INCLUDE_DIR}) # for libpq
 # Overwrite the default build type flags set by cmake.
 # We don't want the '-O3 -DNDEBUG' from cmake. Instead, those will be set by the CFLAGS from pg_config.
 # And, the good news is, GPDB release always have '-g'.
@@ -64,6 +65,22 @@ add_compile_definitions(
   DISKQUOTA_PATCH_VERSION=${DISKQUOTA_PATCH_VERSION}
   DISKQUOTA_BINARY_NAME="${DISKQUOTA_BINARY_NAME}")
 
+# Build dependencies
+set(deps_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/external_deps)
+ExternalProject_Add(
+    cjson
+    URL
+    https://github.com/DaveGamble/cJSON/archive/refs/tags/v1.7.15.tar.gz
+    URL_MD5
+    921b4bcb401aa604dc632fdb1c8dbdea
+    DOWNLOAD_DIR
+    ${DOWNLOAD_DIR}
+    CMAKE_ARGS
+    -DENABLE_CJSON_TEST=OFF
+    -DBUILD_SHARED_LIBS=OFF
+    -DCMAKE_INSTALL_PREFIX=${deps_INSTALL_DIR}
+)
+
 list(
   APPEND
   diskquota_SRC
@@ -100,6 +117,14 @@ set_target_properties(
              PREFIX ""
              C_STANDARD 99
              LINKER_LANGUAGE "C")
+target_include_directories(
+  diskquota PRIVATE
+  ${PG_INCLUDE_DIR}
+  ${PG_INCLUDE_DIR_SERVER}
+  ${deps_INSTALL_DIR}/include)
+target_link_libraries(
+  diskquota PRIVATE
+  ${deps_INSTALL_DIR}/lib/libcjson.a)
 
 # packing part, move to a separate file if this part is too large
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Distro.cmake)
