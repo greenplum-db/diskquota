@@ -23,14 +23,32 @@ CREATE TABLE blocked_t1(i int) DISTRIBUTED BY (i);
 CREATE
 INSERT INTO blocked_t1 SELECT generate_series(1, 100);
 INSERT 100
+-- Inject 'suspension' to check_rejectmap_by_relfilenode on seg0.
+SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'suspend', dbid) FROM gp_segment_configuration WHERE role='p' AND content=0;
+ gp_inject_fault_infinite 
+--------------------------
+ Success:                 
+(1 row)
+
+-- Insert a small amount of data into blocked_t1. It will hang up at check_rejectmap_by_relfilenode().
+1&: INSERT INTO blocked_t1 SELECT generate_series(1, 10000);  <waiting ...>
+
 -- Dispatch rejectmap to seg0.
 SELECT block_relation_on_seg0('blocked_t1'::regclass, 'NAMESPACE'::text, false);
  block_relation_on_seg0 
 ------------------------
                         
 (1 row)
-INSERT INTO blocked_t1 SELECT generate_series(1, 10000);
-ERROR:  schema's disk space quota exceeded with name: public  (seg0 127.0.0.1:6002 pid=92815)
+
+SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'reset', dbid) FROM gp_segment_configuration WHERE role='p' AND content=0;
+ gp_inject_fault_infinite 
+--------------------------
+ Success:                 
+(1 row)
+
+-- Session 1 will return and emit an error message saying that the quota limit is exceeded on seg0.
+1<:  <... completed>
+ERROR:  schema's disk space quota exceeded with name: 2200  (seg0 127.0.0.1:6002 pid=2163)
 
 -- Clean up the rejectmap on seg0.
 SELECT diskquota.refresh_rejectmap( ARRAY[]::diskquota.rejectmap_entry[], ARRAY[]::oid[]) FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
@@ -44,14 +62,32 @@ CREATE TABLE blocked_t2(i text) DISTRIBUTED BY (i);
 CREATE
 INSERT INTO blocked_t2 SELECT generate_series(1, 100);
 INSERT 100
+-- Inject 'suspension' to check_rejectmap_by_relfilenode on seg0.
+SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'suspend', dbid) FROM gp_segment_configuration WHERE role='p' AND content=0;
+ gp_inject_fault_infinite 
+--------------------------
+ Success:                 
+(1 row)
+
+-- Insert a small amount of data into blocked_t2. It will hang up at check_rejectmap_by_relfilenode().
+1&: INSERT INTO blocked_t2 SELECT generate_series(1, 10000);  <waiting ...>
+
 -- Dispatch rejectmap to seg0.
 SELECT block_relation_on_seg0('blocked_t2'::regclass, 'NAMESPACE'::text, false);
  block_relation_on_seg0 
 ------------------------
                         
 (1 row)
-INSERT INTO blocked_t2 SELECT generate_series(1, 10000);
-ERROR:  schema's disk space quota exceeded with name: public  (seg0 127.0.0.1:6002 pid=92815)
+
+SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'reset', dbid) FROM gp_segment_configuration WHERE role='p' AND content=0;
+ gp_inject_fault_infinite 
+--------------------------
+ Success:                 
+(1 row)
+
+-- Session 1 will return and emit an error message saying that the quota limit is exceeded on seg0.
+1<:  <... completed>
+ERROR:  schema's disk space quota exceeded with name: 2200  (seg0 127.0.0.1:6002 pid=2163)
 
 -- Clean up the rejectmap on seg0.
 SELECT diskquota.refresh_rejectmap( ARRAY[]::diskquota.rejectmap_entry[], ARRAY[]::oid[]) FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
@@ -65,15 +101,32 @@ CREATE TABLE blocked_t3(i int) WITH (appendonly=true) DISTRIBUTED BY (i);
 CREATE
 INSERT INTO blocked_t3 SELECT generate_series(1, 100);
 INSERT 100
+-- Inject 'suspension' to check_rejectmap_by_relfilenode on seg0.
+SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'suspend', dbid) FROM gp_segment_configuration WHERE role='p' AND content=0;
+ gp_inject_fault_infinite 
+--------------------------
+ Success:                 
+(1 row)
+
+-- Insert a small amount of data into blocked_t3. It will hang up at check_rejectmap_by_relfilenode().
+1&: INSERT INTO blocked_t3 SELECT generate_series(1, 10000);  <waiting ...>
+
 -- Dispatch rejectmap to seg0.
 SELECT block_relation_on_seg0('blocked_t3'::regclass, 'NAMESPACE'::text, false);
  block_relation_on_seg0 
 ------------------------
                         
 (1 row)
--- Insert a small amount of data into blocked_t3. It will hang up at check_rejectmap_by_relfilenode().
-INSERT INTO blocked_t3 SELECT generate_series(1, 10000);
-ERROR:  schema's disk space quota exceeded with name: public  (seg0 127.0.0.1:6002 pid=92815)
+
+SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'reset', dbid) FROM gp_segment_configuration WHERE role='p' AND content=0;
+ gp_inject_fault_infinite 
+--------------------------
+ Success:                 
+(1 row)
+
+-- Session 1 will return and emit an error message saying that the quota limit is exceeded on seg0.
+1<:  <... completed>
+ERROR:  schema's disk space quota exceeded with name: 2200  (seg0 127.0.0.1:6002 pid=2163)
 
 -- Clean up the rejectmap on seg0.
 SELECT diskquota.refresh_rejectmap( ARRAY[]::diskquota.rejectmap_entry[], ARRAY[]::oid[]) FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
@@ -89,15 +142,32 @@ CREATE INDEX blocked_t4_index ON blocked_t4(i);
 CREATE
 INSERT INTO blocked_t4 SELECT generate_series(1, 100);
 INSERT 100
+-- Inject 'suspension' to check_rejectmap_by_relfilenode on seg0.
+SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'suspend', dbid) FROM gp_segment_configuration WHERE role='p' AND content=0;
+ gp_inject_fault_infinite 
+--------------------------
+ Success:                 
+(1 row)
+
+-- Insert a small amount of data into blocked_t4. It will hang up at check_rejectmap_by_relfilenode().
+1&: INSERT INTO blocked_t4 SELECT generate_series(1, 10000);  <waiting ...>
+
 -- Dispatch rejectmap to seg0.
 SELECT block_relation_on_seg0('blocked_t4_index'::regclass, 'NAMESPACE'::text, false);
  block_relation_on_seg0 
 ------------------------
                         
 (1 row)
--- Insert a small amount of data into blocked_t4. It will hang up at check_rejectmap_by_relfilenode().
-INSERT INTO blocked_t4 SELECT generate_series(1, 10000);
-ERROR:  schema's disk space quota exceeded with name: public  (seg0 127.0.0.1:6002 pid=92815)
+
+SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'reset', dbid) FROM gp_segment_configuration WHERE role='p' AND content=0;
+ gp_inject_fault_infinite 
+--------------------------
+ Success:                 
+(1 row)
+
+-- Session 1 will return and emit an error message saying that the quota limit is exceeded on seg0.
+1<:  <... completed>
+ERROR:  schema's disk space quota exceeded with name: 2200  (seg0 127.0.0.1:6002 pid=2163)
 
 -- Clean up the rejectmap on seg0.
 SELECT diskquota.refresh_rejectmap( ARRAY[]::diskquota.rejectmap_entry[], ARRAY[]::oid[]) FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
@@ -111,14 +181,25 @@ CREATE TABLE blocked_t5(i int) DISTRIBUTED BY (i);
 CREATE
 INSERT INTO blocked_t5 SELECT generate_series(1, 100);
 INSERT 100
+-- Inject 'suspension' to check_rejectmap_by_relfilenode on seg0.
+SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'suspend', dbid) FROM gp_segment_configuration WHERE role='p' AND content=0;
+ gp_inject_fault_infinite 
+--------------------------
+ Success:                 
+(1 row)
+1&: INSERT INTO blocked_t5 SELECT generate_series(1, 10000);  <waiting ...>
 SELECT block_relation_on_seg0('blocked_t5'::regclass, 'NAMESPACE_TABLESPACE'::text, true);
  block_relation_on_seg0 
 ------------------------
                         
 (1 row)
-INSERT INTO blocked_t5 SELECT generate_series(1, 10000);
-ERROR:  tablespace: pg_default, schema: public diskquota exceeded  (seg0 127.0.0.1:6002 pid=92815)
-
+SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'reset', dbid) FROM gp_segment_configuration WHERE role='p' AND content=0;
+ gp_inject_fault_infinite 
+--------------------------
+ Success:                 
+(1 row)
+1<:  <... completed>
+ERROR:  tablespace: 1663, schema: 2200 diskquota exceeded per segment quota  (seg0 127.0.0.1:6002 pid=2163)
 -- Clean up the rejectmap on seg0.
 SELECT diskquota.refresh_rejectmap( ARRAY[]::diskquota.rejectmap_entry[], ARRAY[]::oid[]) FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
  refresh_rejectmap 
@@ -131,14 +212,25 @@ CREATE TABLE blocked_t6(i int) DISTRIBUTED BY (i);
 CREATE
 INSERT INTO blocked_t6 SELECT generate_series(1, 100);
 INSERT 100
+-- Inject 'suspension' to check_rejectmap_by_relfilenode on seg0.
+SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'suspend', dbid) FROM gp_segment_configuration WHERE role='p' AND content=0;
+ gp_inject_fault_infinite 
+--------------------------
+ Success:                 
+(1 row)
+1&: INSERT INTO blocked_t6 SELECT generate_series(1, 10000);  <waiting ...>
 SELECT block_relation_on_seg0('blocked_t6'::regclass, 'ROLE_TABLESPACE'::text, true);
  block_relation_on_seg0 
 ------------------------
                         
 (1 row)
-INSERT INTO blocked_t6 SELECT generate_series(1, 10000);
-ERROR:  tablespace: pg_default, role: wxiaoran diskquota exceeded  (seg0 127.0.0.1:6002 pid=92815)
-
+SELECT gp_inject_fault_infinite('check_rejectmap_by_relfilenode', 'reset', dbid) FROM gp_segment_configuration WHERE role='p' AND content=0;
+ gp_inject_fault_infinite 
+--------------------------
+ Success:                 
+(1 row)
+1<:  <... completed>
+ERROR:  tablespace: 1663, role: 10 diskquota exceeded per segment quota  (seg0 127.0.0.1:6002 pid=2163)
 -- Clean up the rejectmap on seg0.
 SELECT diskquota.refresh_rejectmap( ARRAY[]::diskquota.rejectmap_entry[], ARRAY[]::oid[]) FROM gp_dist_random('gp_id') WHERE gp_segment_id=0;
  refresh_rejectmap 
