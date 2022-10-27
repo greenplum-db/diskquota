@@ -179,8 +179,8 @@ extern DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
 /* In shmem, only used on master */
 struct DiskquotaDBEntry
 {
-	int        id;   // the index of DiskquotaLauncherShmem->dbArray, start from 0
-	Oid        dbid; // the database oid in postgres catalog
+	int id;   // the index of DiskquotaLauncherShmem->dbArray, start from 0
+	Oid dbid; // the database oid in postgres catalog
 
 #define INVALID_WORKER_ID -1
 	int          workerId; // the id of the worker which is running for the, 0 means no worker for it.
