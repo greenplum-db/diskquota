@@ -179,7 +179,6 @@ extern DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
 /* In shmem, only used on master */
 struct DiskquotaDBEntry
 {
-	dlist_node node; // the double linked list header
 	int        id;   // the index of DiskquotaLauncherShmem->dbArray, start from 0
 	Oid        dbid; // the database oid in postgres catalog
 
