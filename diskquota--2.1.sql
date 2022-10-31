@@ -3,6 +3,12 @@
 
 CREATE SCHEMA diskquota;
 
+CREATE TABLE diskquota.quota_config_3(
+  databaseOid oid,
+  quotaType int,
+  config jsonb
+);
+
 -- when (quotatype == NAMESPACE_QUOTA/ROLE_QUOTA) then targetOid = role_oid/schema_oid;
 -- when (quotatype == NAMESPACE_TABLESPACE_QUOTA/ROLE_TABLESPACE_QUOTA) then targetOid = diskquota.target.rowId;
 CREATE TABLE diskquota.quota_config(
@@ -79,6 +85,7 @@ CREATE TYPE diskquota.relation_cache_detail AS (
 	AUXREL_OID oid[]
 );
 
+CREATE FUNCTION diskquota.set_schema_quota_3(oid, text, bigint) RETURNS void STRICT AS '$libdir/diskquota-2.1.so' LANGUAGE C;
 CREATE FUNCTION diskquota.set_schema_quota(text, text) RETURNS void STRICT AS '$libdir/diskquota-2.1.so' LANGUAGE C;
 CREATE FUNCTION diskquota.set_role_quota(text, text) RETURNS void STRICT AS '$libdir/diskquota-2.1.so' LANGUAGE C;
 CREATE FUNCTION diskquota.init_table_size_table() RETURNS void STRICT AS '$libdir/diskquota-2.1.so' LANGUAGE C;

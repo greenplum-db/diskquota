@@ -42,12 +42,10 @@ typedef enum
 	ROLE_TABLESPACE_QUOTA,
 	/*
 	 * TABLESPACE_QUOTA
-	 * used in `quota_config` table,
 	 * when set_per_segment_quota("xx",1.0) is called
 	 * to set per segment quota to '1.0', the config
 	 * will be:
-	 * quotatype = 4 (TABLESPACE_QUOTA)
-	 * quotalimitMB = 0 (invalid quota confined)
+	 * quota_type = TABLESPACE_QUOTA
 	 * segratio = 1.0
 	 */
 	TABLESPACE_QUOTA,
