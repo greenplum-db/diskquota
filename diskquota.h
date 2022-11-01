@@ -183,7 +183,7 @@ struct DiskquotaDBEntry
 	Oid dbid; // the database oid in postgres catalog
 
 #define INVALID_WORKER_ID -1
-	int          workerId; // the id of the worker which is running for the, 0 means no worker for it.
+	int          workerId; // the id of the worker which is running for the (current DB?), 0 means no worker for it.
 	TimestampTz  next_run_time;
 	TimestampTz  last_run_time;
 	int16        cost; // ms
