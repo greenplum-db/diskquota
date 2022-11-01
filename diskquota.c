@@ -1787,9 +1787,10 @@ next_db(DiskquotaDBEntry *curDB)
 		if (nextSlot >= MAX_NUM_MONITORED_DB) nextSlot = 0;
 		DiskquotaDBEntry *dbEntry = &DiskquotaLauncherShmem->dbArray[nextSlot];
 		nextSlot++;
-		if (!dbEntry->in_use) continue;
-		if (dbEntry->workerId != INVALID_WORKER_ID) continue;
-		if (dbEntry->dbid == InvalidOid) continue;
+		if (!dbEntry->in_use ||
+		    dbEntry->workerId != INVALID_WORKER_ID ||
+		    dbEntry->dbid == InvalidOid)
+			continue;
 		result = dbEntry;
 		break;
 	}
