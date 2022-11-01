@@ -762,7 +762,7 @@ disk_quota_launcher_main(Datum main_arg)
 		}
 
 		/*
-		 * Try to start a worker to run the db if has exceeded the next_run_time
+		 * Try to start a worker to run the db if has exceeded the next_run_time.
 		 * if start_worker fails, advance_one_db will be set to false, so in the
 		 * next loop will run the db again.
 		 */
