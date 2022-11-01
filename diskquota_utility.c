@@ -1656,9 +1656,9 @@ check_role(Oid roleoid, char *rolname, int64 quota_limit_mb)
 		                errmsg("Can not set disk quota for system owner: %s", rolname)));
 }
 
-PG_FUNCTION_INFO_V1(status);
+PG_FUNCTION_INFO_V1(db_status);
 Datum
-status(PG_FUNCTION_ARGS)
+db_status(PG_FUNCTION_ARGS)
 {
 	FuncCallContext *funcctx;
 	struct StatusCtx

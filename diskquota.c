@@ -86,7 +86,7 @@ static int num_db = 0;
 // in shared memory, only for launcher process
 DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
 
-#define MIN_SLEEPTIME 100.0 /* milliseconds */
+#define MIN_SLEEPTIME 100 /* milliseconds */
 
 /*
  * bgworker handles, in launcher local memory,
@@ -1349,7 +1349,7 @@ start_worker(DiskquotaDBEntry *dbEntry)
 	}
 
 	Assert(status == BGWH_STARTED);
-	dbEntry->status = RUNNING;
+	dbEntry->status = SLOT_RUNNING;
 	return true;
 Failed:
 
@@ -1622,7 +1622,7 @@ FreeWorker(DiskQuotaWorkerEntry *worker)
 			if (in_use && worker->dbEntry->workerId == worker->id)
 			{
 				worker->dbEntry->workerId = INVALID_WORKER_ID;
-				worker->dbEntry->status   = SLEEPING;
+				worker->dbEntry->status   = SLOT_SLEEPING;
 				worker->dbEntry->next_run_time =
 				        TimestampTzPlusMilliseconds(GetCurrentTimestamp(), diskquota_naptime * 1000L);
 			}
@@ -1688,7 +1688,7 @@ init_launcher_shmem()
 			memset(&DiskquotaLauncherShmem->dbArray[i], 0, sizeof(DiskquotaDBEntry));
 			DiskquotaLauncherShmem->dbArray[i].id       = i;
 			DiskquotaLauncherShmem->dbArray[i].workerId = INVALID_WORKER_ID;
-			DiskquotaLauncherShmem->dbArray[i].status   = UNUSED;
+			DiskquotaLauncherShmem->dbArray[i].status   = SLOT_UNUSED;
 		}
 	}
 }
@@ -1716,7 +1716,7 @@ add_db_entry(Oid dbid)
 			dbEntry->dbid          = dbid;
 			dbEntry->in_use        = true;
 			dbEntry->next_run_time = GetCurrentTimestamp();
-			dbEntry->status        = SLEEPING;
+			dbEntry->status        = SLOT_SLEEPING;
 			result                 = dbEntry;
 		}
 		else if (dbEntry->in_use && dbEntry->dbid == dbid)
@@ -1787,10 +1787,7 @@ next_db(DiskquotaDBEntry *curDB)
 		if (nextSlot >= MAX_NUM_MONITORED_DB) nextSlot = 0;
 		DiskquotaDBEntry *dbEntry = &DiskquotaLauncherShmem->dbArray[nextSlot];
 		nextSlot++;
-		if (!dbEntry->in_use ||
-		    dbEntry->workerId != INVALID_WORKER_ID ||
-		    dbEntry->dbid == InvalidOid)
-			continue;
+		if (!dbEntry->in_use || dbEntry->workerId != INVALID_WORKER_ID || dbEntry->dbid == InvalidOid) continue;
 		result = dbEntry;
 		break;
 	}
@@ -1854,7 +1851,7 @@ vacuum_db_entry(DiskquotaDBEntry *db)
 	db->dbid     = InvalidOid;
 	db->inited   = false;
 	db->workerId = INVALID_WORKER_ID;
-	db->status   = UNUSED;
+	db->status   = SLOT_UNUSED;
 	db->in_use   = false;
 }
 
