@@ -158,9 +158,9 @@ struct DiskQuotaWorkerEntry
 
 typedef enum
 {
-	UNUSED = 0,
-	SLEEPING,
-	RUNNING
+	SLOT_UNUSED = 0,
+	SLOT_SLEEPING,
+	SLOT_RUNNING
 } DBSlotStatus;
 typedef struct
 {
