@@ -663,21 +663,17 @@ disk_quota_launcher_main(Datum main_arg)
 		}
 		else
 		{
-			long        secs;
-			int         microsecs;
 			TimestampTz curTime = GetCurrentTimestamp();
-			TimestampDifference(curTime, curDB->next_run_time, &secs, &microsecs);
-			nap.tv_sec  = secs;
-			nap.tv_usec = microsecs;
+			TimestampDifference(curTime, curDB->next_run_time, &nap.tv_sec, &nap.tv_usec);
 
 			/* if the sleep time is too short, just skip the sleeping */
-			if (secs == 0 && microsecs < MIN_SLEEPTIME * 1000L)
+			if (nap.tv_sec == 0 && nap.tv_usec < MIN_SLEEPTIME * 1000L)
 			{
 				nap.tv_usec = 0;
 			}
 
 			/* if the sleep time is too long, advance the next_run_time */
-			if (secs > diskquota_naptime)
+			if (nap.tv_sec > diskquota_naptime)
 			{
 				nap.tv_sec           = diskquota_naptime;
 				nap.tv_usec          = 0;
@@ -701,9 +697,6 @@ disk_quota_launcher_main(Datum main_arg)
 			rc = WaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
 			               (nap.tv_sec * 1000L) + (nap.tv_usec / 1000L));
 			ResetLatch(&MyProc->procLatch);
-
-			// wait at least one time slice, avoid 100% CPU usage
-			if (!diskquota_naptime) usleep(1);
 
 			/* Emergency bailout if postmaster has died */
 			if (rc & WL_POSTMASTER_DEATH)
