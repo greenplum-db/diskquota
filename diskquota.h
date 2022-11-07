@@ -174,7 +174,8 @@ typedef struct
 	DiskquotaDBEntry     dbentry[MAX_NUM_MONITORED_DB]; // the hidden memory for dbentry
 	*/
 } DiskquotaLauncherShmemStruct;
-extern DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
+
+DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
 
 /* In shmem, only used on master */
 struct DiskquotaDBEntry
