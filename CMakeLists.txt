@@ -79,6 +79,7 @@ ExternalProject_Add(
     -DENABLE_CJSON_TEST=OFF
     -DBUILD_SHARED_LIBS=OFF
     -DCMAKE_INSTALL_PREFIX=${deps_INSTALL_DIR}
+    -DCMAKE_INSTALL_LIBDIR=lib
 )
 
 list(
@@ -104,6 +105,8 @@ list(
   diskquota--2.1--2.0.sql)
 
 add_library(diskquota MODULE ${diskquota_SRC})
+
+add_dependencies(diskquota cjson)
 
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
   set(CMAKE_INSTALL_PREFIX
