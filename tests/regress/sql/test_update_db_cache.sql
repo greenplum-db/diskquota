@@ -26,12 +26,7 @@ DISTRIBUTED BY (i);
 
 CREATE EXTENSION diskquota;
 
--- Sleep until the worker adds the current db to cache so that it can be found 
--- when DROP EXTENSION.
--- FIXME: We cannot use wait_for_worker_new_epoch() here because 
--- diskquota.state is not clean. Change sleep() to wait() after removing
--- diskquota.state
-SELECT pg_sleep(5);
+SELECT diskquota.wait('SELECT diskquota.check_cur_db_status(''UNREADY'');');
 
 -- Should find nothing since t_no_extension is not recorded.
 SELECT diskquota.diskquota_fetch_table_stat(0, ARRAY[]::oid[])

@@ -1,3 +1,4 @@
+
 /* -------------------------------------------------------------------------
  *
  * diskquota.h
@@ -156,12 +157,6 @@ struct DiskQuotaWorkerEntry
 	DiskquotaDBEntry *dbEntry; // pointer to shared memory. DiskquotaLauncherShmem->dbArray
 };
 
-typedef enum
-{
-	SLOT_UNUSED = 0,
-	SLOT_SLEEPING,
-	SLOT_RUNNING
-} DBSlotStatus;
 typedef struct
 {
 	dlist_head        freeWorkers;    // a list of DiskQuotaWorkerEntry
@@ -175,7 +170,6 @@ typedef struct
 	*/
 } DiskquotaLauncherShmemStruct;
 
-DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
 
 /* In shmem, only used on master */
 struct DiskquotaDBEntry
@@ -188,7 +182,6 @@ struct DiskquotaDBEntry
 	TimestampTz  next_run_time;
 	TimestampTz  last_run_time;
 	int16        cost; // ms
-	DBSlotStatus status;
 
 	bool inited; // this entry is inited, will set to true after the worker finish the frist run.
 	bool in_use; // this slot is in using. AKA dbid != 0
@@ -199,12 +192,17 @@ typedef struct MonitorDBEntryStruct *MonitorDBEntry;
 struct MonitorDBEntryStruct
 {
 	Oid dbid; // the key
-
+#define DB_INIT 0x00
+#define DB_ERROR 0x01
+#define DB_UNREADY  0x02
+#define DB_PAUSED 0x03
+#define DB_RUNNING  0x04
+#define UNKNOWN 0x05
+	pg_atomic_uint32 status;
 	bool             paused;
 	bool             is_readiness_logged; /* true if we have logged the error message for not ready */
 	pg_atomic_uint32 epoch;               /* this counter will be increased after each worker loop */
 };
-
 extern HTAB *disk_quota_worker_map;
 
 /* drop extension hook */
@@ -252,4 +250,6 @@ extern void         vacuum_disk_quota_model(uint32 id);
 extern void         update_monitor_db(Oid dbid, FetchTableStatType action);
 extern void         update_monitor_db_mpp(Oid dbid, FetchTableStatType action, const char *schema);
 extern void         diskquota_stop_worker(void);
+extern  void update_monitordb_status(Oid dbid, uint32 status);
+extern char* get_db_name(Oid dbid);
 #endif
