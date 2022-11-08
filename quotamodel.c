@@ -42,6 +42,8 @@
 #include "cdb/cdbdispatchresult.h"
 #include "cdb/cdbutil.h"
 
+#include "quota_config.h"
+
 /* cluster level max size of rejectmap */
 #define MAX_DISK_QUOTA_REJECT_ENTRIES (1024 * 1024)
 /* init size of table_size_map */

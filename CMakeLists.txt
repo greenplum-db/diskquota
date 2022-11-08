@@ -92,8 +92,8 @@ list(
   gp_activetable.c
   quotamodel.c
   relation_cache.c
-  cJSON.c
-  quota_config.c)
+  quota_config.c
+  config_parse.c)
 
 list(
   APPEND

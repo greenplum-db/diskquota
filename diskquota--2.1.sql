@@ -5,7 +5,6 @@ CREATE SCHEMA diskquota;
 
 CREATE TABLE diskquota.quota_config_3(
   databaseOid oid,
-  quotaType int,
   config jsonb
 );
 
@@ -86,6 +85,11 @@ CREATE TYPE diskquota.relation_cache_detail AS (
 );
 
 CREATE FUNCTION diskquota.set_schema_quota_3(oid, text, bigint) RETURNS void STRICT AS '$libdir/diskquota-2.1.so' LANGUAGE C;
+CREATE FUNCTION diskquota.set_role_quota_3(oid, text, bigint) RETURNS void STRICT AS '$libdir/diskquota-2.1.so' LANGUAGE C;
+CREATE FUNCTION diskquota.set_schema_tablespace_quota_3(oid, text, text, bigint) RETURNS void STRICT AS '$libdir/diskquota-2.1.so' LANGUAGE C;
+CREATE FUNCTION diskquota.set_role_tablespace_quota_3(oid, text, text, bigint) RETURNS void STRICT AS '$libdir/diskquota-2.1.so' LANGUAGE C;
+CREATE FUNCTION diskquota.set_per_segment_quota_3(oid, text, float4) RETURNS void STRICT AS '$libdir/diskquota-2.1.so', 'set_tablespace_quota_3' LANGUAGE C;
+
 CREATE FUNCTION diskquota.set_schema_quota(text, text) RETURNS void STRICT AS '$libdir/diskquota-2.1.so' LANGUAGE C;
 CREATE FUNCTION diskquota.set_role_quota(text, text) RETURNS void STRICT AS '$libdir/diskquota-2.1.so' LANGUAGE C;
 CREATE FUNCTION diskquota.init_table_size_table() RETURNS void STRICT AS '$libdir/diskquota-2.1.so' LANGUAGE C;
