@@ -8,24 +8,15 @@
 #include "storage/proc.h"
 #include "utils/builtins.h"
 
-
 PG_FUNCTION_INFO_V1(show_worker_epoch);
 PG_FUNCTION_INFO_V1(db_status);
 PG_FUNCTION_INFO_V1(wait_for_worker_new_epoch);
 
-HTAB *monitored_dbid_cache = NULL; // Map<Oid, MonitorDBEntryStruct>
-const char *DBStatusToString[]=
-{
-	"INIT",
-	"ERROR",
-	"UNREADY",
-	"PAUSED",
-	"RUNNING",
-	"UNKNOWN"
-};
+HTAB       *monitored_dbid_cache = NULL; // Map<Oid, MonitorDBEntryStruct>
+const char *DBStatusToString[]   = {"INIT", "ERROR", "UNREADY", "PAUSED", "RUNNING", "UNKNOWN"};
 
-static bool check_for_timeout(TimestampTz start_time);
-
+static bool           check_for_timeout(TimestampTz start_time);
+static MonitorDBEntry dump_monitored_dbid_cache();
 // Returns the worker epoch for the current database.
 // An epoch marks a new iteration of refreshing quota usage by a bgworker.
 // An epoch is a 32-bit unsigned integer and there is NO invalid value.
@@ -42,12 +33,14 @@ db_status(PG_FUNCTION_ARGS)
 	FuncCallContext *funcctx;
 	struct StatusCtx
 	{
-		HASH_SEQ_STATUS seq;
+		MonitorDBEntry entries;
+		long           nitems;
+		int            index;
 	} * status_ctx;
 
-	MemoryContext oldcontext;
 	if (SRF_IS_FIRSTCALL())
 	{
+		MemoryContext oldcontext;
 		TupleDesc     tupdesc;
 
 		/* Create a function context for cross-call persistence. */
@@ -69,28 +62,31 @@ db_status(PG_FUNCTION_ARGS)
 		/* Setup first calling context. */
 		funcctx->user_fctx = (void *)status_ctx;
 		LWLockAcquire(diskquota_locks.monitored_dbid_cache_lock, LW_SHARED);
-		hash_seq_init(&status_ctx->seq, monitored_dbid_cache);
+		status_ctx->nitems  = hash_get_num_entries(monitored_dbid_cache);
+		status_ctx->entries = dump_monitored_dbid_cache();
+		status_ctx->index   = 0;
+		LWLockRelease(diskquota_locks.monitored_dbid_cache_lock);
 		MemoryContextSwitchTo(oldcontext);
 	}
 
 	funcctx    = SRF_PERCALL_SETUP();
 	status_ctx = (struct StatusCtx *)funcctx->user_fctx;
 
-	MonitorDBEntry entry;
-	while ((entry = hash_seq_search(&status_ctx->seq)) != NULL)
+	while (status_ctx->index < status_ctx->nitems)
 	{
+		MonitorDBEntry entry = &status_ctx->entries[status_ctx->index];
+		status_ctx->index++;
 		Datum     result;
 		Datum     values[5];
 		bool      nulls[5];
 		HeapTuple tuple;
 
-
-		values[0] = ObjectIdGetDatum(entry->dbid);
-		values[1] = CStringGetTextDatum(get_database_name(entry->dbid));
-		int status =  Int32GetDatum(pg_atomic_read_u32(&(entry->status)));
-		values[2] = CStringGetTextDatum(DBStatusToString[status]);
-		values[3] = UInt32GetDatum(pg_atomic_read_u32(&(entry->epoch)));
-		values[4] = BoolGetDatum(entry->paused);
+		values[0]  = ObjectIdGetDatum(entry->dbid);
+		values[1]  = CStringGetTextDatum(get_database_name(entry->dbid));
+		int status = Int32GetDatum(pg_atomic_read_u32(&(entry->status)));
+		values[2]  = CStringGetTextDatum(DBStatusToString[status]);
+		values[3]  = UInt32GetDatum(pg_atomic_read_u32(&(entry->epoch)));
+		values[4]  = BoolGetDatum(entry->paused);
 
 		memset(nulls, false, sizeof(nulls));
 		tuple  = heap_form_tuple(funcctx->tuple_desc, values, nulls);
@@ -98,8 +94,6 @@ db_status(PG_FUNCTION_ARGS)
 
 		SRF_RETURN_NEXT(funcctx, result);
 	}
-//TODO: in pg_catch
-	LWLockRelease(diskquota_locks.monitored_dbid_cache_lock);
 	SRF_RETURN_DONE(funcctx);
 }
 
@@ -224,7 +218,6 @@ worker_get_epoch(Oid dbid)
 	return epoch;
 }
 
-
 /*
  * Function to update the db list on each segment
  * Will print a WARNING to log if out of memory
@@ -273,14 +266,14 @@ update_monitor_db(Oid dbid, FetchTableStatType action)
 	LWLockRelease(diskquota_locks.monitored_dbid_cache_lock);
 }
 
-void 
+void
 update_monitordb_status(Oid dbid, uint32 status)
 {
 	MonitorDBEntry entry;
-	bool found;
+	bool           found;
 	LWLockAcquire(diskquota_locks.monitored_dbid_cache_lock, LW_SHARED);
 	{
-		entry  = hash_search(monitored_dbid_cache, &dbid, HASH_FIND, &found);
+		entry = hash_search(monitored_dbid_cache, &dbid, HASH_FIND, &found);
 	}
 	if (found)
 	{
@@ -303,4 +296,25 @@ check_for_timeout(TimestampTz start_time)
 		return true;
 	}
 	return false;
+}
+
+static MonitorDBEntry
+dump_monitored_dbid_cache()
+{
+	HASH_SEQ_STATUS seq;
+	long            nitems = hash_get_num_entries(monitored_dbid_cache);
+	MonitorDBEntry  curEntry;
+	MonitorDBEntry  entries = curEntry = (MonitorDBEntry)palloc(sizeof(struct MonitorDBEntryStruct) * nitems);
+	hash_seq_init(&seq, monitored_dbid_cache);
+	MonitorDBEntry entry;
+
+	while ((entry = hash_seq_search(&seq)) != NULL)
+	{
+		Assert(nitems > 0);
+		memcpy(curEntry, entry, sizeof(struct MonitorDBEntryStruct));
+		curEntry++;
+		nitems--;
+	}
+	Assert(nitems == 0);
+	return entries;
 }

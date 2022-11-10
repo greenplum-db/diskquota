@@ -80,12 +80,10 @@ ExtensionDDLMessage *extension_ddl_message = NULL;
 // a pointer to DiskquotaLauncherShmem->workerEntries in shared memory
 static DiskQuotaWorkerEntry *volatile MyWorkerInfo = NULL;
 
-
 // how many database diskquota are monitoring on
 static int num_db = 0;
 
 static DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
-
 
 #define MIN_SLEEPTIME 100 /* milliseconds */
 
@@ -404,7 +402,7 @@ disk_quota_worker_main(Datum main_arg)
 	/* Waiting for diskquota state become ready */
 	while (!got_sigterm)
 	{
-		count ++;
+		count++;
 		int rc;
 		/* If the database has been inited before, no need to check the ready state again */
 		if (MyWorkerInfo->dbEntry->inited) break;
@@ -421,8 +419,7 @@ disk_quota_worker_main(Datum main_arg)
 		{
 			break;
 		}
-		if (count == 1)
-			update_monitordb_status(MyWorkerInfo->dbEntry->dbid, DB_UNREADY);
+		if (count == 1) update_monitordb_status(MyWorkerInfo->dbEntry->dbid, DB_UNREADY);
 		rc = WaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH, diskquota_naptime * 1000L);
 		ResetLatch(&MyProc->procLatch);
 
@@ -444,8 +441,7 @@ disk_quota_worker_main(Datum main_arg)
 		}
 	}
 
-	if (!MyWorkerInfo->dbEntry->inited)
-		update_monitordb_status(MyWorkerInfo->dbEntry->dbid, DB_RUNNING);
+	if (!MyWorkerInfo->dbEntry->inited) update_monitordb_status(MyWorkerInfo->dbEntry->dbid, DB_RUNNING);
 	bool is_gang_destroyed = false;
 	while (!got_sigterm)
 	{
@@ -1537,7 +1533,7 @@ init_launcher_shmem()
 			memset(&DiskquotaLauncherShmem->dbArray[i], 0, sizeof(DiskquotaDBEntry));
 			DiskquotaLauncherShmem->dbArray[i].id       = i;
 			DiskquotaLauncherShmem->dbArray[i].workerId = INVALID_WORKER_ID;
-			//DiskquotaLauncherShmem->dbArray[i].status   = SLOT_UNUSED;
+			// DiskquotaLauncherShmem->dbArray[i].status   = SLOT_UNUSED;
 		}
 	}
 }
@@ -1565,8 +1561,8 @@ add_db_entry(Oid dbid)
 			dbEntry->dbid          = dbid;
 			dbEntry->in_use        = true;
 			dbEntry->next_run_time = GetCurrentTimestamp();
-			//dbEntry->status        = SLOT_SLEEPING;
-			result                 = dbEntry;
+			// dbEntry->status        = SLOT_SLEEPING;
+			result = dbEntry;
 		}
 		else if (dbEntry->in_use && dbEntry->dbid == dbid)
 		{
@@ -1663,7 +1659,7 @@ out:
 	return dq_worker;
 }
 
-char*
+char *
 get_db_name(Oid dbid)
 {
 	char	     *dbname = NULL;
@@ -1700,8 +1696,8 @@ vacuum_db_entry(DiskquotaDBEntry *db)
 	db->dbid     = InvalidOid;
 	db->inited   = false;
 	db->workerId = INVALID_WORKER_ID;
-	//db->status   = SLOT_UNUSED;
-	db->in_use   = false;
+	// db->status   = SLOT_UNUSED;
+	db->in_use = false;
 }
 
 static void

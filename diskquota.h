@@ -170,7 +170,6 @@ typedef struct
 	*/
 } DiskquotaLauncherShmemStruct;
 
-
 /* In shmem, only used on master */
 struct DiskquotaDBEntry
 {
@@ -178,10 +177,10 @@ struct DiskquotaDBEntry
 	Oid dbid; // the database oid in postgres catalog
 
 #define INVALID_WORKER_ID -1
-	int          workerId; // the id of the worker which is running for the (current DB?), 0 means no worker for it.
-	TimestampTz  next_run_time;
-	TimestampTz  last_run_time;
-	int16        cost; // ms
+	int         workerId; // the id of the worker which is running for the (current DB?), 0 means no worker for it.
+	TimestampTz next_run_time;
+	TimestampTz last_run_time;
+	int16       cost; // ms
 
 	bool inited; // this entry is inited, will set to true after the worker finish the frist run.
 	bool in_use; // this slot is in using. AKA dbid != 0
@@ -194,9 +193,9 @@ struct MonitorDBEntryStruct
 	Oid dbid; // the key
 #define DB_INIT 0x00
 #define DB_ERROR 0x01
-#define DB_UNREADY  0x02
+#define DB_UNREADY 0x02
 #define DB_PAUSED 0x03
-#define DB_RUNNING  0x04
+#define DB_RUNNING 0x04
 #define UNKNOWN 0x05
 	pg_atomic_uint32 status;
 	bool             paused;
@@ -250,6 +249,6 @@ extern void         vacuum_disk_quota_model(uint32 id);
 extern void         update_monitor_db(Oid dbid, FetchTableStatType action);
 extern void         update_monitor_db_mpp(Oid dbid, FetchTableStatType action, const char *schema);
 extern void         diskquota_stop_worker(void);
-extern  void update_monitordb_status(Oid dbid, uint32 status);
-extern char* get_db_name(Oid dbid);
+extern void         update_monitordb_status(Oid dbid, uint32 status);
+extern char        *get_db_name(Oid dbid);
 #endif
