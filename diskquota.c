@@ -123,6 +123,7 @@ static DiskquotaDBEntry       *next_db(DiskquotaDBEntry *curDB);
 static DiskQuotaWorkerEntry   *next_worker(void);
 static DiskquotaDBEntry       *add_db_entry(Oid dbid);
 static void                    release_db_entry(Oid dbid);
+static char * get_db_name(Oid dbid);
 static void                    reset_worker(DiskQuotaWorkerEntry *dq_worker);
 static void                    vacuum_db_entry(DiskquotaDBEntry *db);
 static void                    init_bgworker_handles(void);
@@ -1533,7 +1534,6 @@ init_launcher_shmem()
 			memset(&DiskquotaLauncherShmem->dbArray[i], 0, sizeof(DiskquotaDBEntry));
 			DiskquotaLauncherShmem->dbArray[i].id       = i;
 			DiskquotaLauncherShmem->dbArray[i].workerId = INVALID_WORKER_ID;
-			// DiskquotaLauncherShmem->dbArray[i].status   = SLOT_UNUSED;
 		}
 	}
 }
@@ -1561,7 +1561,6 @@ add_db_entry(Oid dbid)
 			dbEntry->dbid          = dbid;
 			dbEntry->in_use        = true;
 			dbEntry->next_run_time = GetCurrentTimestamp();
-			// dbEntry->status        = SLOT_SLEEPING;
 			result = dbEntry;
 		}
 		else if (dbEntry->in_use && dbEntry->dbid == dbid)
@@ -1659,7 +1658,7 @@ out:
 	return dq_worker;
 }
 
-char *
+static char *
 get_db_name(Oid dbid)
 {
 	char	     *dbname = NULL;
@@ -1696,7 +1695,6 @@ vacuum_db_entry(DiskquotaDBEntry *db)
 	db->dbid     = InvalidOid;
 	db->inited   = false;
 	db->workerId = INVALID_WORKER_ID;
-	// db->status   = SLOT_UNUSED;
 	db->in_use = false;
 }
 

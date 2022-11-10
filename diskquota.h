@@ -186,17 +186,20 @@ struct DiskquotaDBEntry
 	bool in_use; // this slot is in using. AKA dbid != 0
 };
 
+typedef enum
+{
+	DB_INIT = 0,
+	DB_ERROR ,
+	DB_UNREADY ,
+	DB_PAUSED ,
+	DB_RUNNING ,
+	UNKNOWN 
+} MonitorDBStatus;
 /* used in monitored_dbid_cache, in shmem, both on master and segments */
 typedef struct MonitorDBEntryStruct *MonitorDBEntry;
 struct MonitorDBEntryStruct
 {
 	Oid dbid; // the key
-#define DB_INIT 0x00
-#define DB_ERROR 0x01
-#define DB_UNREADY 0x02
-#define DB_PAUSED 0x03
-#define DB_RUNNING 0x04
-#define UNKNOWN 0x05
 	pg_atomic_uint32 status;
 	bool             paused;
 	bool             is_readiness_logged; /* true if we have logged the error message for not ready */
@@ -250,5 +253,4 @@ extern void         update_monitor_db(Oid dbid, FetchTableStatType action);
 extern void         update_monitor_db_mpp(Oid dbid, FetchTableStatType action, const char *schema);
 extern void         diskquota_stop_worker(void);
 extern void         update_monitordb_status(Oid dbid, uint32 status);
-extern char        *get_db_name(Oid dbid);
 #endif

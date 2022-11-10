@@ -278,7 +278,6 @@ update_monitordb_status(Oid dbid, uint32 status)
 	if (found)
 	{
 		pg_atomic_write_u32(&(entry->status), status);
-		elog(LOG, "update db status %u, %u", dbid, status);
 	}
 	LWLockRelease(diskquota_locks.monitored_dbid_cache_lock);
 }
