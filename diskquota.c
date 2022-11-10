@@ -123,7 +123,7 @@ static DiskquotaDBEntry       *next_db(DiskquotaDBEntry *curDB);
 static DiskQuotaWorkerEntry   *next_worker(void);
 static DiskquotaDBEntry       *add_db_entry(Oid dbid);
 static void                    release_db_entry(Oid dbid);
-static char * get_db_name(Oid dbid);
+static char                   *get_db_name(Oid dbid);
 static void                    reset_worker(DiskQuotaWorkerEntry *dq_worker);
 static void                    vacuum_db_entry(DiskquotaDBEntry *db);
 static void                    init_bgworker_handles(void);
@@ -1561,7 +1561,7 @@ add_db_entry(Oid dbid)
 			dbEntry->dbid          = dbid;
 			dbEntry->in_use        = true;
 			dbEntry->next_run_time = GetCurrentTimestamp();
-			result = dbEntry;
+			result                 = dbEntry;
 		}
 		else if (dbEntry->in_use && dbEntry->dbid == dbid)
 		{
@@ -1695,7 +1695,7 @@ vacuum_db_entry(DiskquotaDBEntry *db)
 	db->dbid     = InvalidOid;
 	db->inited   = false;
 	db->workerId = INVALID_WORKER_ID;
-	db->in_use = false;
+	db->in_use   = false;
 }
 
 static void

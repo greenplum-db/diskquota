@@ -1,5 +1,5 @@
 # diskquota test extension
 comment = 'extension to test diskquota'
-default_version = '2.1'
+default_version = ''
 module_pathname = 'do-not-use-this'
 relocatable = true

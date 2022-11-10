@@ -189,17 +189,17 @@ struct DiskquotaDBEntry
 typedef enum
 {
 	DB_INIT = 0,
-	DB_ERROR ,
-	DB_UNREADY ,
-	DB_PAUSED ,
-	DB_RUNNING ,
-	UNKNOWN 
+	DB_ERROR,
+	DB_UNREADY,
+	DB_PAUSED,
+	DB_RUNNING,
+	UNKNOWN
 } MonitorDBStatus;
 /* used in monitored_dbid_cache, in shmem, both on master and segments */
 typedef struct MonitorDBEntryStruct *MonitorDBEntry;
 struct MonitorDBEntryStruct
 {
-	Oid dbid; // the key
+	Oid              dbid; // the key
 	pg_atomic_uint32 status;
 	bool             paused;
 	bool             is_readiness_logged; /* true if we have logged the error message for not ready */
