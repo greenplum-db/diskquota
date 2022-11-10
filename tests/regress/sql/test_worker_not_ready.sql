@@ -11,7 +11,7 @@ SELECT diskquota.pause();
 
 -- diskquota.wait_for_worker_new_epoch() cannot be used here because 
 -- diskquota.state is not clean.
-SELECT diskquota.wait('SELECT diskquota.check_cur_db_status(''UNREADY'');');
+SELECT diskquota_test.wait('SELECT diskquota_test.check_cur_db_status(''UNREADY'');');
 
 DROP EXTENSION diskquota;
 

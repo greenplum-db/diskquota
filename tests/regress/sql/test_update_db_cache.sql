@@ -26,7 +26,7 @@ DISTRIBUTED BY (i);
 
 CREATE EXTENSION diskquota;
 
-SELECT diskquota.wait('SELECT diskquota.check_cur_db_status(''UNREADY'');');
+SELECT diskquota_test.wait('SELECT diskquota_test.check_cur_db_status(''UNREADY'');');
 
 -- Should find nothing since t_no_extension is not recorded.
 SELECT diskquota.diskquota_fetch_table_stat(0, ARRAY[]::oid[])
