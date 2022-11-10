@@ -4,6 +4,7 @@ CREATE TABLE t (i int) DISTRIBUTED BY (i);
 CREATE EXTENSION diskquota;
 WARNING:  [diskquota] diskquota is not ready because current database is not empty
 HINT:  please run 'SELECT diskquota.init_table_size_table();' to initialize diskquota
+CREATE EXTENSION diskquota_test;
 SELECT diskquota.set_role_quota(CURRENT_ROLE, '1 MB');
 ERROR:  Can not set disk quota for system owner: gpadmin
 SELECT diskquota.pause();

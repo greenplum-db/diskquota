@@ -4,6 +4,7 @@ CREATE DATABASE test_db_cache;
 
 \c test_db_cache
 CREATE EXTENSION diskquota;
+CREATE EXTENSION diskquota_test;
 
 -- Wait until the db cache gets updated 
 SELECT diskquota.wait_for_worker_new_epoch();

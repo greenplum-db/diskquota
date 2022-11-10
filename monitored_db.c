@@ -3,7 +3,6 @@
 
 #include "funcapi.h"
 #include "port/atomics.h"
-#include "utils/syscache.h"
 #include "commands/dbcommands.h"
 #include "storage/proc.h"
 #include "utils/builtins.h"
@@ -64,7 +63,7 @@ db_status(PG_FUNCTION_ARGS)
 		LWLockAcquire(diskquota_locks.monitored_dbid_cache_lock, LW_SHARED);
 		status_ctx->nitems  = hash_get_num_entries(monitored_dbid_cache);
 		status_ctx->entries = dump_monitored_dbid_cache();
-		status_ctx->index   = 0;
+		status_ctx->index = 0;
 		LWLockRelease(diskquota_locks.monitored_dbid_cache_lock);
 		MemoryContextSwitchTo(oldcontext);
 	}
@@ -94,6 +93,7 @@ db_status(PG_FUNCTION_ARGS)
 
 		SRF_RETURN_NEXT(funcctx, result);
 	}
+	pfree(status_ctx->entries);
 	SRF_RETURN_DONE(funcctx);
 }
 
@@ -213,7 +213,7 @@ worker_get_epoch(Oid dbid)
 	if (!found)
 	{
 		ereport(WARNING, (errcode(ERRCODE_INTERNAL_ERROR),
-		                  errmsg("[diskquota] worker not found for database \"%s\"", get_database_name(dbid))));
+		                  errmsg("[diskquota] database \"%s\" not found", get_database_name(dbid))));
 	}
 	return epoch;
 }
@@ -279,6 +279,9 @@ update_monitordb_status(Oid dbid, uint32 status)
 	{
 		pg_atomic_write_u32(&(entry->status), status);
 	}
+	else
+		ereport(WARNING, (errcode(ERRCODE_INTERNAL_ERROR),
+					errmsg("[diskquota] database %u not found", dbid)));
 	LWLockRelease(diskquota_locks.monitored_dbid_cache_lock);
 }
 
@@ -304,9 +307,9 @@ dump_monitored_dbid_cache()
 	long            nitems = hash_get_num_entries(monitored_dbid_cache);
 	MonitorDBEntry  curEntry;
 	MonitorDBEntry  entries = curEntry = (MonitorDBEntry)palloc(sizeof(struct MonitorDBEntryStruct) * nitems);
+
 	hash_seq_init(&seq, monitored_dbid_cache);
 	MonitorDBEntry entry;
-
 	while ((entry = hash_seq_search(&seq)) != NULL)
 	{
 		Assert(nitems > 0);

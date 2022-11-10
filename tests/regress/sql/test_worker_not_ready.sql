@@ -4,6 +4,7 @@ CREATE DATABASE db_not_ready;
 CREATE TABLE t (i int) DISTRIBUTED BY (i);
 
 CREATE EXTENSION diskquota;
+CREATE EXTENSION diskquota_test;
 
 SELECT diskquota.set_role_quota(CURRENT_ROLE, '1 MB');
 
