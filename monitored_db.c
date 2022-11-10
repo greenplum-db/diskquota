@@ -64,7 +64,6 @@ db_status(PG_FUNCTION_ARGS)
 		TupleDescInitEntry(tupdesc, (AttrNumber)5, "PAUSED", BOOLOID, -1 /*typmod*/, 0 /*attdim*/);
 		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
 
-		/* Create a local hash table and fill it with entries from shared memory. */
 		status_ctx = (struct StatusCtx *)palloc(sizeof(struct StatusCtx));
 
 		/* Setup first calling context. */

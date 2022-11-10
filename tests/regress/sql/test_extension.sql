@@ -21,7 +21,6 @@ show max_worker_processes;
 show diskquota.max_workers;
 
 SELECT diskquota.wait_for_worker_new_epoch();
-\!ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
 
 \c dbx0
 CREATE EXTENSION diskquota;

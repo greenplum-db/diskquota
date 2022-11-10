@@ -65,8 +65,6 @@ SELECT diskquota.wait_for_worker_new_epoch();
  t
 (1 row)
 
-\!ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
-       2
 \c dbx0
 CREATE EXTENSION diskquota;
 SELECT diskquota.wait_for_worker_new_epoch();
