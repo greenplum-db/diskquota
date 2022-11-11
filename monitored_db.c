@@ -11,8 +11,12 @@ PG_FUNCTION_INFO_V1(show_worker_epoch);
 PG_FUNCTION_INFO_V1(db_status);
 PG_FUNCTION_INFO_V1(wait_for_worker_new_epoch);
 
-HTAB       *monitored_dbid_cache = NULL; // Map<Oid, MonitorDBEntryStruct>
-const char *DBStatusToString[]   = {"INIT", "ERROR", "UNREADY", "PAUSED", "RUNNING", "UNKNOWN"};
+HTAB       *monitored_dbid_cache      = NULL; // Map<Oid, MonitorDBEntryStruct>
+const char *MonitorDBStatusToString[] = {
+#define DB_STATUS(id, str) str,
+#include "diskquota_enum.h"
+#undef DB_STATUS
+};
 
 static bool           check_for_timeout(TimestampTz start_time);
 static MonitorDBEntry dump_monitored_dbid_cache(long *nitems);
@@ -91,7 +95,8 @@ db_status(PG_FUNCTION_ARGS)
 		values[0]  = ObjectIdGetDatum(entry->dbid);
 		values[1]  = CStringGetTextDatum(get_database_name(entry->dbid));
 		int status = Int32GetDatum(pg_atomic_read_u32(&(entry->status)));
-		values[2]  = CStringGetTextDatum(DBStatusToString[status]);
+		status     = status >= DB_STATUS_MAX ? UNKNOWN : status;
+		values[2]  = CStringGetTextDatum(MonitorDBStatusToString[status]);
 		values[3]  = UInt32GetDatum(pg_atomic_read_u32(&(entry->epoch)));
 		values[4]  = BoolGetDatum(entry->paused);
 
@@ -285,6 +290,7 @@ update_monitordb_status(Oid dbid, uint32 status)
 	}
 	if (found)
 	{
+		Assert(status < DB_STATUS_MAX);
 		pg_atomic_write_u32(&(entry->status), status);
 	}
 	else

@@ -185,16 +185,15 @@ struct DiskquotaDBEntry
 	bool in_use; // this slot is in using. AKA dbid != 0
 };
 
-typedef enum
+typedef enum MonitorDBStatus
 {
-	DB_INIT = 0,
-	DB_ERROR,
-	DB_UNREADY,
-	DB_PAUSED,
-	DB_RUNNING,
-	UNKNOWN
+#define DB_STATUS(id, str) id,
+#include "diskquota_enum.h"
+#undef DB_STATUS
+	DB_STATUS_MAX
 } MonitorDBStatus;
 /* used in monitored_dbid_cache, in shmem, both on master and segments */
+
 typedef struct MonitorDBEntryStruct *MonitorDBEntry;
 struct MonitorDBEntryStruct
 {
