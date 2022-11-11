@@ -198,8 +198,8 @@ typedef enum
 typedef struct MonitorDBEntryStruct *MonitorDBEntry;
 struct MonitorDBEntryStruct
 {
-	Oid              dbid; // the key
-	pg_atomic_uint32 status;
+	Oid              dbid;   // the key
+	pg_atomic_uint32 status; // enum MonitorDBStatus
 	bool             paused;
 	bool             is_readiness_logged; /* true if we have logged the error message for not ready */
 	pg_atomic_uint32 epoch;               /* this counter will be increased after each worker loop */

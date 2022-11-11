@@ -15,7 +15,7 @@ HTAB       *monitored_dbid_cache = NULL; // Map<Oid, MonitorDBEntryStruct>
 const char *DBStatusToString[]   = {"INIT", "ERROR", "UNREADY", "PAUSED", "RUNNING", "UNKNOWN"};
 
 static bool           check_for_timeout(TimestampTz start_time);
-static MonitorDBEntry dump_monitored_dbid_cache();
+static MonitorDBEntry dump_monitored_dbid_cache(long *nitems);
 // Returns the worker epoch for the current database.
 // An epoch marks a new iteration of refreshing quota usage by a bgworker.
 // An epoch is a 32-bit unsigned integer and there is NO invalid value.
@@ -61,8 +61,16 @@ db_status(PG_FUNCTION_ARGS)
 		/* Setup first calling context. */
 		funcctx->user_fctx = (void *)status_ctx;
 		LWLockAcquire(diskquota_locks.monitored_dbid_cache_lock, LW_SHARED);
-		status_ctx->nitems  = hash_get_num_entries(monitored_dbid_cache);
-		status_ctx->entries = dump_monitored_dbid_cache();
+		status_ctx->nitems = hash_get_num_entries(monitored_dbid_cache);
+		/*
+		 * As we need acquire lock monitored_dbid_cache_lock to access
+		 * monitored_dbid_cache hash table, but it's unsafe to acquire lock
+		 * in the function, when the function fails the lock can not be
+		 * released correctly. So dump the hash table into a array in the
+		 * local memory. The hash table is small, it doesn't consume much
+		 * memory.
+		 */
+		status_ctx->entries = dump_monitored_dbid_cache(&status_ctx->nitems);
 		status_ctx->index   = 0;
 		LWLockRelease(diskquota_locks.monitored_dbid_cache_lock);
 		MemoryContextSwitchTo(oldcontext);
@@ -300,22 +308,22 @@ check_for_timeout(TimestampTz start_time)
 }
 
 static MonitorDBEntry
-dump_monitored_dbid_cache()
+dump_monitored_dbid_cache(long *nitems)
 {
 	HASH_SEQ_STATUS seq;
-	long            nitems = hash_get_num_entries(monitored_dbid_cache);
 	MonitorDBEntry  curEntry;
-	MonitorDBEntry  entries = curEntry = (MonitorDBEntry)palloc(sizeof(struct MonitorDBEntryStruct) * nitems);
+	int             count = *nitems = hash_get_num_entries(monitored_dbid_cache);
+	MonitorDBEntry  entries = curEntry = (MonitorDBEntry)palloc(sizeof(struct MonitorDBEntryStruct) * count);
 
 	hash_seq_init(&seq, monitored_dbid_cache);
 	MonitorDBEntry entry;
 	while ((entry = hash_seq_search(&seq)) != NULL)
 	{
-		Assert(nitems > 0);
+		Assert(count > 0);
 		memcpy(curEntry, entry, sizeof(struct MonitorDBEntryStruct));
 		curEntry++;
-		nitems--;
+		count--;
 	}
-	Assert(nitems == 0);
+	Assert(count == 0);
 	return entries;
 }

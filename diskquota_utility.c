@@ -484,6 +484,7 @@ is_database_empty(void)
 	        "FROM "
 	        "  pg_class AS c, "
 	        "  pg_namespace AS n "
+	        /* Fileter relkind c = composite type */
 	        "WHERE c.oid > 16384 and relnamespace = n.oid and nspname != 'diskquota' and relkind != 'c'",
 	        true, 0);
 	if (ret != SPI_OK_SELECT)
