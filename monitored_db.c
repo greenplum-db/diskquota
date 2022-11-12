@@ -95,7 +95,7 @@ db_status(PG_FUNCTION_ARGS)
 		values[0]  = ObjectIdGetDatum(entry->dbid);
 		values[1]  = CStringGetTextDatum(get_database_name(entry->dbid));
 		int status = Int32GetDatum(pg_atomic_read_u32(&(entry->status)));
-		status     = status >= DB_STATUS_MAX ? UNKNOWN : status;
+		status     = status >= DB_STATUS_MAX ? DB_STATUS_UNKNOWN : status;
 		values[2]  = CStringGetTextDatum(MonitorDBStatusToString[status]);
 		values[3]  = UInt32GetDatum(pg_atomic_read_u32(&(entry->epoch)));
 		values[4]  = BoolGetDatum(entry->paused);
