@@ -43,7 +43,20 @@ FROM diskquota.table_size
 WHERE segid = -1 AND tableid::regclass::name NOT LIKE '%.%'
 ORDER BY tableid;
 
+
+-- diskquota.table_size should not change after creating a new type
+CREATE TYPE test_type AS (
+        "dbid" oid,
+        "datname" text
+);
+SELECT diskquota.init_table_size_table();
+SELECT tableid::regclass, size, segid
+FROM diskquota.table_size 
+WHERE segid = -1 AND tableid::regclass::name NOT LIKE '%.%'
+ORDER BY tableid;
+
 DROP TABLE t;
 DROP TABLE toast;
 DROP TABLE ao;
 DROP TABLE aocs;
+DROP TYPE test_type;
