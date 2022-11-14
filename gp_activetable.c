@@ -242,7 +242,9 @@ report_altered_reloid(Oid reloid)
 static void
 report_relation_cache_helper(Oid relid)
 {
-	bool found;
+	bool     found;
+	Relation rel;
+	char     relstorage; /* see RELSTORAGE_xxx constants below */
 
 	/* We do not collect the active table in mirror segments  */
 	if (IsRoleMirror())
@@ -263,7 +265,11 @@ report_relation_cache_helper(Oid relid)
 		return;
 	}
 
-	update_relation_cache(relid);
+	rel        = diskquota_relation_open(relid, NoLock);
+	relstorage = rel->rd_rel->relstorage;
+	relation_close(rel, NoLock);
+	if (relstorage == RELSTORAGE_HEAP || relstorage == RELSTORAGE_AOCOLS || relstorage == RELSTORAGE_AOROWS)
+		update_relation_cache(relid);
 }
 
 /*
