@@ -399,11 +399,11 @@ disk_quota_worker_main(Datum main_arg)
 	 */
 	init_ps_display("bgworker:", "[diskquota]", dbname, "");
 
-	int count = 0;
+	/* suppose the database is ready, if not, then set it to false */
+	bool is_ready = true;
 	/* Waiting for diskquota state become ready */
 	while (!got_sigterm)
 	{
-		count++;
 		int rc;
 		/* If the database has been inited before, no need to check the ready state again */
 		if (MyWorkerInfo->dbEntry->inited) break;
@@ -418,9 +418,14 @@ disk_quota_worker_main(Datum main_arg)
 		 */
 		if (check_diskquota_state_is_ready())
 		{
+			is_ready = true;
 			break;
 		}
-		if (count == 1) update_monitordb_status(MyWorkerInfo->dbEntry->dbid, DB_UNREADY);
+		if (is_ready)
+		{
+			update_monitordb_status(MyWorkerInfo->dbEntry->dbid, DB_UNREADY);
+			is_ready = false;
+		}
 		rc = WaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH, diskquota_naptime * 1000L);
 		ResetLatch(&MyProc->procLatch);
 
