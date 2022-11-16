@@ -418,7 +418,6 @@ disk_quota_worker_main(Datum main_arg)
 		 */
 		if (check_diskquota_state_is_ready())
 		{
-			is_ready = true;
 			break;
 		}
 		if (is_ready)
