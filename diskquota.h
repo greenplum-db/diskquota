@@ -13,11 +13,12 @@
 #ifndef DISK_QUOTA_H
 #define DISK_QUOTA_H
 
-#include "c.h"
 #include "postgres.h"
 #include "port/atomics.h"
 
+#include "catalog/pg_class.h"
 #include "lib/ilist.h"
+#include "lib/stringinfo.h"
 #include "fmgr.h"
 #include "storage/lock.h"
 #include "storage/lwlock.h"
@@ -36,12 +37,33 @@
 #define MAX_NUM_TABLE_SIZE_ENTRIES (diskquota_max_table_segments / SEGMENT_SIZE_ARRAY_LENGTH)
 /* length of segment size array in TableSizeEntry */
 #define SEGMENT_SIZE_ARRAY_LENGTH 100
+typedef enum
+{
+	diskquota_tag_hash = 0,
+	diskquota_oid_hash,
+	diskquota_string_hash,
+} DiskquotaHashFunction;
 
 /* max number of monitored database with diskquota enabled */
 #define MAX_NUM_MONITORED_DB 50
 #define LAUNCHER_SCHEMA "diskquota_utility"
 #define EXTENSION_SCHEMA "diskquota"
 extern int diskquota_worker_timeout;
+
+#if GP_VERSION_NUM < 70000
+#define TableIsHeap(relstorage, relam) ((bool)(relstorage == RELSTORAGE_HEAP))
+#define TableIsAoRows(relstorage, relam) ((bool)(relstorage == RELSTORAGE_AOROWS))
+#define TableIsAoCols(relstorage, relam) ((bool)(relstorage == RELSTORAGE_AOCOLS))
+#define DiskquotaCreateTemplateTupleDesc(natts) CreateTemplateTupleDesc(natts, false /*hasoid*/)
+#define DiskquotaWaitLatch(latch, wakeEvents, timeout) WaitLatch(latch, wakeEvents, timeout)
+#else
+#define TableIsHeap(relstorage, relam) \
+	((bool)(relam != 0 && relam != AO_ROW_TABLE_AM_OID && relam != AO_COLUMN_TABLE_AM_OID))
+#define TableIsAoRows(relstorage, relam) ((bool)(relam == AO_ROW_TABLE_AM_OID))
+#define TableIsAoCols(relstorage, relam) ((bool)(relam == AO_COLUMN_TABLE_AM_OID))
+#define DiskquotaCreateTemplateTupleDesc(natts) CreateTemplateTupleDesc(natts);
+#define DiskquotaWaitLatch(latch, wakeEvents, timeout) WaitLatch(latch, wakeEvents, timeout, WAIT_EVENT_PG_SLEEP)
+#endif /* GP_VERSION_NUM */
 
 typedef enum
 {
@@ -239,7 +261,7 @@ extern int      SEGCOUNT;
 extern int      worker_spi_get_extension_version(int *major, int *minor);
 extern void     truncateStringInfo(StringInfo str, int nchars);
 extern List    *get_rel_oid_list(void);
-extern int64    calculate_relation_size_all_forks(RelFileNodeBackend *rnode, char relstorage);
+extern int64    calculate_relation_size_all_forks(RelFileNodeBackend *rnode, char relstorage, Oid relam);
 extern Relation diskquota_relation_open(Oid relid, LOCKMODE mode);
 extern bool     get_rel_name_namespace(Oid relid, Oid *nsOid, char *relname);
 extern List    *diskquota_get_index_list(Oid relid);
@@ -259,4 +281,8 @@ extern void         update_monitor_db(Oid dbid, FetchTableStatType action);
 extern void         update_monitor_db_mpp(Oid dbid, FetchTableStatType action, const char *schema);
 extern void         diskquota_stop_worker(void);
 extern void         update_monitordb_status(Oid dbid, uint32 status);
+extern HTAB        *diskquota_hash_create(const char *tabname, long nelem, HASHCTL *info, int flags,
+                                          DiskquotaHashFunction hashFunction);
+HTAB *DiskquotaShmemInitHash(const char *name, long init_size, long max_size, HASHCTL *infoP, int hash_flags,
+                             DiskquotaHashFunction hash_function);
 #endif

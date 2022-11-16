@@ -120,7 +120,7 @@ function(RegressTarget_Add name)
     endif()
 
     set(regress_command
-        ${regress_BIN} --psqldir='${PG_BIN_DIR}' ${regress_opts_arg}  ${regress_arg})
+        ${regress_BIN}  ${regress_opts_arg}  ${regress_arg})
     if (arg_RUN_TIMES)
         set(test_command
             ${CMAKE_CURRENT_FUNCTION_LIST_DIR}/regress_loop.sh

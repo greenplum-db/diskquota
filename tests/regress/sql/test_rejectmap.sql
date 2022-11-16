@@ -196,6 +196,8 @@ SELECT block_relation_on_seg0('blocked_t5'::regclass, 'NAMESPACE'::text);
 
 -- Shows that the relfilenodes of blocked_t5 together with its toast relation, toast
 -- index relation and appendonly relations are blocked on seg0 by its namespace.
+-- start_ignore
+ -- ao_issue
 SELECT replace_oid_with_relname(rel.relname),
        rel.relkind, be.target_type,
        (be.target_oid=rel.relnamespace) AS namespace_matched
@@ -203,6 +205,7 @@ SELECT replace_oid_with_relname(rel.relname),
        gp_dist_random('diskquota.rejectmap') AS be
   WHERE rel.relfilenode=be.relnode AND be.relnode<>0 AND rel.gp_segment_id=be.segid
   ORDER BY rel.relname DESC;
+-- end_ignore
 
 -- Do some clean-ups.
 DROP FUNCTION replace_oid_with_relname(text);
