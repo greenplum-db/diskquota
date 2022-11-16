@@ -616,10 +616,10 @@ disk_quota_launcher_main(Datum main_arg)
 		else
 		{
 			TimestampTz curTime = GetCurrentTimestamp();
-			long sec;
-			int  usec;
+			long        sec;
+			int         usec;
 			TimestampDifference(curTime, curDB->next_run_time, &sec, &usec);
-			nap.tv_sec = sec;
+			nap.tv_sec  = sec;
 			nap.tv_usec = usec;
 
 			/* if the sleep time is too short, just skip the sleeping */
@@ -1245,8 +1245,8 @@ start_worker(DiskquotaDBEntry *dbEntry)
 	/* free the BackgroundWorkerHandle used by last database */
 	free_bgworker_handle(dq_worker->id);
 
-	dbEntry->workerId      = dq_worker->id;
-	dq_worker->dbEntry     = dbEntry;
+	dbEntry->workerId  = dq_worker->id;
+	dq_worker->dbEntry = dbEntry;
 
 #if DISKQUOTA_DEBUG
 	dbEntry->last_run_time = GetCurrentTimestamp();
