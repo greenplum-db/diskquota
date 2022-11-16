@@ -508,10 +508,12 @@ disk_quota_worker_main(Datum main_arg)
 	if (got_sigterm)
 		ereport(LOG, (errmsg("[diskquota] stop disk quota worker process to monitor database:%s", dbname)));
 	ereport(DEBUG1, (errmsg("[diskquota] stop disk quota worker process to monitor database:%s", dbname)));
+#if DISKQUOTA_DEBUG
 	long secs;
 	int  usecs;
 	TimestampDifference(MyWorkerInfo->dbEntry->last_run_time, GetCurrentTimestamp(), &secs, &usecs);
 	MyWorkerInfo->dbEntry->cost = secs * 1000L + usecs / 1000L;
+#endif
 	proc_exit(0);
 }
 
@@ -614,7 +616,11 @@ disk_quota_launcher_main(Datum main_arg)
 		else
 		{
 			TimestampTz curTime = GetCurrentTimestamp();
-			TimestampDifference(curTime, curDB->next_run_time, &nap.tv_sec, &nap.tv_usec);
+			long sec;
+			int  usec;
+			TimestampDifference(curTime, curDB->next_run_time, &sec, &usec);
+			nap.tv_sec = sec;
+			nap.tv_usec = usec;
 
 			/* if the sleep time is too short, just skip the sleeping */
 			if (nap.tv_sec == 0 && nap.tv_usec < MIN_SLEEPTIME * 1000L)
@@ -1241,7 +1247,10 @@ start_worker(DiskquotaDBEntry *dbEntry)
 
 	dbEntry->workerId      = dq_worker->id;
 	dq_worker->dbEntry     = dbEntry;
+
+#if DISKQUOTA_DEBUG
 	dbEntry->last_run_time = GetCurrentTimestamp();
+#endif
 
 	/* register a dynamic bgworker and wait for it to start */
 	memset(&worker, 0, sizeof(BackgroundWorker));
