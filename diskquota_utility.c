@@ -485,7 +485,7 @@ is_database_empty(void)
 	        "  pg_class AS c, "
 	        "  pg_namespace AS n "
 	        "WHERE c.oid > 16384 and relnamespace = n.oid and nspname != 'diskquota'"
-	        " and (relfilenode > 0)",
+	        " and relkind not in ('v', 'c', 'f')",
 	        true, 0);
 	if (ret != SPI_OK_SELECT)
 		elog(ERROR, "cannot select pg_class and pg_namespace table, reason: %s.", strerror(errno));

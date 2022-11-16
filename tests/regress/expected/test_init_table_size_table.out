@@ -65,35 +65,7 @@ ORDER BY tableid;
  aocs_idx  |   524288 |    -1
 (8 rows)
 
--- diskquota.table_size should not change after creating a new type
-CREATE TYPE test_type AS (
-        "dbid" oid,
-        "datname" text
-);
-SELECT diskquota.init_table_size_table();
- init_table_size_table 
------------------------
- 
-(1 row)
-
-SELECT tableid::regclass, size, segid
-FROM diskquota.table_size 
-WHERE segid = -1 AND tableid::regclass::name NOT LIKE '%.%'
-ORDER BY tableid;
-  tableid  |   size   | segid 
------------+----------+-------
- t         |  3932160 |    -1
- idx       |  2490368 |    -1
- toast     |   393216 |    -1
- toast_idx |   327680 |    -1
- ao        |  1591464 |    -1
- ao_idx    |  2490368 |    -1
- aocs      | 10813592 |    -1
- aocs_idx  |   524288 |    -1
-(8 rows)
-
 DROP TABLE t;
 DROP TABLE toast;
 DROP TABLE ao;
 DROP TABLE aocs;
-DROP TYPE test_type;

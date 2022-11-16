@@ -265,7 +265,9 @@ report_relation_cache_helper(Oid relid)
 	}
 
 	rel = diskquota_relation_open(relid, NoLock);
-	if (rel->rd_rel->relfilenode > 0) update_relation_cache(relid);
+	if (rel->rd_rel->relkind != RELKIND_FOREIGN_TABLE || rel->rd_rel->relkind != RELKIND_COMPOSITE_TYPE ||
+	    rel->rd_rel->relkind != RELKIND_VIEW)
+		update_relation_cache(relid);
 	relation_close(rel, NoLock);
 }
 
