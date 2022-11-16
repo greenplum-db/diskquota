@@ -242,9 +242,9 @@ report_altered_reloid(Oid reloid)
 static void
 report_relation_cache_helper(Oid relid)
 {
-	bool     found;
-	Relation rel;
-	char     relstorage; /* see RELSTORAGE_xxx constants below */
+	bool              found;
+	Relation          rel;
+	FormData_pg_class relclass;
 
 	/* We do not collect the active table in mirror segments  */
 	if (IsRoleMirror())
@@ -265,11 +265,11 @@ report_relation_cache_helper(Oid relid)
 		return;
 	}
 
-	rel        = diskquota_relation_open(relid, NoLock);
-	relstorage = rel->rd_rel->relstorage;
+	rel      = diskquota_relation_open(relid, NoLock);
+	relclass = rel->rd_rel;
 	relation_close(rel, NoLock);
-	if (relstorage == RELSTORAGE_HEAP || relstorage == RELSTORAGE_AOCOLS || relstorage == RELSTORAGE_AOROWS)
-		update_relation_cache(relid);
+	/* TODO: filter system catalog table */
+	if (relclass->relfilenode > 0) update_relation_cache(relid);
 }
 
 /*
