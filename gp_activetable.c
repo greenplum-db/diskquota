@@ -242,9 +242,8 @@ report_altered_reloid(Oid reloid)
 static void
 report_relation_cache_helper(Oid relid)
 {
-	bool              found;
-	Relation          rel;
-	FormData_pg_class relclass;
+	bool     found;
+	Relation rel;
 
 	/* We do not collect the active table in mirror segments  */
 	if (IsRoleMirror())
@@ -265,11 +264,9 @@ report_relation_cache_helper(Oid relid)
 		return;
 	}
 
-	rel      = diskquota_relation_open(relid, NoLock);
-	relclass = rel->rd_rel;
+	rel = diskquota_relation_open(relid, NoLock);
+	if (rel->rd_rel->relfilenode > 0) update_relation_cache(relid);
 	relation_close(rel, NoLock);
-	/* TODO: filter system catalog table */
-	if (relclass->relfilenode > 0) update_relation_cache(relid);
 }
 
 /*
