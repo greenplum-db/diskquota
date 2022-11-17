@@ -289,7 +289,7 @@ define_guc_variables(void)
 	DefineCustomIntVariable(
 	        "diskquota.max_workers",
 	        "Max number of backgroud workers to run diskquota extension, should be less than max_worker_processes.",
-	        NULL, &diskquota_max_workers, 10, 1, max_worker_processes, PGC_POSTMASTER, 0, NULL, NULL, NULL);
+	        NULL, &diskquota_max_workers, 5, 1, max_worker_processes, PGC_POSTMASTER, 0, NULL, NULL, NULL);
 }
 
 /* ---- Functions for disk quota worker process ---- */
