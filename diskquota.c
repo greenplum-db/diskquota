@@ -595,7 +595,7 @@ disk_quota_launcher_main(Datum main_arg)
 			if (curDB != NULL)
 			{
 				curDBId = curDB->dbid;
-				elog(DEBUG1, "[diskquota] next db to run:%d", curDB->id);
+				elog(DEBUG1, "[diskquota] next db to run:%u", curDB->dbid);
 			}
 			else
 				elog(DEBUG1, "[diskquota] no db to run");
