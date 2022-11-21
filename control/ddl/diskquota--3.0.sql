@@ -3,22 +3,8 @@
 
 CREATE SCHEMA diskquota;
 
--- when (quotatype == NAMESPACE_QUOTA/ROLE_QUOTA) then targetOid = role_oid/schema_oid;
--- when (quotatype == NAMESPACE_TABLESPACE_QUOTA/ROLE_TABLESPACE_QUOTA) then targetOid = diskquota.target.rowId;
 CREATE TABLE diskquota.quota_config(
-	targetOid oid,
-	quotatype int,
-	quotalimitMB int8,
-	segratio float4 DEFAULT 0,
-	PRIMARY KEY(targetOid, quotatype)
-) DISTRIBUTED BY (targetOid, quotatype);
-
-CREATE TABLE diskquota.target (
-	rowId serial,
-	quotatype int, --REFERENCES disquota.quota_config.quotatype,
-	primaryOid oid,
-	tablespaceOid oid, --REFERENCES pg_tablespace.oid,
-	PRIMARY KEY (primaryOid, tablespaceOid, quotatype)
+  config jsonb
 );
 
 CREATE TABLE diskquota.table_size(
@@ -36,8 +22,6 @@ CREATE TABLE diskquota.state(
 -- diskquota.quota_config AND diskquota.target is dump-able, other table can be generate on fly
 SELECT pg_catalog.pg_extension_config_dump('diskquota.quota_config', '');
 SELECT gp_segment_id, pg_catalog.pg_extension_config_dump('diskquota.quota_config', '') FROM gp_dist_random('gp_id');
-SELECT pg_catalog.pg_extension_config_dump('diskquota.target', '');
-SELECT gp_segment_id, pg_catalog.pg_extension_config_dump('diskquota.target', '') FROM gp_dist_random('gp_id');
 
 CREATE TYPE diskquota.diskquota_active_table_type AS (
 	"TABLE_OID" oid,
@@ -82,11 +66,12 @@ CREATE TYPE diskquota.relation_cache_detail AS (
 
 CREATE FUNCTION diskquota.set_schema_quota(text, text) RETURNS void STRICT AS '$libdir/diskquota-3.0.so' LANGUAGE C;
 CREATE FUNCTION diskquota.set_role_quota(text, text) RETURNS void STRICT AS '$libdir/diskquota-3.0.so' LANGUAGE C;
-CREATE FUNCTION diskquota.init_table_size_table() RETURNS void STRICT AS '$libdir/diskquota-3.0.so' LANGUAGE C;
-CREATE FUNCTION diskquota.diskquota_fetch_table_stat(int4, oid[]) RETURNS setof diskquota.diskquota_active_table_type AS '$libdir/diskquota-3.0.so', 'diskquota_fetch_table_stat' LANGUAGE C VOLATILE;
 CREATE FUNCTION diskquota.set_schema_tablespace_quota(text, text, text) RETURNS void STRICT AS '$libdir/diskquota-3.0.so' LANGUAGE C;
 CREATE FUNCTION diskquota.set_role_tablespace_quota(text, text, text) RETURNS void STRICT AS '$libdir/diskquota-3.0.so' LANGUAGE C;
-CREATE FUNCTION diskquota.set_per_segment_quota(text, float4) RETURNS void STRICT AS '$libdir/diskquota-3.0.so' LANGUAGE C;
+CREATE FUNCTION diskquota.set_per_segment_quota(text, float4) RETURNS void STRICT AS '$libdir/diskquota-3.0.so', 'set_tablespace_quota' LANGUAGE C;
+
+CREATE FUNCTION diskquota.init_table_size_table() RETURNS void STRICT AS '$libdir/diskquota-3.0.so' LANGUAGE C;
+CREATE FUNCTION diskquota.diskquota_fetch_table_stat(int4, oid[]) RETURNS setof diskquota.diskquota_active_table_type AS '$libdir/diskquota-3.0.so', 'diskquota_fetch_table_stat' LANGUAGE C VOLATILE;
 CREATE FUNCTION diskquota.refresh_rejectmap(diskquota.rejectmap_entry[], oid[]) RETURNS void STRICT AS '$libdir/diskquota-3.0.so' LANGUAGE C;
 CREATE FUNCTION diskquota.show_rejectmap() RETURNS setof diskquota.rejectmap_entry_detail AS '$libdir/diskquota-3.0.so', 'show_rejectmap' LANGUAGE C;
 CREATE FUNCTION diskquota.pause() RETURNS void STRICT AS '$libdir/diskquota-3.0.so', 'diskquota_pause' LANGUAGE C;
@@ -132,60 +117,6 @@ SELECT DISTINCT(oid), relowner, relnamespace, reltablespace from (
   SELECT oid, relowner, relnamespace, reltablespace from pg_class
 ) as union_relation;
 
-CREATE VIEW diskquota.show_fast_schema_quota_view AS
-WITH
-  quota_usage AS (
-    SELECT
-      relnamespace,
-      SUM(size) AS total_size
-    FROM
-      diskquota.table_size,
-      diskquota.show_all_relation_view
-    WHERE
-      tableid = diskquota.show_all_relation_view.oid AND
-      segid = -1
-    GROUP BY
-      relnamespace
-  )
-SELECT
-  nspname AS schema_name,
-  targetoid AS schema_oid,
-  quotalimitMB AS quota_in_mb,
-  COALESCE(total_size, 0) AS nspsize_in_bytes
-FROM
-  diskquota.quota_config JOIN
-  pg_namespace ON targetoid = pg_namespace.oid LEFT OUTER JOIN
-  quota_usage ON pg_namespace.oid = relnamespace
-WHERE
-  quotaType = 0; -- NAMESPACE_QUOTA
-
-CREATE VIEW diskquota.show_fast_role_quota_view AS
-WITH
-  quota_usage AS (
-    SELECT
-      relowner,
-      SUM(size) AS total_size
-    FROM
-      diskquota.table_size,
-      diskquota.show_all_relation_view
-    WHERE
-      tableid = diskquota.show_all_relation_view.oid AND
-      segid = -1
-    GROUP BY
-      relowner
-  )
-SELECT
-  rolname AS role_name,
-  targetoid AS role_oid,
-  quotalimitMB AS quota_in_mb,
-  COALESCE(total_size, 0) AS rolsize_in_bytes
-FROM
-  diskquota.quota_config JOIN
-  pg_roles ON targetoid = pg_roles.oid LEFT OUTER JOIN
-  quota_usage ON pg_roles.oid = relowner
-WHERE
-  quotaType = 1; -- ROLE_QUOTA
-
 CREATE VIEW diskquota.show_fast_database_size_view AS
 SELECT (
     (SELECT SUM(pg_relation_size(oid)) FROM pg_class WHERE oid <= 16384)
@@ -195,124 +126,10 @@ SELECT (
 
 CREATE VIEW diskquota.rejectmap AS SELECT * FROM diskquota.show_rejectmap() AS BM;
 
-CREATE VIEW diskquota.show_fast_schema_tablespace_quota_view AS
-WITH
-  default_tablespace AS (
-    SELECT dattablespace FROM pg_database
-    WHERE datname = current_database()
-  ),
-  quota_usage AS (
-    SELECT
-      relnamespace,
-      CASE
-        WHEN reltablespace = 0 THEN dattablespace
-        ELSE reltablespace
-      END AS reltablespace,
-      SUM(size) AS total_size
-    FROM
-      diskquota.table_size,
-      diskquota.show_all_relation_view,
-      default_tablespace
-    WHERE
-      tableid = diskquota.show_all_relation_view.oid AND
-      segid = -1
-    GROUP BY
-      relnamespace,
-      reltablespace,
-      dattablespace
-  ),
-  full_quota_config AS (
-    SELECT
-      primaryOid,
-      tablespaceoid,
-      quotalimitMB
-    FROM
-      diskquota.quota_config AS config,
-      diskquota.target AS target
-    WHERE
-      config.targetOid = target.rowId AND
-      config.quotaType = target.quotaType AND
-      config.quotaType = 2 -- NAMESPACE_TABLESPACE_QUOTA
-  )
-SELECT
-  nspname AS schema_name,
-  primaryoid AS schema_oid,
-  spcname AS tablespace_name,
-  tablespaceoid AS tablespace_oid,
-  quotalimitMB AS quota_in_mb,
-  COALESCE(total_size, 0) AS nspsize_tablespace_in_bytes
-FROM
-  full_quota_config JOIN
-  pg_namespace ON primaryOid = pg_namespace.oid JOIN
-  pg_tablespace ON tablespaceoid = pg_tablespace.oid LEFT OUTER JOIN
-  quota_usage ON pg_namespace.oid = relnamespace AND pg_tablespace.oid = reltablespace;
-
-CREATE VIEW diskquota.show_fast_role_tablespace_quota_view AS
-WITH
-  default_tablespace AS (
-    SELECT dattablespace FROM pg_database
-    WHERE datname = current_database()
-  ),
-  quota_usage AS (
-    SELECT
-      relowner,
-      CASE
-        WHEN reltablespace = 0 THEN dattablespace
-        ELSE reltablespace
-      END AS reltablespace,
-      SUM(size) AS total_size
-    FROM
-      diskquota.table_size,
-      diskquota.show_all_relation_view,
-      default_tablespace
-    WHERE
-      tableid = diskquota.show_all_relation_view.oid AND
-      segid = -1
-    GROUP BY
-      relowner,
-      reltablespace,
-      dattablespace
-  ),
-  full_quota_config AS (
-    SELECT
-      primaryOid,
-      tablespaceoid,
-      quotalimitMB
-    FROM
-      diskquota.quota_config AS config,
-      diskquota.target AS target
-    WHERE
-      config.targetOid = target.rowId AND
-      config.quotaType = target.quotaType AND
-      config.quotaType = 3 -- ROLE_TABLESPACE_QUOTA
-  )
-SELECT
-  rolname AS role_name,
-  primaryoid AS role_oid,
-  spcname AS tablespace_name,
-  tablespaceoid AS tablespace_oid,
-  quotalimitMB AS quota_in_mb,
-  COALESCE(total_size, 0) AS rolsize_tablespace_in_bytes
-FROM
-  full_quota_config JOIN
-  pg_roles ON primaryoid = pg_roles.oid JOIN
-  pg_tablespace ON tablespaceoid = pg_tablespace.oid LEFT OUTER JOIN
-  quota_usage ON pg_roles.oid = relowner AND pg_tablespace.oid = reltablespace;
-
-CREATE VIEW diskquota.show_segment_ratio_quota_view AS
-SELECT 
-  spcname as tablespace_name,
-  pg_tablespace.oid as tablespace_oid,
-  segratio as per_seg_quota_ratio
-FROM
-  diskquota.quota_config JOIN
-  pg_tablespace ON targetOid = pg_tablespace.oid
-  AND quotatype = 4;
-
 -- view end
 
 -- prepare to boot
-INSERT INTO diskquota.state SELECT (count(relname) = 0)::int FROM pg_class AS c, pg_namespace AS n WHERE c.oid > 16384 AND relnamespace = n.oid AND nspname != 'diskquota';
+INSERT INTO diskquota.state SELECT (count(relname) < 3)::int FROM pg_class AS c, pg_namespace AS n WHERE c.oid > 16384 AND relnamespace = n.oid AND nspname != 'diskquota';
 
 -- re-dispatch pause status to false. in case user pause-drop-recreate.
 -- refer to see test case 'test_drop_after_pause'
@@ -323,3 +140,184 @@ SELECT FROM diskquota.resume();
 CREATE FUNCTION diskquota.diskquota_start_worker() RETURNS void STRICT AS '$libdir/diskquota-3.0.so' LANGUAGE C;
 SELECT diskquota.diskquota_start_worker();
 DROP FUNCTION diskquota.diskquota_start_worker();
+
+-- quota config row type, contains all attributes in quota_config
+CREATE TYPE diskquota.quota_config_row AS (
+	quota_type int,
+	db_oid oid,
+	namespace_oid oid,
+	owner_oid oid,
+	tablespace_oid oid,
+	quota_limit_mb bigint,
+	segratio float4
+);
+
+-- quota config view
+CREATE VIEW diskquota.show_quota_config_view AS 
+WITH quota_config AS(
+	SELECT
+		jsonb_populate_recordset(
+			null :: diskquota.quota_config_row,
+			config -> 'quota_list'
+		) AS quota_config_record
+	FROM
+		diskquota.quota_config
+)
+SELECT
+	(quota_config_record).*
+FROM
+	quota_config;
+
+CREATE VIEW diskquota.show_fast_schema_quota_view AS
+WITH quota_usage AS (
+	SELECT
+		relnamespace,
+		SUM(size) AS total_size
+	FROM
+		diskquota.table_size,
+		diskquota.show_all_relation_view
+	WHERE
+		tableid = diskquota.show_all_relation_view.oid
+		AND segid = -1
+	GROUP BY
+		relnamespace
+)
+SELECT
+	nspname AS schema_name,
+	namespace_oid AS schema_oid,
+	quota_limit_mb AS quota_in_mb,
+	COALESCE(total_size, 0) AS nspsize_in_bytes
+FROM
+	diskquota.show_quota_config_view
+	JOIN pg_namespace ON namespace_oid = pg_namespace.oid
+	LEFT OUTER JOIN quota_usage ON pg_namespace.oid = relnamespace
+WHERE
+	quota_type = 0;  -- NAMESPACE_QUOTA
+
+CREATE VIEW diskquota.show_fast_role_quota_view AS
+WITH quota_usage AS (
+	SELECT
+		relowner,
+		SUM(size) AS total_size
+	FROM
+		diskquota.table_size,
+		diskquota.show_all_relation_view
+	WHERE
+		tableid = diskquota.show_all_relation_view.oid
+		AND segid = -1
+	GROUP BY
+		relowner
+)
+SELECT
+	rolname AS role_name,
+	owner_oid AS role_oid,
+	quota_limit_mb AS quota_in_mb,
+	COALESCE(total_size, 0) AS rolsize_in_bytes
+FROM
+	diskquota.show_quota_config_view
+	JOIN pg_roles ON owner_oid = pg_roles.oid
+	LEFT OUTER JOIN quota_usage ON pg_roles.oid = relowner
+WHERE
+	quota_type = 1;  -- ROLE_QUOTA
+
+
+CREATE VIEW diskquota.show_fast_schema_tablespace_quota_view AS
+WITH default_tablespace AS (
+	SELECT
+		dattablespace
+	FROM
+		pg_database
+	WHERE
+		datname = current_database()
+),
+quota_usage AS (
+	SELECT
+		relnamespace,
+		CASE
+			WHEN reltablespace = 0 THEN dattablespace
+			ELSE reltablespace
+		END AS reltablespace,
+		SUM(size) AS total_size
+	FROM
+		diskquota.table_size,
+		diskquota.show_all_relation_view,
+		default_tablespace
+	WHERE
+		tableid = diskquota.show_all_relation_view.oid
+		AND segid = -1
+	GROUP BY
+		relnamespace,
+		reltablespace,
+		dattablespace
+)
+SELECT
+	nspname AS schema_name,
+	namespace_oid AS schema_oid,
+	spcname AS tablespace_name,
+	tablespace_oid AS tablespace_oid,
+	quota_limit_mb AS quota_in_mb,
+	COALESCE(total_size, 0) AS nspsize_tablespace_in_bytes
+FROM
+	diskquota.show_quota_config_view
+	JOIN pg_namespace ON namespace_oid = pg_namespace.oid
+	JOIN pg_tablespace ON tablespace_oid = pg_tablespace.oid
+	LEFT OUTER JOIN quota_usage ON pg_namespace.oid = relnamespace
+	AND pg_tablespace.oid = reltablespace
+WHERE
+	quota_type = 2;  -- NAMESPACE_TABLESPACE_QUOTA
+
+CREATE VIEW diskquota.show_fast_role_tablespace_quota_view AS
+WITH default_tablespace AS (
+	SELECT
+		dattablespace
+	FROM
+		pg_database
+	WHERE
+		datname = current_database()
+),
+quota_usage AS (
+	SELECT
+		relowner,
+		CASE
+			WHEN reltablespace = 0 THEN dattablespace
+			ELSE reltablespace
+		END AS reltablespace,
+		SUM(size) AS total_size
+	FROM
+		diskquota.table_size,
+		diskquota.show_all_relation_view,
+		default_tablespace
+	WHERE
+		tableid = diskquota.show_all_relation_view.oid
+		AND segid = -1
+	GROUP BY
+		relowner,
+		reltablespace,
+		dattablespace
+)
+SELECT
+	rolname AS role_name,
+	owner_oid AS role_oid,
+	spcname AS tablespace_name,
+	tablespace_oid AS tablespace_oid,
+	quota_limit_mb AS quota_in_mb,
+	COALESCE(total_size, 0) AS rolsize_tablespace_in_bytes
+FROM
+	diskquota.show_quota_config_view
+	JOIN pg_roles ON owner_oid = pg_roles.oid
+	JOIN pg_tablespace ON tablespace_oid = pg_tablespace.oid
+	LEFT OUTER JOIN quota_usage ON pg_roles.oid = relowner
+	AND pg_tablespace.oid = reltablespace
+WHERE
+	quota_type = 3;  -- ROLE_TABLESPACE_QUOTA
+
+CREATE VIEW diskquota.show_segment_ratio_quota_view AS
+SELECT
+	spcname as tablespace_name,
+	pg_tablespace.oid as tablespace_oid,
+	segratio as per_seg_quota_ratio
+FROM
+	diskquota.show_quota_config_view
+	JOIN pg_tablespace ON tablespace_oid = pg_tablespace.oid
+WHERE
+	quota_type = 4;  -- TABLESPACE_QUOTA

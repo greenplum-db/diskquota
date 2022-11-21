@@ -91,7 +91,7 @@ add_dependencies(installcheck isolation2 regress)
 # add_dependencies(regress_truncate_loop regress_config)
 # add_dependencies(installcheck regress_truncate_loop)
 
-add_executable(test_unit_config_parse unit_test/test_unit_config_parse.c)
+add_executable(test_unit_config_parse unit_test/test_unit_config_parse.c ${SRC_DIR}/config_parse.c)
 add_dependencies(test_unit_config_parse cmocka cjson)
 set_target_properties(
   test_unit_config_parse
@@ -102,7 +102,7 @@ set_target_properties(
              LINKER_LANGUAGE "C")
 target_include_directories(
   test_unit_config_parse PRIVATE
-  ${CMAKE_SOURCE_DIR}
+  ${SRC_DIR}
   ${PG_INCLUDE_DIR}
   ${PG_INCLUDE_DIR_SERVER}
   ${deps_INSTALL_DIR}/include)
