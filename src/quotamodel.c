@@ -15,6 +15,7 @@
  * -------------------------------------------------------------------------
  */
 #include "diskquota.h"
+#include "quota_config.h"
 #include "gp_activetable.h"
 #include "relation_cache.h"
 
@@ -43,6 +44,7 @@
 #include "cdb/cdbutil.h"
 
 #include <math.h>
+#include "quota_config.h"
 
 /* cluster level max size of rejectmap */
 #define MAX_DISK_QUOTA_REJECT_ENTRIES (1024 * 1024)
@@ -50,7 +52,6 @@
 #define INIT_DISK_QUOTA_REJECT_ENTRIES 8192
 /* per database level max size of rejectmap */
 #define MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES 8192
-#define MAX_NUM_KEYS_QUOTA_MAP 8
 /* Number of attributes in quota configuration records. */
 #define NUM_QUOTA_CONFIG_ATTRS 6
 
@@ -130,13 +131,13 @@ typedef enum
  */
 struct QuotaMapEntryKey
 {
-	Oid   keys[MAX_NUM_KEYS_QUOTA_MAP];
+	Oid   keys[MAX_QUOTA_KEY_NUM];
 	int16 segid;
 };
 
 struct QuotaMapEntry
 {
-	Oid   keys[MAX_NUM_KEYS_QUOTA_MAP];
+	Oid   keys[MAX_QUOTA_KEY_NUM];
 	int16 segid;
 	int64 size;
 	int64 limit;
@@ -242,6 +243,9 @@ static void format_name(const char *prefix, uint32 id, StringInfo str);
 static bool get_table_size_entry_flag(TableSizeEntry *entry, TableSizeEntryFlag flag);
 static void reset_table_size_entry_flag(TableSizeEntry *entry, TableSizeEntryFlag flag);
 static void set_table_size_entry_flag(TableSizeEntry *entry, TableSizeEntryFlag flag);
+
+/* quota config function */
+extern HTAB *pull_quota_config(bool *found);
 
 /* add a new entry quota or update the old entry quota */
 static void
@@ -1412,9 +1416,11 @@ load_quotas(void)
 static void
 do_load_quotas(void)
 {
-	int       ret;
-	TupleDesc tupdesc;
-	int       i;
+	QuotaConfigKey  key = {0};
+	QuotaConfig    *entry;
+	QuotaConfig    *tablespace_quota_config_entry;
+	HTAB           *quota_config_map;
+	HASH_SEQ_STATUS iter;
 
 	/*
 	 * TODO: we should skip to reload quota config when there is no change in
@@ -1423,88 +1429,40 @@ do_load_quotas(void)
 	 */
 	clear_all_quota_maps();
 
-	/*
-	 * read quotas from diskquota.quota_config and target table
-	 */
-	ret = SPI_execute_with_args(
-	        "SELECT c.targetOid, c.quotaType, c.quotalimitMB, COALESCE(c.segratio, 0) AS segratio, "
-	        "COALESCE(t.tablespaceoid, 0) AS tablespaceoid, COALESCE(t.primaryOid, 0) AS primaryoid "
-	        "FROM diskquota.quota_config AS c LEFT OUTER JOIN diskquota.target AS t "
-	        "ON c.targetOid = t.rowId AND c.quotaType IN ($1, $2) AND c.quotaType = t.quotaType",
-	        2,
-	        (Oid[]){
-	                INT4OID,
-	                INT4OID,
-	        },
-	        (Datum[]){
-	                Int32GetDatum(NAMESPACE_TABLESPACE_QUOTA),
-	                Int32GetDatum(ROLE_TABLESPACE_QUOTA),
-	        },
-	        NULL, true, 0);
-	if (ret != SPI_OK_SELECT)
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-		                errmsg("[diskquota] load_quotas SPI_execute failed: error code %d", ret)));
+	/* If a row exists, an update is needed. */
+	quota_config_map = pull_quota_config(NULL);
 
-	tupdesc = SPI_tuptable->tupdesc;
-#if GP_VERSION_NUM < 70000
-	if (tupdesc->natts != NUM_QUOTA_CONFIG_ATTRS || ((tupdesc)->attrs[0])->atttypid != OIDOID ||
-	    ((tupdesc)->attrs[1])->atttypid != INT4OID || ((tupdesc)->attrs[2])->atttypid != INT8OID)
-#else
-	if (tupdesc->natts != NUM_QUOTA_CONFIG_ATTRS || ((tupdesc)->attrs[0]).atttypid != OIDOID ||
-	    ((tupdesc)->attrs[1]).atttypid != INT4OID || ((tupdesc)->attrs[2]).atttypid != INT8OID)
-#endif /* GP_VERSION_NUM */
+	hash_seq_init(&iter, quota_config_map);
+	while ((entry = (QuotaConfig *)hash_seq_search(&iter)) != NULL)
 	{
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-		                errmsg("[diskquota] configuration table is corrupted in database \"%s\","
-		                       " please recreate diskquota extension",
-		                       get_database_name(MyDatabaseId))));
-	}
+		if (entry->quota_type == TABLESPACE_QUOTA) continue;
 
-	for (i = 0; i < SPI_processed; i++)
-	{
-		HeapTuple tup = SPI_tuptable->vals[i];
-		Datum     vals[NUM_QUOTA_CONFIG_ATTRS];
-		bool      isnull[NUM_QUOTA_CONFIG_ATTRS];
+		Oid   db_oid         = entry->keys[0];
+		Oid   target_oid     = entry->keys[1];
+		Oid   tablespace_oid = entry->keys[2];
+		int   quota_type     = entry->quota_type;
+		int64 quota_limit_mb = entry->quota_limit_mb;
+		float segratio       = INVALID_SEGRATIO;
 
-		for (int i = 0; i < NUM_QUOTA_CONFIG_ATTRS; ++i)
+		if (quota_type == NAMESPACE_TABLESPACE_QUOTA || quota_type == ROLE_TABLESPACE_QUOTA)
 		{
-			vals[i] = SPI_getbinval(tup, tupdesc, i + 1, &(isnull[i]));
-			if (i <= 2 && isnull[i])
+			key.quota_type                = TABLESPACE_QUOTA;
+			key.keys[0]                   = db_oid;
+			key.keys[1]                   = tablespace_oid;
+			tablespace_quota_config_entry = hash_search(quota_config_map, &key, HASH_FIND, NULL);
+			if (tablespace_quota_config_entry != NULL)
 			{
-				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-				                errmsg("[diskquota] attibutes in configuration table MUST NOT be NULL")));
+				segratio = tablespace_quota_config_entry->segratio;
 			}
 		}
 
-		Oid   targetOid      = DatumGetObjectId(vals[0]);
-		int   quotaType      = (QuotaType)DatumGetInt32(vals[1]);
-		int64 quota_limit_mb = DatumGetInt64(vals[2]);
-		float segratio       = DatumGetFloat4(vals[3]);
-		Oid   spcOid         = DatumGetObjectId(vals[4]);
-		Oid   primaryOid     = DatumGetObjectId(vals[5]);
-
-		if (quotaType == NAMESPACE_TABLESPACE_QUOTA || quotaType == ROLE_TABLESPACE_QUOTA)
-		{
-			targetOid = primaryOid;
-		}
-
-		if (spcOid == InvalidOid)
-		{
-			if (quota_info[quotaType].num_keys != 1)
-			{
-				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-				                errmsg("[diskquota] tablespace Oid MUST NOT be NULL for quota type: %d. num_keys: %d",
-				                       quotaType, quota_info[quotaType].num_keys)));
-			}
-			update_limit_for_quota(quota_limit_mb * (1 << 20), segratio, quotaType, (Oid[]){targetOid});
-		}
+		if (!OidIsValid(tablespace_oid))
+			update_limit_for_quota(quota_limit_mb * (1 << 20), segratio, quota_type, (Oid[]){target_oid});
 		else
-		{
-			update_limit_for_quota(quota_limit_mb * (1 << 20), segratio, quotaType, (Oid[]){targetOid, spcOid});
-		}
+			update_limit_for_quota(quota_limit_mb * (1 << 20), segratio, quota_type,
+			                       (Oid[]){target_oid, tablespace_oid});
 	}
-
-	return;
+	hash_destroy(quota_config_map);
 }
 
 /*
