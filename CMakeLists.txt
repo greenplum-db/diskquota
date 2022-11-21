@@ -32,6 +32,7 @@ set(CMAKE_C_FLAGS_DEBUG "-DDISKQUOTA_DEBUG"
     CACHE STRING "Flags for DEBUG build" FORCE)
 # set link flags for all sub-projects
 set(CMAKE_MODULE_LINKER_FLAGS "${PG_LD_FLAGS}")
+set(CMAKE_EXE_LINKER_FLAGS "${PG_LD_FLAGS}")
 if (APPLE)
     set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} -bundle_loader ${PG_BIN_DIR}/postgres")
 endif()
@@ -83,6 +84,22 @@ ExternalProject_Add(
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON
 )
 
+set(deps_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/external_deps)
+ExternalProject_Add(
+    cmocka
+    URL
+    https://cmocka.org/files/1.1/cmocka-1.1.5.tar.xz
+    URL_MD5
+    91f95cd5db88b9b120d191b18d367193
+    DOWNLOAD_DIR
+    ${DOWNLOAD_DIR}
+    CMAKE_ARGS
+    -DBUILD_SHARED_LIBS=OFF
+    -DCMAKE_INSTALL_PREFIX=${deps_INSTALL_DIR}
+    -DCMAKE_INSTALL_LIBDIR=lib
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+)
+
 list(
   APPEND
   diskquota_SRC
@@ -107,7 +124,7 @@ list(
 
 add_library(diskquota MODULE ${diskquota_SRC})
 
-add_dependencies(diskquota cjson)
+add_dependencies(diskquota cjson cmocka)
 
 if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
   set(CMAKE_INSTALL_PREFIX
@@ -129,6 +146,32 @@ target_include_directories(
 target_link_libraries(
   diskquota PRIVATE
   ${deps_INSTALL_DIR}/lib/libcjson.a)
+
+add_executable(test_unit_config_parse test_unit_config_parse.c)
+set_target_properties(
+  test_unit_config_parse
+  PROPERTIES OUTPUT_NAME "test_unit_config_parse"
+             PREFIX ""
+             C_STANDARD 99
+             LINKER_LANGUAGE "C")
+target_include_directories(
+  test_unit_config_parse PRIVATE
+  ${PG_INCLUDE_DIR}
+  ${PG_INCLUDE_DIR_SERVER}
+  ${deps_INSTALL_DIR}/include)
+
+target_link_libraries(
+  test_unit_config_parse
+  ${deps_INSTALL_DIR}/lib/libcjson.a
+  ${deps_INSTALL_DIR}/lib/libcmocka.so)
+
+enable_testing()
+
+add_test(
+  NAME mytest
+  COMMAND "./test_unit_config_parse"
+)
+
 
 # packing part, move to a separate file if this part is too large
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/Distro.cmake)
