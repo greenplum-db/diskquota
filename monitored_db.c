@@ -130,7 +130,7 @@ wait_for_worker_new_epoch(PG_FUNCTION_ARGS)
 			PG_RETURN_BOOL(true);
 		}
 		/* Sleep for naptime to reduce CPU usage */
-		(void)WaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_TIMEOUT, diskquota_naptime ? diskquota_naptime : 1);
+		(void)WaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_TIMEOUT, diskquota_naptime ? diskquota_naptime * 1000L : 1000L);
 		ResetLatch(&MyProc->procLatch);
 	}
 	PG_RETURN_BOOL(false);
