@@ -175,7 +175,7 @@ typedef struct
 	*/
 } DiskquotaLauncherShmemStruct;
 
-DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
+extern DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
 
 /* In shmem, only used on master */
 struct DiskquotaDBEntry

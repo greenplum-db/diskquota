@@ -608,12 +608,10 @@ disk_quota_launcher_main(Datum main_arg)
 	set_config_option("application_name", DISKQUOTA_APPLICATION_NAME, PGC_USERSET, PGC_S_SESSION, GUC_ACTION_SAVE, true,
 	                  0);
 	CurrentResourceOwner = ResourceOwnerCreate(NULL, "diskquota launcher");
-	ShmLooper *looper = init_looper("diskquota_looper");
-	while (!got_sigterm)
-	{
-		ShmMessage* msg = receive_message(looper);
-		msg->message_id = 0;
-	}
+
+extern dsm_segment* diskquota_message_handler(int message_id, void* req);
+	DsmLooper *looper = init_looper("diskquota_looper", diskquota_message_handler);
+	loop(looper);
 
 
 	/* diskquota launcher should has Gp_role as dispatcher */
