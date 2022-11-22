@@ -60,6 +60,7 @@ add_dependencies(installcheck isolation2 regress)
 # add_dependencies(installcheck regress_truncate_loop)
 
 add_executable(test_unit_config_parse unit_test/test_unit_config_parse.c)
+add_dependencies(test_unit_config_parse cmocka cjson)
 set_target_properties(
   test_unit_config_parse
   PROPERTIES OUTPUT_NAME "test_unit_config_parse"
