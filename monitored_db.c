@@ -119,7 +119,7 @@ wait_for_worker_new_epoch(PG_FUNCTION_ARGS)
 {
 	TimestampTz start_time    = GetCurrentTimestamp();
 	uint32      current_epoch = worker_get_epoch(MyDatabaseId);
-	for (;;)
+	for (int count = 0; count < 120; count++)
 	{
 		CHECK_FOR_INTERRUPTS();
 		if (check_for_timeout(start_time)) start_time = GetCurrentTimestamp();
