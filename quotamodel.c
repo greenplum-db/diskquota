@@ -649,7 +649,7 @@ check_diskquota_state_is_ready()
 		CommitTransactionCommand();
 	else
 		AbortCurrentTransaction();
-
+	MemoryAccounting_Reset();
 	return is_ready;
 }
 
