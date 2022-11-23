@@ -1,29 +1,14 @@
+#include "postgres.h"
+#include "storage/dsm.h"
+#include "storage/latch.h"
+#include "storage/proc.h"
+#include "storage/shmem.h"
+#include <miscadmin.h>
+#include "utils/timeout.h"
+
 #include "msg.h"
 
-#include <storage/latch.h>
-#include <storage/proc.h>
-#include <storage/shmem.h>
-#include <miscadmin.h>
-
-struct DsmLooper
-{
-	pid_t server_pid;
-	pid_t client_pid;
-
-	Latch server_latch;
-	Latch client_latch;
-
-	// Clients holds this lock before sending request, and release it after receiving response
-	LWLock *loop_lock;
-	// Server/Clients hold this lock when reading/writing messages
-	LWLock *msg_lock;
-
-	dsm_handle req_handle;
-	dsm_handle rsp_handle;
-
-	// Private to server
-	message_handler msg_handler;
-};
+void init_timeout(void);
 
 typedef struct DsmMessage
 {
@@ -58,6 +43,7 @@ init_looper(const char *name, message_handler handler)
 	looper->server_pid = MyProcPid;
 	looper->client_pid = InvalidPid;
 
+	looper->server_latch = MyProc->procLatch;
 	InitSharedLatch(&looper->server_latch);
 	OwnLatch(&looper->server_latch);
 	InitSharedLatch(&looper->client_latch);
@@ -173,6 +159,8 @@ loop(DsmLooper *looper)
 			break;
 		}
 
+		if (handle_signal()) continue;
+
 		LWLockAcquire(looper->msg_lock, LW_EXCLUSIVE);
 
 		dsm_segment *req_seg = dsm_attach(looper->req_handle);
@@ -240,6 +228,10 @@ diskquota_message_handler(int message_id, void *req)
 {
 	switch (message_id)
 	{
+		// case TIMEOUT_EVENT: {
+
+		// 	return init_message(TIMEOUT_EVENT, sizeof(DsmMessage));
+		// }
 		case 41: {
 			msg_a *msg = (msg_a *)req;
 			ereport(WARNING, (errmsg("request %d", msg->b)));

@@ -41,6 +41,12 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/timestamp.h"
+#include "storage/latch.h"
+#include "storage/proc.h"
+#include "storage/shmem.h"
+#include "utils/timeout.h"
+
+#include "msg.h"
 
 PG_MODULE_MAGIC;
 
@@ -61,10 +67,11 @@ PG_MODULE_MAGIC;
 extern int usleep(useconds_t usec); // in <unistd.h>
 
 /* flags set by signal handlers */
-static volatile sig_atomic_t got_sighup  = false;
-static volatile sig_atomic_t got_sigterm = false;
-static volatile sig_atomic_t got_sigusr1 = false;
-static volatile sig_atomic_t got_sigusr2 = false;
+static volatile sig_atomic_t got_sighup     = false;
+static volatile sig_atomic_t got_sigterm    = false;
+static volatile sig_atomic_t got_sigusr1    = false;
+static volatile sig_atomic_t got_sigusr2    = false;
+static volatile sig_atomic_t got_sigtimeout = false;
 
 /* GUC variables */
 int  diskquota_naptime           = 0;
@@ -270,8 +277,11 @@ disk_quota_sigterm(SIGNAL_ARGS)
 {
 	int save_errno = errno;
 
-	got_sigterm = true;
-	if (MyProc) SetLatch(&MyProc->procLatch);
+	got_sigterm       = true;
+	DsmLooper *looper = attach_looper("diskquota_looper");
+	LWLockAcquire(looper->loop_lock, LW_EXCLUSIVE);
+	if (looper) SetLatch(&looper->server_latch);
+	LWLockRelease(looper->loop_lock);
 
 	errno = save_errno;
 }
@@ -286,8 +296,9 @@ disk_quota_sighup(SIGNAL_ARGS)
 {
 	int save_errno = errno;
 
-	got_sighup = true;
-	if (MyProc) SetLatch(&MyProc->procLatch);
+	got_sighup        = true;
+	DsmLooper *looper = attach_looper("diskquota_looper");
+	if (looper) SetLatch(&looper->server_latch);
 
 	errno = save_errno;
 }
@@ -303,7 +314,8 @@ disk_quota_sigusr1(SIGNAL_ARGS)
 
 	got_sigusr1 = true;
 
-	if (MyProc) SetLatch(&MyProc->procLatch);
+	DsmLooper *looper = attach_looper("diskquota_looper");
+	if (looper) SetLatch(&looper->server_latch);
 
 	errno = save_errno;
 }
@@ -319,7 +331,8 @@ disk_quota_sigusr2(SIGNAL_ARGS)
 
 	got_sigusr2 = true;
 
-	if (MyProc) SetLatch(&MyProc->procLatch);
+	DsmLooper *looper = attach_looper("diskquota_looper");
+	if (looper) SetLatch(&looper->server_latch);
 
 	errno = save_errno;
 }
@@ -575,7 +588,7 @@ isAbnormalLoopTime(int diff_sec)
 		max_time = diskquota_naptime + 6;
 	return diff_sec > max_time;
 }
-#include "msg.h"
+
 /* ---- Functions for launcher process ---- */
 /*
  * Launcher process manages the worker processes based on
@@ -584,207 +597,10 @@ isAbnormalLoopTime(int diff_sec)
 void
 disk_quota_launcher_main(Datum main_arg)
 {
-	time_t loop_begin, loop_end;
-	MemoryContextSwitchTo(TopMemoryContext);
-	init_bgworker_handles();
+	init_timeout();
 
-	/* establish signal handlers before unblocking signals. */
-	pqsignal(SIGHUP, disk_quota_sighup);
-	pqsignal(SIGTERM, disk_quota_sigterm);
-	pqsignal(SIGUSR1, disk_quota_sigusr1);
-	pqsignal(SIGUSR2, disk_quota_sigusr2);
-	/* we're now ready to receive signals */
-	BackgroundWorkerUnblockSignals();
-
-	LWLockAcquire(diskquota_locks.extension_ddl_message_lock, LW_EXCLUSIVE);
-	extension_ddl_message->launcher_pid = MyProcPid;
-	LWLockRelease(diskquota_locks.extension_ddl_message_lock);
-	/*
-	 * connect to our database 'diskquota'. launcher process will exit if
-	 * 'diskquota' database is not existed.
-	 */
-	BackgroundWorkerInitializeConnection(DISKQUOTA_DB, NULL);
-
-	set_config_option("application_name", DISKQUOTA_APPLICATION_NAME, PGC_USERSET, PGC_S_SESSION, GUC_ACTION_SAVE, true,
-	                  0);
-	CurrentResourceOwner = ResourceOwnerCreate(NULL, "diskquota launcher");
-
-extern dsm_segment* diskquota_message_handler(int message_id, void* req);
 	DsmLooper *looper = init_looper("diskquota_looper", diskquota_message_handler);
 	loop(looper);
-
-
-	/* diskquota launcher should has Gp_role as dispatcher */
-	Gp_role = GP_ROLE_DISPATCH;
-
-	/*
-	 * use table diskquota_namespace.database_list to store diskquota enabled
-	 * database.
-	 */
-	create_monitor_db_table();
-
-	init_database_list();
-	DisconnectAndDestroyAllGangs(false);
-
-	loop_end = time(NULL);
-
-	struct timeval nap;
-	nap.tv_sec  = diskquota_naptime;
-	nap.tv_usec = 0;
-	/* main loop: do this until the SIGTERM handler tells us to terminate. */
-	ereport(LOG, (errmsg("[diskquota launcher] start main loop")));
-	DiskquotaDBEntry *curDB          = NULL;
-	Oid               curDBId        = 0;
-	bool              advance_one_db = true;
-	bool              timeout        = false;
-	while (!got_sigterm)
-	{
-		int rc;
-		CHECK_FOR_INTERRUPTS();
-		/* pick a db to run */
-		if (advance_one_db)
-		{
-			curDB   = next_db(curDB);
-			timeout = false;
-			if (curDB != NULL)
-			{
-				curDBId = curDB->dbid;
-				elog(DEBUG1, "[diskquota] next db to run:%d", curDB->id);
-			}
-			else
-				elog(DEBUG1, "[diskquota] no db to run");
-		}
-		/*
-		 * Modify wait time
-		 *
-		 * If there is no db needed to run or has exceeded the next_run_time,
-		 * just sleep to wait a db or a free worker.
-		 *
-		 * Otherwise check the next_run_time to determin how much time to wait
-		 */
-		if (timeout || curDB == NULL)
-		{
-			nap.tv_sec  = diskquota_naptime > 0 ? diskquota_naptime : 1;
-			nap.tv_usec = 0;
-		}
-		else
-		{
-			TimestampTz curTime = GetCurrentTimestamp();
-			TimestampDifference(curTime, curDB->next_run_time, &nap.tv_sec, &nap.tv_usec);
-
-			/* if the sleep time is too short, just skip the sleeping */
-			if (nap.tv_sec == 0 && nap.tv_usec < MIN_SLEEPTIME * 1000L)
-			{
-				nap.tv_usec = 0;
-			}
-
-			/* if the sleep time is too long, advance the next_run_time */
-			if (nap.tv_sec > diskquota_naptime)
-			{
-				nap.tv_sec           = diskquota_naptime;
-				nap.tv_usec          = 0;
-				curDB->next_run_time = TimestampTzPlusMilliseconds(curTime, diskquota_naptime * 1000L);
-			}
-		}
-
-		bool sigusr1 = false;
-		bool sigusr2 = false;
-
-		/*
-		 * background workers mustn't call usleep() or any direct equivalent:
-		 * instead, they may wait on their process latch, which sleeps as
-		 * necessary, but is awakened if postmaster dies.  That way the
-		 * background process goes away immediately in an emergency.
-		 */
-
-		if (nap.tv_sec != 0 || nap.tv_usec != 0)
-		{
-			elog(DEBUG1, "[diskquota] naptime sec:%ld, usec:%d", nap.tv_sec, nap.tv_usec);
-			rc = WaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
-			               (nap.tv_sec * 1000L) + (nap.tv_usec / 1000L));
-			ResetLatch(&MyProc->procLatch);
-
-			/* Emergency bailout if postmaster has died */
-			if (rc & WL_POSTMASTER_DEATH)
-			{
-				ereport(LOG, (errmsg("[diskquota launcher] launcher is being terminated by postmaster death.")));
-				proc_exit(1);
-			}
-		}
-		/* process extension ddl message */
-		if (got_sigusr2)
-		{
-			elog(DEBUG1, "[diskquota] got sigusr2");
-			got_sigusr2 = false;
-			process_extension_ddl_message();
-			sigusr2 = true;
-		}
-
-		/* in case of a SIGHUP, just reload the configuration. */
-		if (got_sighup)
-		{
-			elog(DEBUG1, "[diskquota] got sighup");
-			got_sighup = false;
-			ProcessConfigFile(PGC_SIGHUP);
-		}
-
-		/*
-		 * When the bgworker for diskquota worker starts or stops,
-		 * postmsater prosess will send sigusr1 to launcher as
-		 * worker.bgw_notify_pid has been set to launcher pid.
-		 */
-		if (got_sigusr1)
-		{
-			elog(DEBUG1, "[diskquota] got sigusr1");
-			got_sigusr1 = false;
-			sigusr1     = true;
-		}
-
-		/*
-		 * Try to starts a bgworker for the curDB
-		 *
-		 */
-
-		/*
-		 * When db list is empty, curDB is NULL.
-		 * When curDB->in_use is false means dbEtnry has been romoved
-		 * When curDB->dbid doesn't equtal curDBId, it means the slot has
-		 * been used by another db
-		 *
-		 * For the above conditions, we just skip this loop and try to fetch
-		 * next db to run.
-		 */
-		if (curDB == NULL || !curDB->in_use || curDB->dbid != curDBId)
-		{
-			advance_one_db = true;
-			continue;
-		}
-
-		/*
-		 * Try to start a worker to run the db if has exceeded the next_run_time.
-		 * if start_worker fails, advance_one_db will be set to false, so in the
-		 * next loop will run the db again.
-		 */
-		if (TimestampDifferenceExceeds(curDB->next_run_time, GetCurrentTimestamp(), MIN_SLEEPTIME))
-		{
-			bool ret       = start_worker(curDB);
-			advance_one_db = ret;
-			/* has exceeded the next_run_time of current db */
-			timeout = true;
-		}
-		else
-		{
-			advance_one_db = false;
-		}
-
-		loop_begin = loop_end;
-		loop_end   = time(NULL);
-		if (isAbnormalLoopTime(loop_end - loop_begin))
-		{
-			ereport(WARNING, (errmsg("[diskquota launcher] loop takes too much time %d/%d",
-			                         (int)(loop_end - loop_begin), diskquota_naptime)));
-		}
-	}
 
 	/* terminate all the diskquota worker processes before launcher exit */
 	ereport(LOG, (errmsg("[diskquota launcher] launcher is being terminated by SIGTERM.")));
@@ -1913,4 +1729,232 @@ WaitForBackgroundWorkerShutdown(BackgroundWorkerHandle *handle)
 	}
 
 	return status;
+}
+
+/* TODO: set latch in signal callback. */
+bool
+handle_signal(void)
+{
+	bool ret = false;
+
+	/* process bgworker schedule */
+	if (got_sigtimeout)
+	{
+		elog(DEBUG1, "[diskquota] got sigtimeout");
+		got_sigtimeout = false;
+		bgworker_schedule();
+		ret = true;
+	}
+
+	/* process extension ddl message */
+	if (got_sigusr2)
+	{
+		elog(DEBUG1, "[diskquota] got sigusr2");
+		got_sigusr2 = false;
+		process_extension_ddl_message();
+		ret = true;
+	}
+
+	/* in case of a SIGHUP, just reload the configuration. */
+	if (got_sighup)
+	{
+		elog(DEBUG1, "[diskquota] got sighup");
+		got_sighup = false;
+		ProcessConfigFile(PGC_SIGHUP);
+		ret = true;
+	}
+
+	/*
+	 * When the bgworker for diskquota worker starts or stops,
+	 * postmsater prosess will send sigusr1 to launcher as
+	 * worker.bgw_notify_pid has been set to launcher pid.
+	 */
+	if (got_sigusr1)
+	{
+		elog(DEBUG1, "[diskquota] got sigusr1");
+		got_sigusr1 = false;
+	}
+	return ret;
+}
+
+void
+disk_quota_timeout(void)
+{
+	int save_errno = errno;
+
+	got_sigtimeout = true;
+
+	DsmLooper *looper = attach_looper("diskquota_looper");
+	if (looper) SetLatch(&looper->server_latch);
+
+	errno = save_errno;
+}
+
+DiskquotaDBEntry *curDB          = NULL;
+Oid               curDBId        = 0;
+bool              advance_one_db = true;
+
+void
+bgworker_schedule(void)
+{
+	struct timeval nap;
+	time_t         loop_begin, loop_end;
+	bool           timeout = false;
+
+	loop_end = time(NULL);
+
+	while (true)
+	{
+		CHECK_FOR_INTERRUPTS();
+		/* pick a db to run */
+		if (advance_one_db)
+		{
+			curDB   = next_db(curDB);
+			timeout = false;
+			if (curDB != NULL)
+			{
+				curDBId = curDB->dbid;
+				elog(DEBUG1, "[diskquota] next db to run:%d", curDB->id);
+			}
+			else
+				elog(DEBUG1, "[diskquota] no db to run");
+		}
+		/*
+		 * Modify wait time
+		 *
+		 * If there is no db needed to run or has exceeded the next_run_time,
+		 * just sleep to wait a db or a free worker.
+		 *
+		 * Otherwise check the next_run_time to determin how much time to wait
+		 */
+		if (timeout || curDB == NULL)
+		{
+			nap.tv_sec  = diskquota_naptime > 0 ? diskquota_naptime : 1;
+			nap.tv_usec = 0;
+			enable_timeout_after(USER_TIMEOUT, nap.tv_sec * 1000 + nap.tv_usec / 1000);
+			return;
+		}
+
+		/* pick a db successfully */
+		advance_one_db = false;
+
+		TimestampTz curTime = GetCurrentTimestamp();
+		TimestampDifference(curTime, curDB->next_run_time, &nap.tv_sec, &nap.tv_usec);
+
+		/* if the sleep time is too short, just skip the sleeping */
+		if (nap.tv_sec == 0 && nap.tv_usec < MIN_SLEEPTIME * 1000L)
+		{
+			nap.tv_usec = 0;
+		}
+
+		/* if the sleep time is too long, advance the next_run_time */
+		if (nap.tv_sec > diskquota_naptime)
+		{
+			nap.tv_sec           = diskquota_naptime;
+			nap.tv_usec          = 0;
+			curDB->next_run_time = TimestampTzPlusMilliseconds(curTime, diskquota_naptime * 1000L);
+		}
+
+		/*
+		 * background workers mustn't call usleep() or any direct equivalent:
+		 * instead, they may wait on their process latch, which sleeps as
+		 * necessary, but is awakened if postmaster dies.  That way the
+		 * background process goes away immediately in an emergency.
+		 */
+
+		if (nap.tv_sec != 0 || nap.tv_usec != 0)
+		{
+			enable_timeout_after(USER_TIMEOUT, nap.tv_sec * 1000 + nap.tv_usec / 1000);
+			return;
+		}
+
+		/*
+		 * Try to starts a bgworker for the curDB
+		 *
+		 */
+
+		/*
+		 * When db list is empty, curDB is NULL.
+		 * When curDB->in_use is false means dbEtnry has been romoved
+		 * When curDB->dbid doesn't equtal curDBId, it means the slot has
+		 * been used by another db
+		 *
+		 * For the above conditions, we just skip this loop and try to fetch
+		 * next db to run.
+		 */
+		if (curDB == NULL || !curDB->in_use || curDB->dbid != curDBId)
+		{
+			advance_one_db = true;
+			// enable_timeout_after(USER_TIMEOUT, 1000);
+			continue;
+		}
+
+		/*
+		 * Try to start a worker to run the db if has exceeded the next_run_time.
+		 * if start_worker fails, advance_one_db will be set to false, so in the
+		 * next loop will run the db again.
+		 */
+		if (TimestampDifferenceExceeds(curDB->next_run_time, GetCurrentTimestamp(), MIN_SLEEPTIME))
+		{
+			bool ret       = start_worker(curDB);
+			advance_one_db = ret;
+			/* has exceeded the next_run_time of current db */
+			timeout = true;
+		}
+		else
+		{
+			advance_one_db = false;
+		}
+
+		loop_begin = loop_end;
+		loop_end   = time(NULL);
+		if (isAbnormalLoopTime(loop_end - loop_begin))
+		{
+			ereport(WARNING, (errmsg("[diskquota launcher] loop takes too much time %d/%d",
+			                         (int)(loop_end - loop_begin), diskquota_naptime)));
+		}
+
+		if (advance_one_db == false) continue;
+	}
+	enable_timeout_after(USER_TIMEOUT, 1000);
+}
+
+void
+init_timeout(void)
+{
+	MemoryContextSwitchTo(TopMemoryContext);
+	init_bgworker_handles();
+
+	/* establish signal handlers before unblocking signals. */
+	pqsignal(SIGHUP, disk_quota_sighup);
+	pqsignal(SIGTERM, disk_quota_sigterm);
+	pqsignal(SIGUSR1, disk_quota_sigusr1);
+	pqsignal(SIGUSR2, disk_quota_sigusr2);
+	/* we're now ready to receive signals */
+	BackgroundWorkerUnblockSignals();
+
+	LWLockAcquire(diskquota_locks.extension_ddl_message_lock, LW_EXCLUSIVE);
+	extension_ddl_message->launcher_pid = MyProcPid;
+	LWLockRelease(diskquota_locks.extension_ddl_message_lock);
+
+	BackgroundWorkerInitializeConnection(DISKQUOTA_DB, NULL);
+
+	set_config_option("application_name", DISKQUOTA_APPLICATION_NAME, PGC_USERSET, PGC_S_SESSION, GUC_ACTION_SAVE, true,
+	                  0);
+	CurrentResourceOwner = ResourceOwnerCreate(NULL, "diskquota launcher");
+
+	/* diskquota launcher should has Gp_role as dispatcher */
+	Gp_role = GP_ROLE_DISPATCH;
+
+	/*
+	 * use table diskquota_namespace.database_list to store diskquota enabled
+	 * database.
+	 */
+	create_monitor_db_table();
+
+	init_database_list();
+	DisconnectAndDestroyAllGangs(false);
+
+	RegisterTimeout(USER_TIMEOUT, disk_quota_timeout);
+	enable_timeout_after(USER_TIMEOUT, 1000);
 }
