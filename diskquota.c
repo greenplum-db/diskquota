@@ -357,6 +357,7 @@ disk_quota_worker_main(Datum main_arg)
 		int has_error = worker_spi_get_extension_version(&major, &minor) != 0;
 
 		if (major == DISKQUOTA_MAJOR_VERSION && minor == DISKQUOTA_MINOR_VERSION) break;
+		MemoryAccounting_Reset();
 
 		if (has_error)
 		{
@@ -421,6 +422,8 @@ disk_quota_worker_main(Datum main_arg)
 			is_ready = true;
 			break;
 		}
+
+		MemoryAccounting_Reset();
 		if (is_ready)
 		{
 			update_monitordb_status(MyWorkerInfo->dbEntry->dbid, DB_UNREADY);
