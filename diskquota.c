@@ -940,6 +940,7 @@ process_extension_ddl_message()
 	        (errmsg("[diskquota launcher]: received create/drop extension diskquota message, extension launcher")));
 
 	do_process_extension_ddl_message(&code, local_extension_ddl_message);
+	MemoryAccounting_Reset();
 
 	/* Send createdrop extension diskquota result back to QD */
 	LWLockAcquire(diskquota_locks.extension_ddl_message_lock, LW_EXCLUSIVE);
