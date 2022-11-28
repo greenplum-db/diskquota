@@ -55,6 +55,15 @@
 #define MAX_NUM_KEYS_QUOTA_MAP 8
 /* Number of attributes in quota configuration records. */
 #define NUM_QUOTA_CONFIG_ATTRS 6
+#define SEGMENT_SIZE_ARRAY_LENGTH 100
+
+/* TableSizeEntry function */
+#define TableSizeEntrySegid(segid) ((segid + 1) / SEGMENT_SIZE_ARRAY_LENGTH)
+#define TableSizeEntryIndex(segid) ((segid + 1) % SEGMENT_SIZE_ARRAY_LENGTH)
+#define TableSizeEntryGetSize(entry, segid) \
+	(entry->totalsize[TableSizeEntryIndex(segid)] > 0 ? entry->totalsize[TableSizeEntryIndex(segid)] : 0)
+#define TableSizeEntrySetSize(entry, segid, size) entry->totalsize[TableSizeEntryIndex(segid)] = size
+#define TableSizeEntrySizeExist(entry, segid) (entry->totalsize[TableSizeEntryIndex(segid)] >= 0)
 
 typedef struct TableSizeEntry       TableSizeEntry;
 typedef struct NamespaceSizeEntry   NamespaceSizeEntry;
@@ -76,11 +85,11 @@ struct TableSizeEntry
 	Oid    tablespaceoid;
 	Oid    namespaceoid;
 	Oid    owneroid;
-	uint32 flag;     /* flag's each bit is used to show the table's status,
-	                  * which is described in TableSizeEntryFlag.
-	                  */
-	int64 totalsize; /* table size including fsm, visibility map
-	                  * etc. */
+	uint32 flag;                                /* flag's each bit is used to show the table's status,
+	                                             * which is described in TableSizeEntryFlag.
+	                                             */
+	int64 totalsize[SEGMENT_SIZE_ARRAY_LENGTH]; /* table size including fsm, visibility map
+	                                             * etc. */
 };
 
 typedef enum
@@ -909,15 +918,15 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 		 */
 		for (int i = -1; i < SEGCOUNT; i++)
 		{
-			key.segid  = i;
 			key.reloid = relOid;
-			tsentry    = (TableSizeEntry *)hash_search(table_size_map, &key, HASH_ENTER, &table_size_map_found);
+			key.segid  = TableSizeEntrySegid(i);
 
+			tsentry = (TableSizeEntry *)hash_search(table_size_map, &key, HASH_ENTER, &table_size_map_found);
 			if (!table_size_map_found)
 			{
-				tsentry->reloid        = relOid;
-				tsentry->segid         = key.segid;
-				tsentry->totalsize     = 0;
+				tsentry->reloid = relOid;
+				tsentry->segid  = key.segid;
+				memset(tsentry->totalsize, -1, sizeof(tsentry->totalsize));
 				tsentry->owneroid      = InvalidOid;
 				tsentry->namespaceoid  = InvalidOid;
 				tsentry->tablespaceoid = InvalidOid;
@@ -927,13 +936,14 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 
 			/* mark tsentry is_exist */
 			if (tsentry) set_table_size_entry_flag(tsentry, TABLE_EXIST);
+			key.segid          = i;
 			active_table_entry = (DiskQuotaActiveTableEntry *)hash_search(local_active_table_stat_map, &key, HASH_FIND,
 			                                                              &active_tbl_found);
 
 			/* skip to recalculate the tables which are not in active list */
 			if (active_tbl_found)
 			{
-				if (key.segid == -1)
+				if (i == -1)
 				{
 					/* pretend process as utility mode, and append the table size on master */
 					Gp_role = GP_ROLE_UTILITY;
@@ -943,20 +953,20 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 					Gp_role = GP_ROLE_DISPATCH;
 				}
 				/* firstly calculate the updated total size of a table */
-				updated_total_size = active_table_entry->tablesize - tsentry->totalsize;
+				updated_total_size = active_table_entry->tablesize - TableSizeEntryGetSize(tsentry, i);
 
 				/* update the table_size entry */
-				tsentry->totalsize = (int64)active_table_entry->tablesize;
+				TableSizeEntrySetSize(tsentry, i, active_table_entry->tablesize);
 				set_table_size_entry_flag(tsentry, TABLE_NEED_FLUSH);
 
 				/* update the disk usage, there may be entries in the map whose keys are InvlidOid as the tsentry does
 				 * not exist in the table_size_map */
-				update_size_for_quota(updated_total_size, NAMESPACE_QUOTA, (Oid[]){tsentry->namespaceoid}, key.segid);
-				update_size_for_quota(updated_total_size, ROLE_QUOTA, (Oid[]){tsentry->owneroid}, key.segid);
+				update_size_for_quota(updated_total_size, NAMESPACE_QUOTA, (Oid[]){tsentry->namespaceoid}, i);
+				update_size_for_quota(updated_total_size, ROLE_QUOTA, (Oid[]){tsentry->owneroid}, i);
 				update_size_for_quota(updated_total_size, ROLE_TABLESPACE_QUOTA,
-				                      (Oid[]){tsentry->owneroid, tsentry->tablespaceoid}, key.segid);
+				                      (Oid[]){tsentry->owneroid, tsentry->tablespaceoid}, i);
 				update_size_for_quota(updated_total_size, NAMESPACE_TABLESPACE_QUOTA,
-				                      (Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid}, key.segid);
+				                      (Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid}, i);
 			}
 			/* table size info doesn't need to flush at init quota model stage */
 			if (is_init)
@@ -967,32 +977,32 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 			/* if schema change, transfer the file size */
 			if (tsentry->namespaceoid != relnamespace)
 			{
-				transfer_table_for_quota(tsentry->totalsize, NAMESPACE_QUOTA, (Oid[]){tsentry->namespaceoid},
-				                         (Oid[]){relnamespace}, key.segid);
-				transfer_table_for_quota(tsentry->totalsize, NAMESPACE_TABLESPACE_QUOTA,
+				transfer_table_for_quota(TableSizeEntryGetSize(tsentry, i), NAMESPACE_QUOTA,
+				                         (Oid[]){tsentry->namespaceoid}, (Oid[]){relnamespace}, i);
+				transfer_table_for_quota(TableSizeEntryGetSize(tsentry, i), NAMESPACE_TABLESPACE_QUOTA,
 				                         (Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid},
-				                         (Oid[]){relnamespace, tsentry->tablespaceoid}, key.segid);
+				                         (Oid[]){relnamespace, tsentry->tablespaceoid}, i);
 				tsentry->namespaceoid = relnamespace;
 			}
 			/* if owner change, transfer the file size */
 			if (tsentry->owneroid != relowner)
 			{
-				transfer_table_for_quota(tsentry->totalsize, ROLE_QUOTA, (Oid[]){tsentry->owneroid}, (Oid[]){relowner},
-				                         key.segid);
-				transfer_table_for_quota(tsentry->totalsize, ROLE_TABLESPACE_QUOTA,
+				transfer_table_for_quota(TableSizeEntryGetSize(tsentry, i), ROLE_QUOTA, (Oid[]){tsentry->owneroid},
+				                         (Oid[]){relowner}, i);
+				transfer_table_for_quota(TableSizeEntryGetSize(tsentry, i), ROLE_TABLESPACE_QUOTA,
 				                         (Oid[]){tsentry->owneroid, tsentry->tablespaceoid},
-				                         (Oid[]){relowner, tsentry->tablespaceoid}, key.segid);
+				                         (Oid[]){relowner, tsentry->tablespaceoid}, i);
 				tsentry->owneroid = relowner;
 			}
 
 			if (tsentry->tablespaceoid != reltablespace)
 			{
-				transfer_table_for_quota(tsentry->totalsize, NAMESPACE_TABLESPACE_QUOTA,
+				transfer_table_for_quota(TableSizeEntryGetSize(tsentry, i), NAMESPACE_TABLESPACE_QUOTA,
 				                         (Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid},
-				                         (Oid[]){tsentry->namespaceoid, reltablespace}, key.segid);
-				transfer_table_for_quota(tsentry->totalsize, ROLE_TABLESPACE_QUOTA,
+				                         (Oid[]){tsentry->namespaceoid, reltablespace}, i);
+				transfer_table_for_quota(TableSizeEntryGetSize(tsentry, i), ROLE_TABLESPACE_QUOTA,
 				                         (Oid[]){tsentry->owneroid, tsentry->tablespaceoid},
-				                         (Oid[]){tsentry->owneroid, reltablespace}, key.segid);
+				                         (Oid[]){tsentry->owneroid, reltablespace}, i);
 				tsentry->tablespaceoid = reltablespace;
 			}
 		}
@@ -1013,12 +1023,16 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 	{
 		if (!get_table_size_entry_flag(tsentry, TABLE_EXIST))
 		{
-			update_size_for_quota(-tsentry->totalsize, NAMESPACE_QUOTA, (Oid[]){tsentry->namespaceoid}, tsentry->segid);
-			update_size_for_quota(-tsentry->totalsize, ROLE_QUOTA, (Oid[]){tsentry->owneroid}, tsentry->segid);
-			update_size_for_quota(-tsentry->totalsize, ROLE_TABLESPACE_QUOTA,
-			                      (Oid[]){tsentry->owneroid, tsentry->tablespaceoid}, tsentry->segid);
-			update_size_for_quota(-tsentry->totalsize, NAMESPACE_TABLESPACE_QUOTA,
-			                      (Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid}, tsentry->segid);
+			for (int i = -1; i < SEGCOUNT; i++)
+			{
+				update_size_for_quota(-TableSizeEntryGetSize(tsentry, i), NAMESPACE_QUOTA,
+				                      (Oid[]){tsentry->namespaceoid}, i);
+				update_size_for_quota(-TableSizeEntryGetSize(tsentry, i), ROLE_QUOTA, (Oid[]){tsentry->owneroid}, i);
+				update_size_for_quota(-TableSizeEntryGetSize(tsentry, i), ROLE_TABLESPACE_QUOTA,
+				                      (Oid[]){tsentry->owneroid, tsentry->tablespaceoid}, i);
+				update_size_for_quota(-TableSizeEntryGetSize(tsentry, i), NAMESPACE_TABLESPACE_QUOTA,
+				                      (Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid}, i);
+			}
 		}
 	}
 }
@@ -1058,23 +1072,29 @@ flush_to_table_size(void)
 	hash_seq_init(&iter, table_size_map);
 	while ((tsentry = hash_seq_search(&iter)) != NULL)
 	{
-		/* delete dropped table from both table_size_map and table table_size */
+		int l = tsentry->segid * SEGMENT_SIZE_ARRAY_LENGTH - 1;
+		int r = (tsentry->segid + 1) * SEGMENT_SIZE_ARRAY_LENGTH - 1;
+		for (int i = l; i < r; i++)
+		{
+			/* delete dropped table from both table_size_map and table table_size */
+			if (!get_table_size_entry_flag(tsentry, TABLE_EXIST))
+			{
+				appendStringInfo(&deleted_table_expr, "(%u,%d), ", tsentry->reloid, i);
+				delete_statement_flag = true;
+			}
+			/* update the table size by delete+insert in table table_size */
+			else if (TableSizeEntrySizeExist(tsentry, i) && get_table_size_entry_flag(tsentry, TABLE_NEED_FLUSH))
+			{
+				appendStringInfo(&deleted_table_expr, "(%u,%d), ", tsentry->reloid, i);
+				appendStringInfo(&insert_statement, "(%u,%ld,%d), ", tsentry->reloid, TableSizeEntryGetSize(tsentry, i),
+				                 i);
+				delete_statement_flag = true;
+				insert_statement_flag = true;
+			}
+		}
+		reset_table_size_entry_flag(tsentry, TABLE_NEED_FLUSH);
 		if (!get_table_size_entry_flag(tsentry, TABLE_EXIST))
-		{
-			appendStringInfo(&deleted_table_expr, "(%u,%d), ", tsentry->reloid, tsentry->segid);
-			delete_statement_flag = true;
-
 			hash_search(table_size_map, &tsentry->reloid, HASH_REMOVE, NULL);
-		}
-		/* update the table size by delete+insert in table table_size */
-		else if (get_table_size_entry_flag(tsentry, TABLE_NEED_FLUSH))
-		{
-			reset_table_size_entry_flag(tsentry, TABLE_NEED_FLUSH);
-			appendStringInfo(&deleted_table_expr, "(%u,%d), ", tsentry->reloid, tsentry->segid);
-			appendStringInfo(&insert_statement, "(%u,%ld,%d), ", tsentry->reloid, tsentry->totalsize, tsentry->segid);
-			delete_statement_flag = true;
-			insert_statement_flag = true;
-		}
 	}
 	truncateStringInfo(&deleted_table_expr, deleted_table_expr.len - strlen(", "));
 	truncateStringInfo(&insert_statement, insert_statement.len - strlen(", "));
