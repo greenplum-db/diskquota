@@ -129,7 +129,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 SELECT tableid::regclass, size, segid FROM diskquota.table_size WHERE tableid = 'f7'::regclass and segid = -1;
 
 \c t1
-SELECT diskquota.pause();
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
 DROP EXTENSION diskquota;
 DROP TABLE f1;
@@ -140,7 +140,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 SELECT tableid::regclass, size, segid FROM diskquota.table_size WHERE tableid = 'f1'::regclass and segid = -1;
 
 \c t2
-SELECT diskquota.pause();
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
 DROP EXTENSION diskquota;
 DROP TABLE f2;
@@ -151,39 +151,39 @@ SELECT diskquota.wait_for_worker_new_epoch();
 SELECT tableid::regclass, size, segid FROM diskquota.table_size WHERE tableid = 'f2'::regclass and segid = -1;
 
 \c t3
-SELECT diskquota.pause();
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
 DROP EXTENSION diskquota;
 \c t4
-SELECT diskquota.pause();
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
 DROP EXTENSION diskquota;
 \c t5
-SELECT diskquota.pause();
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
 DROP EXTENSION diskquota;
 \c t6
-SELECT diskquota.pause();
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
 DROP EXTENSION diskquota;
 \c t7
-SELECT diskquota.pause();
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
 DROP EXTENSION diskquota;
 \c t8
-SELECT diskquota.pause();
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
 DROP EXTENSION diskquota;
 \c t9
-SELECT diskquota.pause();
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
 DROP EXTENSION diskquota;
 \c t10
-SELECT diskquota.pause();
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
 DROP EXTENSION diskquota;
 \c t11
-SELECT diskquota.pause();
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
 DROP EXTENSION diskquota;
 
@@ -193,16 +193,16 @@ CREATE TABLE f12(a int);
 INSERT into f12 SELECT generate_series(0,1000);
 SELECT diskquota.wait_for_worker_new_epoch();
 SELECT tableid::regclass, size, segid FROM diskquota.table_size WHERE tableid = 'f12'::regclass and segid = -1;
-SELECT diskquota.pause();
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
 DROP EXTENSION diskquota;
 
 \c t1
-SELECT diskquota.pause();
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
 DROP EXTENSION diskquota;
 \c t2
-SELECT diskquota.pause();
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
 DROP EXTENSION diskquota;
 --start_ignore

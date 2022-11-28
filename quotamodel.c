@@ -715,11 +715,15 @@ refresh_disk_quota_model(bool is_init)
 	}
 
 	if (is_init) ereport(LOG, (errmsg("[diskquota] initialize quota model started")));
+	StartTransactionCommand();
+	get_object_address(OBJECT_EXTENSION, (List *)stringToNode("diskquota"), NULL, NULL, AccessShareLock, false);
+
 	/* skip refresh model when load_quotas failed */
 	if (load_quotas())
 	{
 		refresh_disk_quota_usage(is_init);
 	}
+	CommitTransactionCommand();
 	if (is_init) ereport(LOG, (errmsg("[diskquota] initialize quota model finished")));
 }
 

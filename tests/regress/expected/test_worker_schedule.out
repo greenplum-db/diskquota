@@ -346,12 +346,7 @@ SELECT tableid::regclass, size, segid FROM diskquota.table_size WHERE tableid = 
 (1 row)
 
 \c t1
-SELECT diskquota.pause();
- pause 
--------
- 
-(1 row)
-
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
  wait_for_worker_new_epoch 
 ---------------------------
@@ -378,12 +373,7 @@ SELECT tableid::regclass, size, segid FROM diskquota.table_size WHERE tableid = 
 (1 row)
 
 \c t2
-SELECT diskquota.pause();
- pause 
--------
- 
-(1 row)
-
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
  wait_for_worker_new_epoch 
 ---------------------------
@@ -410,12 +400,7 @@ SELECT tableid::regclass, size, segid FROM diskquota.table_size WHERE tableid = 
 (1 row)
 
 \c t3
-SELECT diskquota.pause();
- pause 
--------
- 
-(1 row)
-
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
  wait_for_worker_new_epoch 
 ---------------------------
@@ -424,12 +409,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 
 DROP EXTENSION diskquota;
 \c t4
-SELECT diskquota.pause();
- pause 
--------
- 
-(1 row)
-
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
  wait_for_worker_new_epoch 
 ---------------------------
@@ -438,12 +418,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 
 DROP EXTENSION diskquota;
 \c t5
-SELECT diskquota.pause();
- pause 
--------
- 
-(1 row)
-
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
  wait_for_worker_new_epoch 
 ---------------------------
@@ -452,12 +427,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 
 DROP EXTENSION diskquota;
 \c t6
-SELECT diskquota.pause();
- pause 
--------
- 
-(1 row)
-
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
  wait_for_worker_new_epoch 
 ---------------------------
@@ -466,12 +436,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 
 DROP EXTENSION diskquota;
 \c t7
-SELECT diskquota.pause();
- pause 
--------
- 
-(1 row)
-
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
  wait_for_worker_new_epoch 
 ---------------------------
@@ -480,12 +445,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 
 DROP EXTENSION diskquota;
 \c t8
-SELECT diskquota.pause();
- pause 
--------
- 
-(1 row)
-
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
  wait_for_worker_new_epoch 
 ---------------------------
@@ -494,12 +454,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 
 DROP EXTENSION diskquota;
 \c t9
-SELECT diskquota.pause();
- pause 
--------
- 
-(1 row)
-
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
  wait_for_worker_new_epoch 
 ---------------------------
@@ -508,12 +463,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 
 DROP EXTENSION diskquota;
 \c t10
-SELECT diskquota.pause();
- pause 
--------
- 
-(1 row)
-
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
  wait_for_worker_new_epoch 
 ---------------------------
@@ -522,12 +472,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 
 DROP EXTENSION diskquota;
 \c t11
-SELECT diskquota.pause();
- pause 
--------
- 
-(1 row)
-
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
  wait_for_worker_new_epoch 
 ---------------------------
@@ -553,12 +498,7 @@ SELECT tableid::regclass, size, segid FROM diskquota.table_size WHERE tableid = 
  f12     | 98304 |    -1
 (1 row)
 
-SELECT diskquota.pause();
- pause 
--------
- 
-(1 row)
-
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
  wait_for_worker_new_epoch 
 ---------------------------
@@ -567,12 +507,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 
 DROP EXTENSION diskquota;
 \c t1
-SELECT diskquota.pause();
- pause 
--------
- 
-(1 row)
-
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
  wait_for_worker_new_epoch 
 ---------------------------
@@ -581,12 +516,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 
 DROP EXTENSION diskquota;
 \c t2
-SELECT diskquota.pause();
- pause 
--------
- 
-(1 row)
-
+-- SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
  wait_for_worker_new_epoch 
 ---------------------------
