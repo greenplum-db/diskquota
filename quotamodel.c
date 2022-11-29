@@ -72,9 +72,6 @@ int SEGCOUNT = 0;
 struct TableSizeEntry
 {
 	TableEntryKey key;
-	Oid           tablespaceoid;
-	Oid           namespaceoid;
-	Oid           owneroid;
 	uint32        flag; /* flag's each bit is used to show the table's status,
 	                     * which is described in TableSizeEntryFlag.
 	                     */
@@ -82,6 +79,13 @@ struct TableSizeEntry
 	                     * etc. */
 };
 
+struct TableInfoEntry
+{
+	Oid    reloid;
+	Oid    tablespaceoid;
+	Oid    namespaceoid;
+	Oid    owneroid;
+};
 typedef enum
 {
 	TABLE_EXIST      = (1 << 0), /* whether table is already dropped */
@@ -169,6 +173,7 @@ struct LocalRejectMapEntry
 
 /* using hash table to support incremental update the table size entry.*/
 static HTAB *table_size_map = NULL;
+static HTAB *table_info_map = NULL;
 
 /* rejectmap for database objects which exceed their quota limit */
 static HTAB *disk_quota_reject_map       = NULL;
@@ -454,6 +459,7 @@ diskquota_worker_shmem_size()
 	Size size;
 	size = hash_estimate_size(MAX_TABLES, sizeof(TableSizeEntry));
 	size = add_size(size, hash_estimate_size(MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, sizeof(LocalRejectMapEntry)));
+	size = add_size(size, hash_estimate_size(MAX_TABLES/100, sizeof(TableInfoEntry)));
 	size = add_size(size, hash_estimate_size(1024L, sizeof(struct QuotaMapEntry)) * NUM_QUOTA_TYPES);
 	return size;
 }
@@ -503,6 +509,13 @@ init_disk_quota_model(uint32 id)
 	format_name("TableSizeEntrymap", id, &str);
 	table_size_map = ShmemInitHash(str.data, INIT_TABLES, MAX_TABLES, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
 
+	memset(&hash_ctl, 0, sizeof(hash_ctl));
+	hash_ctl.keysize   = sizeof(Oid);
+	hash_ctl.entrysize = sizeof(TableInfoEntry);
+	hash_ctl.hash      = oid_hash;
+
+	format_name("TableInfomap", id, &str);
+	table_info_map = ShmemInitHash(str.data, INIT_TABLES, MAX_TABLES/100, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
 	/* for localrejectmap */
 	memset(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize   = sizeof(RejectMapEntry);
@@ -566,6 +579,19 @@ vacuum_disk_quota_model(uint32 id)
 		hash_search(table_size_map, &tsentry->key, HASH_REMOVE, NULL);
 	}
 
+	/* table_size_map */
+	memset(&hash_ctl, 0, sizeof(hash_ctl));
+	hash_ctl.keysize   = sizeof(Oid);
+	hash_ctl.entrysize = sizeof(TableInfoEntry);
+	hash_ctl.hash      = oid_hash;
+
+	format_name("TableInfomap", id, &str);
+	table_info_map = ShmemInitHash(str.data, INIT_TABLES, MAX_TABLES/100, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
+	hash_seq_init(&iter, table_info_map);
+	while ((tsentry = hash_seq_search(&iter)) != NULL)
+	{
+		hash_search(table_info_map, &tsentry->reloid, HASH_REMOVE, NULL);
+	}
 	/* localrejectmap */
 	memset(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize   = sizeof(RejectMapEntry);
