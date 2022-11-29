@@ -57,6 +57,7 @@
 #define NUM_QUOTA_CONFIG_ATTRS 6
 
 typedef struct TableSizeEntry       TableSizeEntry;
+typedef struct TableInfoEntry       TableInfoEntry;
 typedef struct NamespaceSizeEntry   NamespaceSizeEntry;
 typedef struct RoleSizeEntry        RoleSizeEntry;
 typedef struct QuotaLimitEntry      QuotaLimitEntry;
@@ -81,10 +82,10 @@ struct TableSizeEntry
 
 struct TableInfoEntry
 {
-	Oid    reloid;
-	Oid    tablespaceoid;
-	Oid    namespaceoid;
-	Oid    owneroid;
+	Oid reloid;
+	Oid tablespaceoid;
+	Oid namespaceoid;
+	Oid owneroid;
 };
 typedef enum
 {
@@ -459,7 +460,7 @@ diskquota_worker_shmem_size()
 	Size size;
 	size = hash_estimate_size(MAX_TABLES, sizeof(TableSizeEntry));
 	size = add_size(size, hash_estimate_size(MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, sizeof(LocalRejectMapEntry)));
-	size = add_size(size, hash_estimate_size(MAX_TABLES/100, sizeof(TableInfoEntry)));
+	size = add_size(size, hash_estimate_size(MAX_TABLES / 100, sizeof(TableInfoEntry)));
 	size = add_size(size, hash_estimate_size(1024L, sizeof(struct QuotaMapEntry)) * NUM_QUOTA_TYPES);
 	return size;
 }
@@ -487,6 +488,7 @@ DiskQuotaShmemSize(void)
 		size = add_size(size, diskquota_worker_shmem_size() * MAX_NUM_MONITORED_DB);
 	}
 
+	elog(DEBUG1, "diskquota shared memory size %ld:", size);
 	return size;
 }
 
@@ -515,7 +517,7 @@ init_disk_quota_model(uint32 id)
 	hash_ctl.hash      = oid_hash;
 
 	format_name("TableInfomap", id, &str);
-	table_info_map = ShmemInitHash(str.data, INIT_TABLES, MAX_TABLES/100, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
+	table_info_map = ShmemInitHash(str.data, INIT_TABLES, MAX_TABLES / 100, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
 	/* for localrejectmap */
 	memset(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize   = sizeof(RejectMapEntry);
@@ -557,7 +559,8 @@ void
 vacuum_disk_quota_model(uint32 id)
 {
 	HASH_SEQ_STATUS       iter;
-	TableSizeEntry       *tsentry = NULL;
+	TableSizeEntry       *tsentry   = NULL;
+	TableInfoEntry       *tableInfo = NULL;
 	LocalRejectMapEntry  *localrejectentry;
 	struct QuotaMapEntry *qentry;
 
@@ -586,11 +589,11 @@ vacuum_disk_quota_model(uint32 id)
 	hash_ctl.hash      = oid_hash;
 
 	format_name("TableInfomap", id, &str);
-	table_info_map = ShmemInitHash(str.data, INIT_TABLES, MAX_TABLES/100, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
+	table_info_map = ShmemInitHash(str.data, INIT_TABLES, MAX_TABLES / 100, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
 	hash_seq_init(&iter, table_info_map);
-	while ((tsentry = hash_seq_search(&iter)) != NULL)
+	while ((tableInfo = hash_seq_search(&iter)) != NULL)
 	{
-		hash_search(table_info_map, &tsentry->reloid, HASH_REMOVE, NULL);
+		hash_search(table_info_map, &tableInfo->reloid, HASH_REMOVE, NULL);
 	}
 	/* localrejectmap */
 	memset(&hash_ctl, 0, sizeof(hash_ctl));
@@ -927,6 +930,15 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 			LWLockRelease(diskquota_locks.relation_cache_lock);
 		}
 
+		bool            found;
+		TableInfoEntry *tableInfo = (TableInfoEntry *)hash_search(table_info_map, &relOid, HASH_ENTER, &found);
+		if (!found)
+		{
+			tableInfo->owneroid      = InvalidOid;
+			tableInfo->namespaceoid  = InvalidOid;
+			tableInfo->tablespaceoid = InvalidOid;
+		}
+
 		/*
 		 * The segid is the same as the content id in gp_segment_configuration
 		 * and the content id is continuous, so it's safe to use SEGCOUNT
@@ -940,13 +952,10 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 
 			if (!table_size_map_found)
 			{
-				tsentry->key.reloid    = relOid;
-				tsentry->key.segid     = key.segid;
-				tsentry->totalsize     = 0;
-				tsentry->owneroid      = InvalidOid;
-				tsentry->namespaceoid  = InvalidOid;
-				tsentry->tablespaceoid = InvalidOid;
-				tsentry->flag          = 0;
+				tsentry->key.reloid = relOid;
+				tsentry->key.segid  = key.segid;
+				tsentry->totalsize  = 0;
+				tsentry->flag       = 0;
 				set_table_size_entry_flag(tsentry, TABLE_NEED_FLUSH);
 			}
 
@@ -976,12 +985,12 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 
 				/* update the disk usage, there may be entries in the map whose keys are InvlidOid as the tsentry does
 				 * not exist in the table_size_map */
-				update_size_for_quota(updated_total_size, NAMESPACE_QUOTA, (Oid[]){tsentry->namespaceoid}, key.segid);
-				update_size_for_quota(updated_total_size, ROLE_QUOTA, (Oid[]){tsentry->owneroid}, key.segid);
+				update_size_for_quota(updated_total_size, NAMESPACE_QUOTA, (Oid[]){tableInfo->namespaceoid}, key.segid);
+				update_size_for_quota(updated_total_size, ROLE_QUOTA, (Oid[]){tableInfo->owneroid}, key.segid);
 				update_size_for_quota(updated_total_size, ROLE_TABLESPACE_QUOTA,
-				                      (Oid[]){tsentry->owneroid, tsentry->tablespaceoid}, key.segid);
+				                      (Oid[]){tableInfo->owneroid, tableInfo->tablespaceoid}, key.segid);
 				update_size_for_quota(updated_total_size, NAMESPACE_TABLESPACE_QUOTA,
-				                      (Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid}, key.segid);
+				                      (Oid[]){tableInfo->namespaceoid, tableInfo->tablespaceoid}, key.segid);
 			}
 			/* table size info doesn't need to flush at init quota model stage */
 			if (is_init)
@@ -990,35 +999,35 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 			}
 
 			/* if schema change, transfer the file size */
-			if (tsentry->namespaceoid != relnamespace)
+			if (tableInfo->namespaceoid != relnamespace)
 			{
-				transfer_table_for_quota(tsentry->totalsize, NAMESPACE_QUOTA, (Oid[]){tsentry->namespaceoid},
+				transfer_table_for_quota(tsentry->totalsize, NAMESPACE_QUOTA, (Oid[]){tableInfo->namespaceoid},
 				                         (Oid[]){relnamespace}, key.segid);
 				transfer_table_for_quota(tsentry->totalsize, NAMESPACE_TABLESPACE_QUOTA,
-				                         (Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid},
-				                         (Oid[]){relnamespace, tsentry->tablespaceoid}, key.segid);
-				tsentry->namespaceoid = relnamespace;
+				                         (Oid[]){tableInfo->namespaceoid, tableInfo->tablespaceoid},
+				                         (Oid[]){relnamespace, tableInfo->tablespaceoid}, key.segid);
+				tableInfo->namespaceoid = relnamespace;
 			}
 			/* if owner change, transfer the file size */
-			if (tsentry->owneroid != relowner)
+			if (tableInfo->owneroid != relowner)
 			{
-				transfer_table_for_quota(tsentry->totalsize, ROLE_QUOTA, (Oid[]){tsentry->owneroid}, (Oid[]){relowner},
-				                         key.segid);
+				transfer_table_for_quota(tsentry->totalsize, ROLE_QUOTA, (Oid[]){tableInfo->owneroid},
+				                         (Oid[]){relowner}, key.segid);
 				transfer_table_for_quota(tsentry->totalsize, ROLE_TABLESPACE_QUOTA,
-				                         (Oid[]){tsentry->owneroid, tsentry->tablespaceoid},
-				                         (Oid[]){relowner, tsentry->tablespaceoid}, key.segid);
-				tsentry->owneroid = relowner;
+				                         (Oid[]){tableInfo->owneroid, tableInfo->tablespaceoid},
+				                         (Oid[]){relowner, tableInfo->tablespaceoid}, key.segid);
+				tableInfo->owneroid = relowner;
 			}
 
-			if (tsentry->tablespaceoid != reltablespace)
+			if (tableInfo->tablespaceoid != reltablespace)
 			{
 				transfer_table_for_quota(tsentry->totalsize, NAMESPACE_TABLESPACE_QUOTA,
-				                         (Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid},
-				                         (Oid[]){tsentry->namespaceoid, reltablespace}, key.segid);
+				                         (Oid[]){tableInfo->namespaceoid, tableInfo->tablespaceoid},
+				                         (Oid[]){tableInfo->namespaceoid, reltablespace}, key.segid);
 				transfer_table_for_quota(tsentry->totalsize, ROLE_TABLESPACE_QUOTA,
-				                         (Oid[]){tsentry->owneroid, tsentry->tablespaceoid},
-				                         (Oid[]){tsentry->owneroid, reltablespace}, key.segid);
-				tsentry->tablespaceoid = reltablespace;
+				                         (Oid[]){tableInfo->owneroid, tableInfo->tablespaceoid},
+				                         (Oid[]){tableInfo->owneroid, reltablespace}, key.segid);
+				tableInfo->tablespaceoid = reltablespace;
 			}
 		}
 		if (HeapTupleIsValid(classTup))
@@ -1038,13 +1047,17 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 	{
 		if (!get_table_size_entry_flag(tsentry, TABLE_EXIST))
 		{
-			update_size_for_quota(-tsentry->totalsize, NAMESPACE_QUOTA, (Oid[]){tsentry->namespaceoid},
+			bool            found;
+			TableInfoEntry *tableInfo =
+			        (TableInfoEntry *)hash_search(table_info_map, &tsentry->key.reloid, HASH_ENTER, &found);
+			if (!found) elog(WARNING, " can not find table info for %u", tsentry->key.reloid);
+			update_size_for_quota(-tsentry->totalsize, NAMESPACE_QUOTA, (Oid[]){tableInfo->namespaceoid},
 			                      tsentry->key.segid);
-			update_size_for_quota(-tsentry->totalsize, ROLE_QUOTA, (Oid[]){tsentry->owneroid}, tsentry->key.segid);
+			update_size_for_quota(-tsentry->totalsize, ROLE_QUOTA, (Oid[]){tableInfo->owneroid}, tsentry->key.segid);
 			update_size_for_quota(-tsentry->totalsize, ROLE_TABLESPACE_QUOTA,
-			                      (Oid[]){tsentry->owneroid, tsentry->tablespaceoid}, tsentry->key.segid);
+			                      (Oid[]){tableInfo->owneroid, tableInfo->tablespaceoid}, tsentry->key.segid);
 			update_size_for_quota(-tsentry->totalsize, NAMESPACE_TABLESPACE_QUOTA,
-			                      (Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid}, tsentry->key.segid);
+			                      (Oid[]){tableInfo->namespaceoid, tableInfo->tablespaceoid}, tsentry->key.segid);
 		}
 	}
 }
