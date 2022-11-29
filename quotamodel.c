@@ -454,7 +454,6 @@ diskquota_worker_shmem_size()
 {
 	Size size;
 	size = hash_estimate_size(MAX_TABLES, sizeof(TableSizeEntry));
-	size = add_size(size, hash_estimate_size(MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, sizeof(LocalRejectMapEntry)));
 	size = add_size(size, hash_estimate_size(1024L, sizeof(struct QuotaMapEntry)) * NUM_QUOTA_TYPES);
 	return size;
 }
@@ -481,7 +480,6 @@ DiskQuotaShmemSize(void)
 		size = add_size(size, diskquota_launcher_shmem_size());
 		size = add_size(size, diskquota_worker_shmem_size() * MAX_NUM_MONITORED_DB);
 	}
-
 	return size;
 }
 
@@ -504,17 +502,6 @@ init_disk_quota_model(uint32 id)
 	format_name("TableSizeEntrymap", id, &str);
 	table_size_map = ShmemInitHash(str.data, INIT_TABLES, MAX_TABLES, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
 
-	/* for localrejectmap */
-	memset(&hash_ctl, 0, sizeof(hash_ctl));
-	hash_ctl.keysize   = sizeof(RejectMapEntry);
-	hash_ctl.entrysize = sizeof(LocalRejectMapEntry);
-	hash_ctl.hash      = tag_hash;
-	/* WARNNING: The max length of name of the map is 48 */
-	format_name("localrejectmap", id, &str);
-	local_disk_quota_reject_map =
-	        ShmemInitHash(str.data, MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, &hash_ctl,
-	                      HASH_ELEM | HASH_FUNCTION);
-
 	/* for quota_info */
 
 	for (QuotaType type = 0; type < NUM_QUOTA_TYPES; ++type)
@@ -527,6 +514,15 @@ init_disk_quota_model(uint32 id)
 		quota_info[type].map = ShmemInitHash(str.data, 1024L, 1024L, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
 	}
 	pfree(str.data);
+	/* in local memory */
+	/* for localrejectmap */
+	memset(&hash_ctl, 0, sizeof(hash_ctl));
+	hash_ctl.keysize            = sizeof(RejectMapEntry);
+	hash_ctl.entrysize          = sizeof(LocalRejectMapEntry);
+	hash_ctl.hcxt               = CurrentMemoryContext;
+	hash_ctl.hash               = tag_hash;
+	local_disk_quota_reject_map = hash_create("localrejectmap", MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, &hash_ctl,
+	                                          HASH_ELEM | HASH_CONTEXT | HASH_FUNCTION);
 }
 
 /*
@@ -546,7 +542,6 @@ vacuum_disk_quota_model(uint32 id)
 {
 	HASH_SEQ_STATUS       iter;
 	TableSizeEntry       *tsentry = NULL;
-	LocalRejectMapEntry  *localrejectentry;
 	struct QuotaMapEntry *qentry;
 
 	HASHCTL        hash_ctl;
@@ -565,22 +560,6 @@ vacuum_disk_quota_model(uint32 id)
 	while ((tsentry = hash_seq_search(&iter)) != NULL)
 	{
 		hash_search(table_size_map, &tsentry->reloid, HASH_REMOVE, NULL);
-	}
-
-	/* localrejectmap */
-	memset(&hash_ctl, 0, sizeof(hash_ctl));
-	hash_ctl.keysize   = sizeof(RejectMapEntry);
-	hash_ctl.entrysize = sizeof(LocalRejectMapEntry);
-	hash_ctl.hash      = tag_hash;
-	/* WARNNING: The max length of name of the map is 48 */
-	format_name("localrejectmap", id, &str);
-	local_disk_quota_reject_map =
-	        ShmemInitHash(str.data, MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, &hash_ctl,
-	                      HASH_ELEM | HASH_FUNCTION);
-	hash_seq_init(&iter, local_disk_quota_reject_map);
-	while ((localrejectentry = hash_seq_search(&iter)) != NULL)
-	{
-		hash_search(local_disk_quota_reject_map, &localrejectentry->keyitem, HASH_REMOVE, NULL);
 	}
 
 	/* quota_info */
@@ -1123,6 +1102,16 @@ flush_local_reject_map(void)
 
 	LWLockAcquire(diskquota_locks.reject_map_lock, LW_EXCLUSIVE);
 
+	hash_seq_init(&iter, disk_quota_reject_map);
+
+	while ((rejectentry = hash_seq_search(&iter)) != NULL)
+	{
+		if (rejectentry->keyitem.databaseoid == MyDatabaseId)
+		{
+			(void)hash_search(disk_quota_reject_map, (void *)&rejectentry->keyitem, HASH_REMOVE, NULL);
+		}
+	}
+
 	hash_seq_init(&iter, local_disk_quota_reject_map);
 	while ((localrejectentry = hash_seq_search(&iter)) != NULL)
 	{
@@ -1145,17 +1134,10 @@ flush_local_reject_map(void)
 					rejectentry->keyitem.databaseoid   = MyDatabaseId;
 					rejectentry->keyitem.targettype    = localrejectentry->keyitem.targettype;
 					rejectentry->keyitem.tablespaceoid = localrejectentry->keyitem.tablespaceoid;
-					rejectentry->segexceeded           = localrejectentry->segexceeded;
 				}
 			}
-			rejectentry->segexceeded      = localrejectentry->segexceeded;
-			localrejectentry->isexceeded  = false;
-			localrejectentry->segexceeded = false;
-		}
-		else
-		{
-			/* db objects are removed or under quota limit in the new loop */
-			(void)hash_search(disk_quota_reject_map, (void *)&localrejectentry->keyitem, HASH_REMOVE, NULL);
+			rejectentry->segexceeded = localrejectentry->segexceeded;
+			rejectentry->segexceeded = localrejectentry->segexceeded;
 			(void)hash_search(local_disk_quota_reject_map, (void *)&localrejectentry->keyitem, HASH_REMOVE, NULL);
 		}
 	}
