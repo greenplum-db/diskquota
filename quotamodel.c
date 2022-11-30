@@ -557,6 +557,7 @@ vacuum_disk_quota_model(uint32 id)
 	TableSizeEntry       *tsentry = NULL;
 	LocalRejectMapEntry  *localrejectentry;
 	struct QuotaMapEntry *qentry;
+	TableEntryKey         key;
 
 	HASHCTL        hash_ctl;
 	StringInfoData str;
@@ -573,7 +574,9 @@ vacuum_disk_quota_model(uint32 id)
 	hash_seq_init(&iter, table_size_map);
 	while ((tsentry = hash_seq_search(&iter)) != NULL)
 	{
-		hash_search(table_size_map, &tsentry->reloid, HASH_REMOVE, NULL);
+		key.reloid = tsentry->reloid;
+		key.segid  = tsentry->segid;
+		hash_search(table_size_map, &key, HASH_REMOVE, NULL);
 	}
 
 	/* localrejectmap */
@@ -1048,6 +1051,7 @@ flush_to_table_size(void)
 {
 	HASH_SEQ_STATUS iter;
 	TableSizeEntry *tsentry = NULL;
+	TableEntryKey   key;
 	StringInfoData  delete_statement;
 	StringInfoData  insert_statement;
 	StringInfoData  deleted_table_expr;
@@ -1094,7 +1098,11 @@ flush_to_table_size(void)
 		}
 		reset_table_size_entry_flag(tsentry, TABLE_NEED_FLUSH);
 		if (!get_table_size_entry_flag(tsentry, TABLE_EXIST))
-			hash_search(table_size_map, &tsentry->reloid, HASH_REMOVE, NULL);
+		{
+			key.reloid = tsentry->reloid;
+			key.segid  = tsentry->segid;
+			hash_search(table_size_map, &key, HASH_REMOVE, NULL);
+		}
 	}
 	truncateStringInfo(&deleted_table_expr, deleted_table_expr.len - strlen(", "));
 	truncateStringInfo(&insert_statement, insert_statement.len - strlen(", "));
