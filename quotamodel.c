@@ -45,9 +45,9 @@
 /* cluster level max size of rejectmap */
 #define MAX_DISK_QUOTA_REJECT_ENTRIES (1024 * 1024)
 /* init size of table_size_map */
-#define INIT_TABLES (20 * 1024)
+#define INIT_TABLES (1 * 1024)
 /* max size of table_size_map */
-#define MAX_TABLES (200 * 1024)
+#define MAX_TABLES (4 * 1024)
 /* cluster level init size of rejectmap */
 #define INIT_DISK_QUOTA_REJECT_ENTRIES 8192
 /* per database level max size of rejectmap */
@@ -61,22 +61,18 @@
 /* Use the top bit of totalsize as a flush flag. If this bit is set, the size should be flushed into
  * diskquota.table_size_table. */
 #define TableSizeEntryFlushFlag (1ul << 63)
-#define TableSizeEntryFlushFlagMask (TableSizeEntryFlushFlag - 1)
-#define TableSizeEntrySegid(segid) ((segid + 1) / SEGMENT_SIZE_ARRAY_LENGTH)
+#define TableSizeEntryFlushSizeMask (TableSizeEntryFlushFlag - 1)
+#define TableSizeEntryId(segid) ((segid + 1) / SEGMENT_SIZE_ARRAY_LENGTH)
 #define TableSizeEntryIndex(segid) ((segid + 1) % SEGMENT_SIZE_ARRAY_LENGTH)
-#define TableSizeEntrySizeExist(entry, segid) (entry->totalsize[TableSizeEntryIndex(segid)] != -1)
 #define TableSizeEntryGetFlushFlag(entry, segid) \
 	(entry->totalsize[TableSizeEntryIndex(segid)] & TableSizeEntryFlushFlag)
 #define TableSizeEntrySetFlushFlag(entry, segid) entry->totalsize[TableSizeEntryIndex(segid)] |= TableSizeEntryFlushFlag
 #define TableSizeEntryResetFlushFlag(entry, segid) \
-	entry->totalsize[TableSizeEntryIndex(segid)] &= TableSizeEntryFlushFlagMask
-#define TableSizeEntryNeedFlush(entry, segid) \
-	(TableSizeEntrySizeExist(entry, segid) && TableSizeEntryGetFlushFlag(entry, segid))
-#define TableSizeEntryGetSize(entry, segid)                                                 \
-	(TableSizeEntrySizeExist(entry, segid)                                                  \
-	         ? (entry->totalsize[TableSizeEntryIndex(segid)] & TableSizeEntryFlushFlagMask) \
-	         : 0)
+	entry->totalsize[TableSizeEntryIndex(segid)] &= TableSizeEntryFlushSizeMask
+#define TableSizeEntryGetSize(entry, segid) (entry->totalsize[TableSizeEntryIndex(segid)] & TableSizeEntryFlushSizeMask)
 #define TableSizeEntrySetSize(entry, segid, size) entry->totalsize[TableSizeEntryIndex(segid)] = size
+#define TableSizeEntrySegidStart(entry) (entry->id * SEGMENT_SIZE_ARRAY_LENGTH - 1)
+#define TableSizeEntrySegidEnd(entry) ((entry->id + 1) * SEGMENT_SIZE_ARRAY_LENGTH - 1)
 
 typedef struct TableSizeEntry       TableSizeEntry;
 typedef struct NamespaceSizeEntry   NamespaceSizeEntry;
@@ -91,10 +87,10 @@ int SEGCOUNT = 0;
 /*
  * local cache of table disk size and corresponding schema and owner.
  *
- * segid is the ID for TableSizeEntry. When segid is 0, this TableSizeEntry stores the table size in the (-1 ~
+ * When id is 0, this TableSizeEntry stores the table size in the (-1 ~
  * SEGMENT_SIZE_ARRAY_LENGTH - 2)th segment, as so on.
  * |---------|--------------------------------------------------------------------------|
- * |  segid  |                                segment index                             |
+ * |   id    |                                segment index                             |
  * |---------|--------------------------------------------------------------------------|
  * |    0    |  [-1,                                SEGMENT_SIZE_ARRAY_LENGTH - 1)      |
  * |    1    |  [SEGMENT_SIZE_ARRAY_LENGTH - 1,     2 * SEGMENT_SIZE_ARRAY_LENGTH - 1)  |
@@ -103,13 +99,13 @@ int SEGCOUNT = 0;
  *
  * flag's each bit is used to show the table's status, which is described in TableSizeEntryFlag.
  *
- * totalsize contains tables' size on segments. When segid is 0, totalsize[0] is the sum of all segments' table size.
+ * totalsize contains tables' size on segments. When id is 0, totalsize[0] is the sum of all segments' table size.
  * table size including fsm, visibility map etc.
  */
 struct TableSizeEntry
 {
 	Oid    reloid;
-	int    segid;
+	int    id;
 	Oid    tablespaceoid;
 	Oid    namespaceoid;
 	Oid    owneroid;
@@ -599,7 +595,7 @@ vacuum_disk_quota_model(uint32 id)
 	while ((tsentry = hash_seq_search(&iter)) != NULL)
 	{
 		key.reloid = tsentry->reloid;
-		key.segid  = tsentry->segid;
+		key.segid  = tsentry->id;
 		hash_search(table_size_map, &key, HASH_REMOVE, NULL);
 	}
 
@@ -947,18 +943,22 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 		for (int i = -1; i < SEGCOUNT; i++)
 		{
 			key.reloid = relOid;
-			key.segid  = TableSizeEntrySegid(i);
+			key.segid  = TableSizeEntryId(i);
 
 			tsentry = (TableSizeEntry *)hash_search(table_size_map, &key, HASH_ENTER, &table_size_map_found);
 			if (!table_size_map_found)
 			{
 				tsentry->reloid = relOid;
-				tsentry->segid  = key.segid;
-				memset(tsentry->totalsize, -1, sizeof(tsentry->totalsize));
+				tsentry->id     = key.segid;
+				memset(tsentry->totalsize, 0, sizeof(tsentry->totalsize));
 				tsentry->owneroid      = InvalidOid;
 				tsentry->namespaceoid  = InvalidOid;
 				tsentry->tablespaceoid = InvalidOid;
 				tsentry->flag          = 0;
+				int seg_st             = TableSizeEntrySegidStart(tsentry);
+				int seg_ed             = TableSizeEntrySegidEnd(tsentry);
+				if (seg_ed > SEGCOUNT) seg_ed = SEGCOUNT;
+				for (int j = seg_st; j < seg_ed; j++) TableSizeEntrySetFlushFlag(tsentry, j);
 			}
 
 			/* mark tsentry is_exist */
@@ -1051,7 +1051,10 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 	{
 		if (!get_table_size_entry_flag(tsentry, TABLE_EXIST))
 		{
-			for (int i = -1; i < SEGCOUNT; i++)
+			int seg_st = TableSizeEntrySegidStart(tsentry);
+			int seg_ed = TableSizeEntrySegidEnd(tsentry);
+			if (seg_ed > SEGCOUNT) seg_ed = SEGCOUNT;
+			for (int i = seg_st; i < seg_ed; i++)
 			{
 				update_size_for_quota(-TableSizeEntryGetSize(tsentry, i), NAMESPACE_QUOTA,
 				                      (Oid[]){tsentry->namespaceoid}, i);
@@ -1101,10 +1104,10 @@ flush_to_table_size(void)
 	hash_seq_init(&iter, table_size_map);
 	while ((tsentry = hash_seq_search(&iter)) != NULL)
 	{
-		int l = tsentry->segid * SEGMENT_SIZE_ARRAY_LENGTH - 1;
-		int r = (tsentry->segid + 1) * SEGMENT_SIZE_ARRAY_LENGTH - 1;
-		if (r > SEGCOUNT) r = SEGCOUNT;
-		for (int i = l; i < r; i++)
+		int seg_st = TableSizeEntrySegidStart(tsentry);
+		int seg_ed = TableSizeEntrySegidEnd(tsentry);
+		if (seg_ed > SEGCOUNT) seg_ed = SEGCOUNT;
+		for (int i = seg_st; i < seg_ed; i++)
 		{
 			/* delete dropped table from both table_size_map and table table_size */
 			if (!get_table_size_entry_flag(tsentry, TABLE_EXIST))
@@ -1113,7 +1116,7 @@ flush_to_table_size(void)
 				delete_statement_flag = true;
 			}
 			/* update the table size by delete+insert in table table_size */
-			else if (TableSizeEntryNeedFlush(tsentry, i))
+			else if (TableSizeEntryGetFlushFlag(tsentry, i))
 			{
 				appendStringInfo(&deleted_table_expr, "(%u,%d), ", tsentry->reloid, i);
 				appendStringInfo(&insert_statement, "(%u,%ld,%d), ", tsentry->reloid, TableSizeEntryGetSize(tsentry, i),
@@ -1126,7 +1129,7 @@ flush_to_table_size(void)
 		if (!get_table_size_entry_flag(tsentry, TABLE_EXIST))
 		{
 			key.reloid = tsentry->reloid;
-			key.segid  = tsentry->segid;
+			key.segid  = tsentry->id;
 			hash_search(table_size_map, &key, HASH_REMOVE, NULL);
 		}
 	}
