@@ -1115,6 +1115,8 @@ flush_local_reject_map(void)
 	hash_seq_init(&iter, local_disk_quota_reject_map);
 	while ((localrejectentry = hash_seq_search(&iter)) != NULL)
 	{
+		/* Ethier the totalsize of table exceed the quota,or the tablesize on segment exceed the segment quota, the
+		 * isexceed is set to be true*/
 		if (localrejectentry->isexceeded)
 		{
 			rejectentry = (GlobalRejectMapEntry *)hash_search(disk_quota_reject_map, (void *)&localrejectentry->keyitem,
@@ -1136,7 +1138,6 @@ flush_local_reject_map(void)
 					rejectentry->keyitem.tablespaceoid = localrejectentry->keyitem.tablespaceoid;
 				}
 			}
-			rejectentry->segexceeded = localrejectentry->segexceeded;
 			rejectentry->segexceeded = localrejectentry->segexceeded;
 			(void)hash_search(local_disk_quota_reject_map, (void *)&localrejectentry->keyitem, HASH_REMOVE, NULL);
 		}
