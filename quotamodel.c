@@ -88,7 +88,7 @@ int SEGCOUNT = 0;
  * local cache of table disk size and corresponding schema and owner.
  *
  * When id is 0, this TableSizeEntry stores the table size in the (-1 ~
- * SEGMENT_SIZE_ARRAY_LENGTH - 2)th segment, as so on.
+ * SEGMENT_SIZE_ARRAY_LENGTH - 2)th segment, and so on.
  * |---------|--------------------------------------------------------------------------|
  * |   id    |                                segment index                             |
  * |---------|--------------------------------------------------------------------------|
