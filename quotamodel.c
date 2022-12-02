@@ -61,18 +61,20 @@
 /* Use the top bit of totalsize as a flush flag. If this bit is set, the size should be flushed into
  * diskquota.table_size_table. */
 #define TableSizeEntryFlushFlag (1ul << 63)
-#define TableSizeEntryFlushSizeMask (TableSizeEntryFlushFlag - 1)
+#define TableSizeEntrySizeMask (TableSizeEntryFlushFlag - 1)
 #define TableSizeEntryId(segid) ((segid + 1) / SEGMENT_SIZE_ARRAY_LENGTH)
 #define TableSizeEntryIndex(segid) ((segid + 1) % SEGMENT_SIZE_ARRAY_LENGTH)
 #define TableSizeEntryGetFlushFlag(entry, segid) \
 	(entry->totalsize[TableSizeEntryIndex(segid)] & TableSizeEntryFlushFlag)
 #define TableSizeEntrySetFlushFlag(entry, segid) entry->totalsize[TableSizeEntryIndex(segid)] |= TableSizeEntryFlushFlag
 #define TableSizeEntryResetFlushFlag(entry, segid) \
-	entry->totalsize[TableSizeEntryIndex(segid)] &= TableSizeEntryFlushSizeMask
-#define TableSizeEntryGetSize(entry, segid) (entry->totalsize[TableSizeEntryIndex(segid)] & TableSizeEntryFlushSizeMask)
+	entry->totalsize[TableSizeEntryIndex(segid)] &= TableSizeEntrySizeMask
+#define TableSizeEntryGetSize(entry, segid) (entry->totalsize[TableSizeEntryIndex(segid)] & TableSizeEntrySizeMask)
 #define TableSizeEntrySetSize(entry, segid, size) entry->totalsize[TableSizeEntryIndex(segid)] = size
 #define TableSizeEntrySegidStart(entry) (entry->id * SEGMENT_SIZE_ARRAY_LENGTH - 1)
-#define TableSizeEntrySegidEnd(entry) ((entry->id + 1) * SEGMENT_SIZE_ARRAY_LENGTH - 1)
+#define TableSizeEntrySegidEnd(entry)                                                                                 \
+	(((entry->id + 1) * SEGMENT_SIZE_ARRAY_LENGTH - 1) < SEGCOUNT ? ((entry->id + 1) * SEGMENT_SIZE_ARRAY_LENGTH - 1) \
+	                                                              : SEGCOUNT)
 
 typedef struct TableSizeEntry       TableSizeEntry;
 typedef struct NamespaceSizeEntry   NamespaceSizeEntry;
@@ -957,7 +959,6 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 				tsentry->flag          = 0;
 				int seg_st             = TableSizeEntrySegidStart(tsentry);
 				int seg_ed             = TableSizeEntrySegidEnd(tsentry);
-				if (seg_ed > SEGCOUNT) seg_ed = SEGCOUNT;
 				for (int j = seg_st; j < seg_ed; j++) TableSizeEntrySetFlushFlag(tsentry, j);
 			}
 
@@ -1053,7 +1054,6 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 		{
 			int seg_st = TableSizeEntrySegidStart(tsentry);
 			int seg_ed = TableSizeEntrySegidEnd(tsentry);
-			if (seg_ed > SEGCOUNT) seg_ed = SEGCOUNT;
 			for (int i = seg_st; i < seg_ed; i++)
 			{
 				update_size_for_quota(-TableSizeEntryGetSize(tsentry, i), NAMESPACE_QUOTA,
@@ -1106,7 +1106,6 @@ flush_to_table_size(void)
 	{
 		int seg_st = TableSizeEntrySegidStart(tsentry);
 		int seg_ed = TableSizeEntrySegidEnd(tsentry);
-		if (seg_ed > SEGCOUNT) seg_ed = SEGCOUNT;
 		for (int i = seg_st; i < seg_ed; i++)
 		{
 			/* delete dropped table from both table_size_map and table table_size */
