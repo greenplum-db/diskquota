@@ -36,6 +36,9 @@ SELECT diskquota.wait_for_worker_new_epoch();
 INSERT INTO spcs2_perseg.a SELECT generate_series(1,200);
 ALTER TABLE spcs2_perseg.a SET SCHEMA spcs1_perseg;
 SELECT diskquota.wait_for_worker_new_epoch();
+-- start_ignore
+select c.relname,ts.* from diskquota.table_size ts, pg_class c where ts.tableid=c.oid order by tableid;
+-- end_ignore
 -- expect insert fail
 INSERT INTO a SELECT generate_series(1,200);
 SELECT schema_name, tablespace_name, quota_in_mb, nspsize_tablespace_in_bytes FROM diskquota.show_fast_schema_tablespace_quota_view WHERE schema_name = 'spcs1_perseg' and tablespace_name ='schemaspc_perseg';
@@ -52,6 +55,9 @@ SELECT diskquota.wait_for_worker_new_epoch();
 INSERT INTO a SELECT generate_series(1,200);
 ALTER TABLE a SET TABLESPACE schemaspc_perseg;
 SELECT diskquota.wait_for_worker_new_epoch();
+-- start_ignore
+select c.relname,ts.* from diskquota.table_size ts, pg_class c where ts.tableid=c.oid order by tableid;
+-- end_ignore
 -- expect insert fail
 INSERT INTO a SELECT generate_series(1,200);
 
@@ -62,6 +68,9 @@ SELECT diskquota.wait_for_worker_new_epoch();
 INSERT INTO a SELECT generate_series(1,100);
 SELECT diskquota.set_per_segment_quota('schemaspc_perseg', 0.123);
 SELECT diskquota.wait_for_worker_new_epoch();
+-- start_ignore
+select c.relname,ts.* from diskquota.table_size ts, pg_class c where ts.tableid=c.oid order by tableid;
+-- end_ignore
 ---- expect insert fail
 INSERT INTO a SELECT generate_series(1,100);
 
@@ -72,6 +81,9 @@ SELECT diskquota.wait_for_worker_new_epoch();
 INSERT INTO a SELECT generate_series(1,100);
 SELECT diskquota.set_per_segment_quota('schemaspc_perseg', 0.123);
 SELECT diskquota.wait_for_worker_new_epoch();
+-- start_ignore
+select c.relname,ts.* from diskquota.table_size ts, pg_class c where ts.tableid=c.oid order by tableid;
+-- end_ignore
 ---- expect insert fail
 INSERT INTO a SELECT generate_series(1,100);
 
