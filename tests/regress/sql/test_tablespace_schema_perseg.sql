@@ -113,6 +113,7 @@ SELECT tablespace_name, per_seg_quota_ratio FROM diskquota.show_segment_ratio_qu
 RESET search_path;
 DROP TABLE spcs1_perseg.a;
 DROP SCHEMA spcs1_perseg;
+DROP SCHEMA spcs2_perseg;
 DROP TABLESPACE schemaspc_perseg;
 DROP TABLESPACE "Schemaspc_perseg2";
 

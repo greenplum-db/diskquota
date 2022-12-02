@@ -37,34 +37,35 @@ add_custom_target(install_test_extension
 add_custom_target(installcheck)
 add_dependencies(isolation2 install_test_extension)
 add_dependencies(regress install_test_extension)
-add_dependencies(installcheck isolation2 regress)
+#add_dependencies(installcheck isolation2 regress)
 
 # Example to run test_truncate infinite times
-# RegressTarget_Add(regress_config
-#     INIT_FILE
-#     ${CMAKE_CURRENT_SOURCE_DIR}/init_file
-#     SQL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/regress/sql
-#     EXPECTED_DIR ${CMAKE_CURRENT_SOURCE_DIR}/regress/expected
-#     RESULTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/regress/results
-#     DATA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/data
-#     REGRESS
-#     config test_create_extension
-#     REGRESS_OPTS
-#     --load-extension=gp_inject_fault
-#     --dbname=contrib_regression)
-# RegressTarget_Add(regress_truncate_loop
-#     INIT_FILE
-#     ${CMAKE_CURRENT_SOURCE_DIR}/init_file
-#     SQL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/regress/sql
-#     EXPECTED_DIR ${CMAKE_CURRENT_SOURCE_DIR}/regress/expected
-#     RESULTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/regress/results
-#     DATA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/data
-#     REGRESS
-#     test_truncate
-#     RUN_TIMES -1
-#     REGRESS_OPTS
-#     --load-extension=gp_inject_fault
-#     --dbname=contrib_regression
-#     --use-existing)
-# add_dependencies(regress_truncate_loop regress_config)
-# add_dependencies(installcheck regress_truncate_loop)
+RegressTarget_Add(regress_config
+    INIT_FILE
+    ${CMAKE_CURRENT_SOURCE_DIR}/init_file
+    SQL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/regress/sql
+    EXPECTED_DIR ${CMAKE_CURRENT_SOURCE_DIR}/regress/expected
+    RESULTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/regress/results
+    DATA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/data
+    REGRESS
+    config test_create_extension
+    REGRESS_OPTS
+    --load-extension=gp_inject_fault
+    --dbname=contrib_regression)
+RegressTarget_Add(regress_truncate_loop
+    INIT_FILE
+    ${CMAKE_CURRENT_SOURCE_DIR}/init_file
+    SQL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/regress/sql
+    EXPECTED_DIR ${CMAKE_CURRENT_SOURCE_DIR}/regress/expected
+    RESULTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/regress/results
+    DATA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/data
+    REGRESS
+    test_tablespace_role_perseg
+    test_tablespace_schema_perseg
+    RUN_TIMES -1
+    REGRESS_OPTS
+    --load-extension=gp_inject_fault
+    --dbname=contrib_regression
+    --use-existing)
+add_dependencies(regress_truncate_loop regress_config)
+add_dependencies(installcheck regress_truncate_loop)
