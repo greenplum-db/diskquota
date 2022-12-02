@@ -44,10 +44,6 @@
 
 /* cluster level max size of rejectmap */
 #define MAX_DISK_QUOTA_REJECT_ENTRIES (1024 * 1024)
-/* init size of table_size_map */
-#define INIT_TABLES (1 * 1024)
-/* max size of table_size_map */
-#define MAX_TABLES (4 * 1024)
 /* cluster level init size of rejectmap */
 #define INIT_DISK_QUOTA_REJECT_ENTRIES 8192
 /* per database level max size of rejectmap */
@@ -55,7 +51,6 @@
 #define MAX_NUM_KEYS_QUOTA_MAP 8
 /* Number of attributes in quota configuration records. */
 #define NUM_QUOTA_CONFIG_ATTRS 6
-#define SEGMENT_SIZE_ARRAY_LENGTH 100
 
 /* TableSizeEntry macro function */
 /* Use the top bit of totalsize as a flush flag. If this bit is set, the size should be flushed into
@@ -85,7 +80,8 @@ typedef struct RejectMapEntry       RejectMapEntry;
 typedef struct GlobalRejectMapEntry GlobalRejectMapEntry;
 typedef struct LocalRejectMapEntry  LocalRejectMapEntry;
 
-int SEGCOUNT = 0;
+int        SEGCOUNT = 0;
+extern int diskquota_max_table_segments;
 
 /*
  * local cache of table disk size and corresponding schema and owner.
@@ -489,10 +485,9 @@ init_lwlocks(void)
 static Size
 diskquota_worker_shmem_size()
 {
-	Size size;
-	size = hash_estimate_size(MAX_TABLES, sizeof(TableSizeEntry));
-	size = add_size(size, hash_estimate_size(MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, sizeof(LocalRejectMapEntry)));
-	size = add_size(size, hash_estimate_size(1024L, sizeof(struct QuotaMapEntry)) * NUM_QUOTA_TYPES);
+	Size size = 0;
+	size      = add_size(size, hash_estimate_size(MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, sizeof(LocalRejectMapEntry)));
+	size      = add_size(size, hash_estimate_size(1024L, sizeof(struct QuotaMapEntry)) * NUM_QUOTA_TYPES);
 	return size;
 }
 
@@ -516,6 +511,7 @@ DiskQuotaShmemSize(void)
 	if (IS_QUERY_DISPATCHER())
 	{
 		size = add_size(size, diskquota_launcher_shmem_size());
+		size = add_size(size, hash_estimate_size(MAX_NUM_TABLE_SIZE_ENTRIES, sizeof(TableSizeEntry)));
 		size = add_size(size, diskquota_worker_shmem_size() * MAX_NUM_MONITORED_DB);
 	}
 
@@ -539,7 +535,8 @@ init_disk_quota_model(uint32 id)
 	hash_ctl.hash      = tag_hash;
 
 	format_name("TableSizeEntrymap", id, &str);
-	table_size_map = ShmemInitHash(str.data, INIT_TABLES, MAX_TABLES, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
+	table_size_map = ShmemInitHash(str.data, INIT_NUM_TABLE_SIZE_ENTRIES, MAX_NUM_TABLE_SIZE_ENTRIES, &hash_ctl,
+	                               HASH_ELEM | HASH_FUNCTION);
 
 	/* for localrejectmap */
 	memset(&hash_ctl, 0, sizeof(hash_ctl));
@@ -597,7 +594,8 @@ vacuum_disk_quota_model(uint32 id)
 	hash_ctl.hash      = tag_hash;
 
 	format_name("TableSizeEntrymap", id, &str);
-	table_size_map = ShmemInitHash(str.data, INIT_TABLES, MAX_TABLES, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
+	table_size_map = ShmemInitHash(str.data, INIT_NUM_TABLE_SIZE_ENTRIES, MAX_NUM_TABLE_SIZE_ENTRIES, &hash_ctl,
+	                               HASH_ELEM | HASH_FUNCTION);
 	hash_seq_init(&iter, table_size_map);
 	while ((tsentry = hash_seq_search(&iter)) != NULL)
 	{

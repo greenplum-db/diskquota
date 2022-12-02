@@ -67,11 +67,12 @@ static volatile sig_atomic_t got_sigusr1 = false;
 static volatile sig_atomic_t got_sigusr2 = false;
 
 /* GUC variables */
-int  diskquota_naptime           = 0;
-int  diskquota_max_active_tables = 0;
-int  diskquota_worker_timeout    = 60; /* default timeout is 60 seconds */
-bool diskquota_hardlimit         = false;
-int  diskquota_max_workers       = 10;
+int  diskquota_naptime            = 0;
+int  diskquota_max_active_tables  = 0;
+int  diskquota_worker_timeout     = 60; /* default timeout is 60 seconds */
+bool diskquota_hardlimit          = false;
+int  diskquota_max_workers        = 10;
+int  diskquota_max_table_segments = 0;
 
 DiskQuotaLocks       diskquota_locks;
 ExtensionDDLMessage *extension_ddl_message = NULL;
@@ -290,6 +291,10 @@ define_guc_variables(void)
 	        "diskquota.max_workers",
 	        "Max number of backgroud workers to run diskquota extension, should be less than max_worker_processes.",
 	        NULL, &diskquota_max_workers, 10, 1, 20, PGC_POSTMASTER, 0, NULL, NULL, NULL);
+	DefineCustomIntVariable("diskquota.max_table_segments", "Max number of tables segments on the cluster.", NULL,
+	                        &diskquota_max_table_segments, 4 * 1024 * MAX_NUM_MONITORED_DB,
+	                        INIT_NUM_TABLE_SIZE_ENTRIES * MAX_NUM_MONITORED_DB, INT_MAX, PGC_POSTMASTER, 0, NULL, NULL,
+	                        NULL);
 }
 
 /* ---- Functions for disk quota worker process ---- */
