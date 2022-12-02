@@ -80,8 +80,9 @@ typedef struct RejectMapEntry       RejectMapEntry;
 typedef struct GlobalRejectMapEntry GlobalRejectMapEntry;
 typedef struct LocalRejectMapEntry  LocalRejectMapEntry;
 
-int        SEGCOUNT = 0;
-extern int diskquota_max_table_segments;
+int                      SEGCOUNT = 0;
+extern int               diskquota_max_table_segments;
+extern pg_atomic_uint32 *diskquota_table_size_entry_num;
 
 /*
  * local cache of table disk size and corresponding schema and owner.
@@ -600,6 +601,7 @@ vacuum_disk_quota_model(uint32 id)
 	while ((tsentry = hash_seq_search(&iter)) != NULL)
 	{
 		hash_search(table_size_map, &tsentry->key, HASH_REMOVE, NULL);
+		pg_atomic_fetch_sub_u32(diskquota_table_size_entry_num, 1);
 	}
 
 	/* localrejectmap */
@@ -951,10 +953,22 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 			tsentry = (TableSizeEntry *)hash_search(table_size_map, &key, HASH_ENTER, &table_size_map_found);
 			if (!table_size_map_found)
 			{
+				int counter = pg_atomic_add_fetch_u32(diskquota_table_size_entry_num, 1);
+				if (counter > MAX_NUM_TABLE_SIZE_ENTRIES)
+				{
+					hash_search(table_size_map, &key, HASH_REMOVE, NULL);
+					if ((counter - MAX_NUM_TABLE_SIZE_ENTRIES) % 100 == 1)
+					{
+						ereport(WARNING, (errmsg("[diskquota] the number of tables exceeds the limit, please increate "
+						                         "the GUC value for diskquota.max_table_segments. Current "
+						                         "diskquota.max_table_segments value: %d",
+						                         diskquota_max_table_segments)));
+					}
+					continue;
+				}
 				tsentry->key.reloid = relOid;
 				tsentry->key.id     = key.id;
 				Assert(TableSizeEntrySegidStart(tsentry) == cur_segid);
-
 				memset(tsentry->totalsize, 0, sizeof(tsentry->totalsize));
 				tsentry->owneroid      = InvalidOid;
 				tsentry->namespaceoid  = InvalidOid;
@@ -1132,6 +1146,7 @@ flush_to_table_size(void)
 		if (!get_table_size_entry_flag(tsentry, TABLE_EXIST))
 		{
 			hash_search(table_size_map, &tsentry->key, HASH_REMOVE, NULL);
+			pg_atomic_fetch_sub_u32(diskquota_table_size_entry_num, 1);
 		}
 	}
 	truncateStringInfo(&deleted_table_expr, deleted_table_expr.len - strlen(", "));

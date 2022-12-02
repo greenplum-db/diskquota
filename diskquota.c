@@ -84,6 +84,9 @@ static DiskQuotaWorkerEntry *volatile MyWorkerInfo = NULL;
 // how many database diskquota are monitoring on
 static int num_db = 0;
 
+/* how many TableSizeEntry are maintained in table_size_map */
+pg_atomic_uint32 *diskquota_table_size_entry_num;
+
 static DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
 
 #define MIN_SLEEPTIME 100 /* milliseconds */
@@ -292,7 +295,7 @@ define_guc_variables(void)
 	        "Max number of backgroud workers to run diskquota extension, should be less than max_worker_processes.",
 	        NULL, &diskquota_max_workers, 10, 1, 20, PGC_POSTMASTER, 0, NULL, NULL, NULL);
 	DefineCustomIntVariable("diskquota.max_table_segments", "Max number of tables segments on the cluster.", NULL,
-	                        &diskquota_max_table_segments, 4 * 1024 * MAX_NUM_MONITORED_DB,
+	                        &diskquota_max_table_segments, 10 * 1024 * 1024,
 	                        INIT_NUM_TABLE_SIZE_ENTRIES * MAX_NUM_MONITORED_DB, INT_MAX, PGC_POSTMASTER, 0, NULL, NULL,
 	                        NULL);
 }
@@ -1559,6 +1562,10 @@ init_launcher_shmem()
 			DiskquotaLauncherShmem->dbArray[i].workerId = INVALID_WORKER_ID;
 		}
 	}
+	/* init TableSizeEntry counter */
+	diskquota_table_size_entry_num =
+	        ShmemInitStruct("diskquota TableSizeEntry counter", sizeof(pg_atomic_uint32), &found);
+	if (!found) pg_atomic_init_u32(diskquota_table_size_entry_num, 0);
 }
 
 /*
