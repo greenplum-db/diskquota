@@ -960,12 +960,12 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 					hash_search(table_size_map, &key, HASH_REMOVE, NULL);
 					if ((counter - MAX_NUM_TABLE_SIZE_ENTRIES) % 100 == 1)
 					{
-						ereport(WARNING, (errmsg("[diskquota] the number of tables exceeds the limit, please increate "
+						ereport(WARNING, (errmsg("[diskquota] the number of tables exceeds the limit, please increase "
 						                         "the GUC value for diskquota.max_table_segments. Current "
 						                         "diskquota.max_table_segments value: %d",
 						                         diskquota_max_table_segments)));
 					}
-					continue;
+					break;
 				}
 				tsentry->key.reloid = relOid;
 				tsentry->key.id     = key.id;
