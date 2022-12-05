@@ -84,7 +84,7 @@ static DiskQuotaWorkerEntry *volatile MyWorkerInfo = NULL;
 // how many database diskquota are monitoring on
 static int num_db = 0;
 
-/* how many TableSizeEntry are maintained in table_size_map */
+/* how many TableSizeEntry are maintained in all the table_size_map in shared memory*/
 pg_atomic_uint32 *diskquota_table_size_entry_num;
 
 static DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
