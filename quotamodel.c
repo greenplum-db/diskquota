@@ -966,30 +966,30 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 			else
 			{
 				tsentry = (TableSizeEntry *)hash_search(table_size_map, &key, HASH_ENTER, &table_size_map_found);
-			}
 
-			if (!table_size_map_found)
-			{
-				counter = pg_atomic_add_fetch_u32(diskquota_table_size_entry_num, 1);
-				if (counter > MAX_NUM_TABLE_SIZE_ENTRIES)
+				if (!table_size_map_found)
 				{
-					ereport(WARNING, (errmsg("[diskquota] the number of tables exceeds the limit, please increase "
-					                         "the GUC value for diskquota.max_table_segments. Current "
-					                         "diskquota.max_table_segments value: %d",
-					                         diskquota_max_table_segments)));
-				}
-				tsentry->key.reloid = relOid;
-				tsentry->key.id     = key.id;
-				Assert(TableSizeEntrySegidStart(tsentry) == cur_segid);
-				memset(tsentry->totalsize, 0, sizeof(tsentry->totalsize));
-				tsentry->owneroid      = InvalidOid;
-				tsentry->namespaceoid  = InvalidOid;
-				tsentry->tablespaceoid = InvalidOid;
-				tsentry->flag          = 0;
+					counter = pg_atomic_add_fetch_u32(diskquota_table_size_entry_num, 1);
+					if (counter > MAX_NUM_TABLE_SIZE_ENTRIES)
+					{
+						ereport(WARNING, (errmsg("[diskquota] the number of tables exceeds the limit, please increase "
+						                         "the GUC value for diskquota.max_table_segments. Current "
+						                         "diskquota.max_table_segments value: %d",
+						                         diskquota_max_table_segments)));
+					}
+					tsentry->key.reloid = relOid;
+					tsentry->key.id     = key.id;
+					Assert(TableSizeEntrySegidStart(tsentry) == cur_segid);
+					memset(tsentry->totalsize, 0, sizeof(tsentry->totalsize));
+					tsentry->owneroid      = InvalidOid;
+					tsentry->namespaceoid  = InvalidOid;
+					tsentry->tablespaceoid = InvalidOid;
+					tsentry->flag          = 0;
 
-				int seg_st = TableSizeEntrySegidStart(tsentry);
-				int seg_ed = TableSizeEntrySegidEnd(tsentry);
-				for (int j = seg_st; j < seg_ed; j++) TableSizeEntrySetFlushFlag(tsentry, j);
+					int seg_st = TableSizeEntrySegidStart(tsentry);
+					int seg_ed = TableSizeEntrySegidEnd(tsentry);
+					for (int j = seg_st; j < seg_ed; j++) TableSizeEntrySetFlushFlag(tsentry, j);
+				}
 			}
 
 			/* mark tsentry is_exist */
