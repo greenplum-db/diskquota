@@ -945,7 +945,7 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 		 * and the content id is continuous, so it's safe to use SEGCOUNT
 		 * to get segid.
 		 */
-		for (int i = -1; i < SEGCOUNT; i++)
+		for (int i = -1; i < SEGCOUNT; i += SEGMENT_SIZE_ARRAY_LENGTH)
 		{
 			key.reloid = relOid;
 			key.id     = TableSizeEntryId(i);
@@ -960,82 +960,94 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 				tsentry->namespaceoid  = InvalidOid;
 				tsentry->tablespaceoid = InvalidOid;
 				tsentry->flag          = 0;
-
-				int seg_st = TableSizeEntrySegidStart(tsentry);
-				int seg_ed = TableSizeEntrySegidEnd(tsentry);
-				for (int j = seg_st; j < seg_ed; j++) TableSizeEntrySetFlushFlag(tsentry, j);
+				int seg_st             = TableSizeEntrySegidStart(tsentry);
+				int seg_ed             = TableSizeEntrySegidEnd(tsentry);
+				for (int cur_seg = seg_st; cur_seg < seg_ed; cur_seg++) TableSizeEntrySetFlushFlag(tsentry, cur_seg);
 			}
 
 			/* mark tsentry is_exist */
 			if (tsentry) set_table_size_entry_flag(tsentry, TABLE_EXIST);
-			active_table_key.reloid = relOid;
-			active_table_key.segid  = i;
-			active_table_entry      = (DiskQuotaActiveTableEntry *)hash_search(
-			             local_active_table_stat_map, &active_table_key, HASH_FIND, &active_tbl_found);
 
-			/* skip to recalculate the tables which are not in active list */
-			if (active_tbl_found)
+			int seg_st = TableSizeEntrySegidStart(tsentry);
+			int seg_ed = TableSizeEntrySegidEnd(tsentry);
+			for (int cur_seg = seg_st; cur_seg < seg_ed; cur_seg++)
 			{
-				if (i == -1)
+				active_table_key.reloid = relOid;
+				active_table_key.segid  = cur_seg;
+				active_table_entry      = (DiskQuotaActiveTableEntry *)hash_search(
+				             local_active_table_stat_map, &active_table_key, HASH_FIND, &active_tbl_found);
+				/* skip to recalculate the tables which are not in active list */
+				if (active_tbl_found)
 				{
-					/* pretend process as utility mode, and append the table size on master */
-					Gp_role = GP_ROLE_UTILITY;
+					if (cur_seg == -1)
+					{
+						/* pretend process as utility mode, and append the table size on master */
+						Gp_role = GP_ROLE_UTILITY;
 
-					active_table_entry->tablesize += calculate_table_size(relOid);
+						active_table_entry->tablesize += calculate_table_size(relOid);
 
-					Gp_role = GP_ROLE_DISPATCH;
+						Gp_role = GP_ROLE_DISPATCH;
+					}
+					/* firstly calculate the updated total size of a table */
+					updated_total_size = active_table_entry->tablesize - TableSizeEntryGetSize(tsentry, cur_seg);
+
+					/* update the table_size entry */
+					TableSizeEntrySetSize(tsentry, cur_seg, active_table_entry->tablesize);
+					TableSizeEntrySetFlushFlag(tsentry, cur_seg);
+
+					/* update the disk usage, there may be entries in the map whose keys are InvlidOid as the tsentry
+					 * does not exist in the table_size_map */
+					update_size_for_quota(updated_total_size, NAMESPACE_QUOTA, (Oid[]){tsentry->namespaceoid}, cur_seg);
+					update_size_for_quota(updated_total_size, ROLE_QUOTA, (Oid[]){tsentry->owneroid}, cur_seg);
+					update_size_for_quota(updated_total_size, ROLE_TABLESPACE_QUOTA,
+					                      (Oid[]){tsentry->owneroid, tsentry->tablespaceoid}, cur_seg);
+					update_size_for_quota(updated_total_size, NAMESPACE_TABLESPACE_QUOTA,
+					                      (Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid}, cur_seg);
 				}
-				/* firstly calculate the updated total size of a table */
-				updated_total_size = active_table_entry->tablesize - TableSizeEntryGetSize(tsentry, i);
-
-				/* update the table_size entry */
-				TableSizeEntrySetSize(tsentry, i, active_table_entry->tablesize);
-				TableSizeEntrySetFlushFlag(tsentry, i);
-
-				/* update the disk usage, there may be entries in the map whose keys are InvlidOid as the tsentry does
-				 * not exist in the table_size_map */
-				update_size_for_quota(updated_total_size, NAMESPACE_QUOTA, (Oid[]){tsentry->namespaceoid}, i);
-				update_size_for_quota(updated_total_size, ROLE_QUOTA, (Oid[]){tsentry->owneroid}, i);
-				update_size_for_quota(updated_total_size, ROLE_TABLESPACE_QUOTA,
-				                      (Oid[]){tsentry->owneroid, tsentry->tablespaceoid}, i);
-				update_size_for_quota(updated_total_size, NAMESPACE_TABLESPACE_QUOTA,
-				                      (Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid}, i);
+				/* table size info doesn't need to flush at init quota model stage */
+				if (is_init)
+				{
+					TableSizeEntryResetFlushFlag(tsentry, cur_seg);
+				}
 			}
-			/* table size info doesn't need to flush at init quota model stage */
-			if (is_init)
-			{
-				TableSizeEntryResetFlushFlag(tsentry, i);
-			}
-
 			/* if schema change, transfer the file size */
 			if (tsentry->namespaceoid != relnamespace)
 			{
-				transfer_table_for_quota(TableSizeEntryGetSize(tsentry, i), NAMESPACE_QUOTA,
-				                         (Oid[]){tsentry->namespaceoid}, (Oid[]){relnamespace}, i);
-				transfer_table_for_quota(TableSizeEntryGetSize(tsentry, i), NAMESPACE_TABLESPACE_QUOTA,
-				                         (Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid},
-				                         (Oid[]){relnamespace, tsentry->tablespaceoid}, i);
+				for (int cur_seg = seg_st; cur_seg < seg_ed; cur_seg++)
+				{
+					transfer_table_for_quota(TableSizeEntryGetSize(tsentry, cur_seg), NAMESPACE_QUOTA,
+					                         (Oid[]){tsentry->namespaceoid}, (Oid[]){relnamespace}, cur_seg);
+					transfer_table_for_quota(TableSizeEntryGetSize(tsentry, cur_seg), NAMESPACE_TABLESPACE_QUOTA,
+					                         (Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid},
+					                         (Oid[]){relnamespace, tsentry->tablespaceoid}, cur_seg);
+				}
 				tsentry->namespaceoid = relnamespace;
 			}
 			/* if owner change, transfer the file size */
 			if (tsentry->owneroid != relowner)
 			{
-				transfer_table_for_quota(TableSizeEntryGetSize(tsentry, i), ROLE_QUOTA, (Oid[]){tsentry->owneroid},
-				                         (Oid[]){relowner}, i);
-				transfer_table_for_quota(TableSizeEntryGetSize(tsentry, i), ROLE_TABLESPACE_QUOTA,
-				                         (Oid[]){tsentry->owneroid, tsentry->tablespaceoid},
-				                         (Oid[]){relowner, tsentry->tablespaceoid}, i);
+				for (int cur_seg = seg_st; cur_seg < seg_ed; cur_seg++)
+				{
+					transfer_table_for_quota(TableSizeEntryGetSize(tsentry, cur_seg), ROLE_QUOTA,
+					                         (Oid[]){tsentry->owneroid}, (Oid[]){relowner}, cur_seg);
+					transfer_table_for_quota(TableSizeEntryGetSize(tsentry, cur_seg), ROLE_TABLESPACE_QUOTA,
+					                         (Oid[]){tsentry->owneroid, tsentry->tablespaceoid},
+					                         (Oid[]){relowner, tsentry->tablespaceoid}, cur_seg);
+				}
 				tsentry->owneroid = relowner;
 			}
 
 			if (tsentry->tablespaceoid != reltablespace)
 			{
-				transfer_table_for_quota(TableSizeEntryGetSize(tsentry, i), NAMESPACE_TABLESPACE_QUOTA,
-				                         (Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid},
-				                         (Oid[]){tsentry->namespaceoid, reltablespace}, i);
-				transfer_table_for_quota(TableSizeEntryGetSize(tsentry, i), ROLE_TABLESPACE_QUOTA,
-				                         (Oid[]){tsentry->owneroid, tsentry->tablespaceoid},
-				                         (Oid[]){tsentry->owneroid, reltablespace}, i);
+				for (int cur_seg = seg_st; cur_seg < seg_ed; cur_seg++)
+				{
+					transfer_table_for_quota(TableSizeEntryGetSize(tsentry, cur_seg), NAMESPACE_TABLESPACE_QUOTA,
+					                         (Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid},
+					                         (Oid[]){tsentry->namespaceoid, reltablespace}, cur_seg);
+					transfer_table_for_quota(TableSizeEntryGetSize(tsentry, cur_seg), ROLE_TABLESPACE_QUOTA,
+					                         (Oid[]){tsentry->owneroid, tsentry->tablespaceoid},
+					                         (Oid[]){tsentry->owneroid, reltablespace}, cur_seg);
+				}
 				tsentry->tablespaceoid = reltablespace;
 			}
 		}
