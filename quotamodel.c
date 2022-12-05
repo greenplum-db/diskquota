@@ -486,9 +486,10 @@ init_lwlocks(void)
 static Size
 diskquota_worker_shmem_size()
 {
-	Size size = 0;
-	size      = add_size(size, hash_estimate_size(MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, sizeof(LocalRejectMapEntry)));
-	size      = add_size(size, hash_estimate_size(1024L, sizeof(struct QuotaMapEntry)) * NUM_QUOTA_TYPES);
+	Size size;
+	size = hash_estimate_size(MAX_NUM_TABLE_SIZE_ENTRIES / MAX_NUM_MONITORED_DB + 100, sizeof(TableSizeEntry));
+	size = add_size(size, hash_estimate_size(MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, sizeof(LocalRejectMapEntry)));
+	size = add_size(size, hash_estimate_size(1024L, sizeof(struct QuotaMapEntry)) * NUM_QUOTA_TYPES);
 	return size;
 }
 
@@ -513,7 +514,6 @@ DiskQuotaShmemSize(void)
 	{
 		size = add_size(size, diskquota_launcher_shmem_size());
 		size = add_size(size, sizeof(pg_atomic_uint32));
-		size = add_size(size, hash_estimate_size(MAX_NUM_TABLE_SIZE_ENTRIES, sizeof(TableSizeEntry)));
 		size = add_size(size, diskquota_worker_shmem_size() * MAX_NUM_MONITORED_DB);
 	}
 
@@ -958,6 +958,7 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 				if (counter > MAX_NUM_TABLE_SIZE_ENTRIES)
 				{
 					hash_search(table_size_map, &key, HASH_REMOVE, NULL);
+					/* For every 100 times exceeding MAX_NUM_TABLE_SIZE_ENTRIES, we print a WARNING log. */
 					if ((counter - MAX_NUM_TABLE_SIZE_ENTRIES) % 100 == 1)
 					{
 						ereport(WARNING, (errmsg("[diskquota] the number of tables exceeds the limit, please increase "
