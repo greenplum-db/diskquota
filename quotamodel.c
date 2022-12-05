@@ -951,22 +951,32 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 			key.reloid = relOid;
 			key.id     = TableSizeEntryId(cur_segid);
 
-			tsentry = (TableSizeEntry *)hash_search(table_size_map, &key, HASH_ENTER, &table_size_map_found);
+			uint32 counter = pg_atomic_read_u32(diskquota_table_size_entry_num);
+			if (counter > MAX_NUM_TABLE_SIZE_ENTRIES)
+			{
+				tsentry = (TableSizeEntry *)hash_search(table_size_map, &key, HASH_FIND, &table_size_map_found);
+				/* Too many tables have been added to the table_size_map, to avoid diskquota using
+				   too much share memory, just quit the loop. The diskquota won't work correctly
+				   anymore. */
+				if (!table_size_map_found)
+				{
+					break;
+				}
+			}
+			else
+			{
+				tsentry = (TableSizeEntry *)hash_search(table_size_map, &key, HASH_ENTER, &table_size_map_found);
+			}
+
 			if (!table_size_map_found)
 			{
-				int counter = pg_atomic_add_fetch_u32(diskquota_table_size_entry_num, 1);
+				counter = pg_atomic_add_fetch_u32(diskquota_table_size_entry_num, 1);
 				if (counter > MAX_NUM_TABLE_SIZE_ENTRIES)
 				{
-					hash_search(table_size_map, &key, HASH_REMOVE, NULL);
-					/* For every 100 times exceeding MAX_NUM_TABLE_SIZE_ENTRIES, we print a WARNING log. */
-					if ((counter - MAX_NUM_TABLE_SIZE_ENTRIES) % 100 == 1)
-					{
-						ereport(WARNING, (errmsg("[diskquota] the number of tables exceeds the limit, please increase "
-						                         "the GUC value for diskquota.max_table_segments. Current "
-						                         "diskquota.max_table_segments value: %d",
-						                         diskquota_max_table_segments)));
-					}
-					break;
+					ereport(WARNING, (errmsg("[diskquota] the number of tables exceeds the limit, please increase "
+											 "the GUC value for diskquota.max_table_segments. Current "
+											 "diskquota.max_table_segments value: %d",
+											 diskquota_max_table_segments)));
 				}
 				tsentry->key.reloid = relOid;
 				tsentry->key.id     = key.id;
