@@ -512,6 +512,7 @@ DiskQuotaShmemSize(void)
 	if (IS_QUERY_DISPATCHER())
 	{
 		size = add_size(size, diskquota_launcher_shmem_size());
+		size = add_size(size, sizeof(pg_atomic_uint32));
 		size = add_size(size, hash_estimate_size(MAX_NUM_TABLE_SIZE_ENTRIES, sizeof(TableSizeEntry)));
 		size = add_size(size, diskquota_worker_shmem_size() * MAX_NUM_MONITORED_DB);
 	}
