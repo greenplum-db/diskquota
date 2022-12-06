@@ -224,7 +224,7 @@ static void transfer_table_for_quota(int64 totalsize, QuotaType type, Oid *old_k
 static void refresh_disk_quota_usage(bool is_init);
 static void calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map);
 static void flush_to_table_size(void);
-static void flush_local_reject_map(void);
+static bool flush_local_reject_map(void);
 static void dispatch_rejectmap(HTAB *local_active_table_stat_map);
 static bool load_quotas(void);
 static void do_load_quotas(void);
@@ -805,9 +805,9 @@ refresh_disk_quota_usage(bool is_init)
 		/* flush local table_size_map to user table table_size */
 		flush_to_table_size();
 		/* copy local reject map back to shared reject map */
-		flush_local_reject_map();
+		bool reject_map_changed = flush_local_reject_map();
 		/* Dispatch rejectmap entries to segments to perform hard-limit. */
-		if (diskquota_hardlimit) dispatch_rejectmap(local_active_table_stat_map);
+		if (diskquota_hardlimit && reject_map_changed) dispatch_rejectmap(local_active_table_stat_map);
 		hash_destroy(local_active_table_stat_map);
 	}
 	PG_CATCH();
@@ -1198,9 +1198,10 @@ flush_to_table_size(void)
  * exceed the quota limit.
  * local_rejectmap is used to reduce the lock contention.
  */
-static void
+static bool
 flush_local_reject_map(void)
 {
+	bool                  changed = false;
 	HASH_SEQ_STATUS       iter;
 	LocalRejectMapEntry  *localrejectentry;
 	GlobalRejectMapEntry *rejectentry;
@@ -1231,6 +1232,7 @@ flush_local_reject_map(void)
 					rejectentry->keyitem.targettype    = localrejectentry->keyitem.targettype;
 					rejectentry->keyitem.tablespaceoid = localrejectentry->keyitem.tablespaceoid;
 					rejectentry->segexceeded           = localrejectentry->segexceeded;
+					changed                            = true;
 				}
 			}
 			rejectentry->segexceeded      = localrejectentry->segexceeded;
@@ -1239,12 +1241,14 @@ flush_local_reject_map(void)
 		}
 		else
 		{
+			changed = true;
 			/* db objects are removed or under quota limit in the new loop */
 			(void)hash_search(disk_quota_reject_map, (void *)&localrejectentry->keyitem, HASH_REMOVE, NULL);
 			(void)hash_search(local_disk_quota_reject_map, (void *)&localrejectentry->keyitem, HASH_REMOVE, NULL);
 		}
 	}
 	LWLockRelease(diskquota_locks.reject_map_lock);
+	return changed;
 }
 
 /*
