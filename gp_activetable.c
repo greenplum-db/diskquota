@@ -34,6 +34,7 @@
 #include "utils/syscache.h"
 #include "utils/inval.h"
 
+#include "utils/relfilenodemap.h"
 #include "gp_activetable.h"
 #include "diskquota.h"
 #include "relation_cache.h"
@@ -155,8 +156,11 @@ active_table_hook_smgrextend(RelFileNodeBackend rnode)
 {
 	if (prev_file_extend_hook) (*prev_file_extend_hook)(rnode);
 
+	if (rnode.node.relNode < FirstNormalObjectId) return;
+
 	report_active_table_helper(&rnode);
-	quota_check_common(InvalidOid /*reloid*/, &rnode.node);
+	Oid relOid = diskquota_hardlimit ? RelidByRelfilenode(rnode.node.spcNode, rnode.node.relNode) : InvalidOid;
+	quota_check_common(relOid /*reloid*/, &rnode.node);
 }
 
 /*

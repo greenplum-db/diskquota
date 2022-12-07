@@ -1590,20 +1590,11 @@ prepare_rejectmap_search_key(RejectMapEntry *keyitem, QuotaType type, Oid relown
  * Do enforcement if quota exceeds.
  */
 static bool
-check_rejectmap_by_reloid(Oid reloid)
+check_rejectmap_by_reloid(Oid reloid, Oid ownerOid, Oid nsOid, Oid tablespaceoid)
 {
-	Oid                   ownerOid      = InvalidOid;
-	Oid                   nsOid         = InvalidOid;
-	Oid                   tablespaceoid = InvalidOid;
-	bool                  found;
 	RejectMapEntry        keyitem;
 	GlobalRejectMapEntry *entry;
-
-	bool found_rel = get_rel_owner_schema_tablespace(reloid, &ownerOid, &nsOid, &tablespaceoid);
-	if (!found_rel)
-	{
-		return true;
-	}
+	bool                  found;
 
 	LWLockAcquire(diskquota_locks.reject_map_lock, LW_SHARED);
 	for (QuotaType type = 0; type < NUM_QUOTA_TYPES; ++type)
@@ -1630,12 +1621,23 @@ bool
 quota_check_common(Oid reloid, RelFileNode *relfilenode)
 {
 	bool enable_hardlimit;
+	Oid  ownerOid      = InvalidOid;
+	Oid  nsOid         = InvalidOid;
+	Oid  tablespaceoid = InvalidOid;
+	if (reloid < FirstNormalObjectId) return true;
 
 	if (!IsTransactionState()) return true;
 
 	if (diskquota_is_paused()) return true;
 
-	if (OidIsValid(reloid)) return check_rejectmap_by_reloid(reloid);
+	if (OidIsValid(reloid))
+	{
+		bool found_rel = get_rel_owner_schema_tablespace(reloid, &ownerOid, &nsOid, &tablespaceoid);
+		if (found_rel)
+		{
+			return check_rejectmap_by_reloid(reloid, ownerOid, nsOid, tablespaceoid);
+		}
+	}
 
 	enable_hardlimit = diskquota_hardlimit;
 
@@ -1858,97 +1860,11 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 		 * inconsistency.
 		 */
 		AcceptInvalidationMessages();
-		tuple = SearchSysCacheCopy1(RELOID, active_oid);
+		tuple = SearchSysCache1(RELOID, active_oid);
+		/* Table is not commited */
 		if (HeapTupleIsValid(tuple))
 		{
-			Form_pg_class  form          = (Form_pg_class)GETSTRUCT(tuple);
-			Oid            relnamespace  = form->relnamespace;
-			Oid            reltablespace = OidIsValid(form->reltablespace) ? form->reltablespace : MyDatabaseTableSpace;
-			Oid            relowner      = form->relowner;
-			RejectMapEntry keyitem;
-			bool           found;
-
-			for (QuotaType type = 0; type < NUM_QUOTA_TYPES; ++type)
-			{
-				/* Check that if the current relation should be blocked. */
-				prepare_rejectmap_search_key(&keyitem, type, relowner, relnamespace, reltablespace);
-				rejectmapentry = hash_search(local_rejectmap, &keyitem, HASH_FIND, &found);
-				if (found && rejectmapentry)
-				{
-					/*
-					 * If the current relation is blocked, we should add the relfilenode
-					 * of itself together with the relfilenodes of its toast relation and
-					 * appendonly relations to the global reject map.
-					 */
-					List     *oid_list       = NIL;
-					ListCell *cell           = NULL;
-					Oid       toastrelid     = form->reltoastrelid;
-					Oid       aosegrelid     = InvalidOid;
-					Oid       aoblkdirrelid  = InvalidOid;
-					Oid       aovisimaprelid = InvalidOid;
-					oid_list                 = lappend_oid(oid_list, active_oid);
-
-					/* Append toast relation and toast index to the oid_list if any. */
-					if (OidIsValid(toastrelid))
-					{
-						oid_list = lappend_oid(oid_list, toastrelid);
-						oid_list = list_concat(oid_list, diskquota_get_index_list(toastrelid));
-					}
-
-					/* Append ao auxiliary relations and their indexes to the oid_list if any. */
-					diskquota_get_appendonly_aux_oid_list(active_oid, &aosegrelid, &aoblkdirrelid, &aovisimaprelid);
-					if (OidIsValid(aosegrelid))
-					{
-						oid_list = lappend_oid(oid_list, aosegrelid);
-						oid_list = list_concat(oid_list, diskquota_get_index_list(aosegrelid));
-					}
-					if (OidIsValid(aoblkdirrelid))
-					{
-						oid_list = lappend_oid(oid_list, aoblkdirrelid);
-						oid_list = list_concat(oid_list, diskquota_get_index_list(aoblkdirrelid));
-					}
-					if (OidIsValid(aovisimaprelid))
-					{
-						oid_list = lappend_oid(oid_list, aovisimaprelid);
-						oid_list = list_concat(oid_list, diskquota_get_index_list(aovisimaprelid));
-					}
-
-					/* Iterate over the oid_list and add their relfilenodes to the rejectmap. */
-					foreach (cell, oid_list)
-					{
-						Oid       curr_oid   = lfirst_oid(cell);
-						HeapTuple curr_tuple = SearchSysCacheCopy1(RELOID, ObjectIdGetDatum(curr_oid));
-						if (HeapTupleIsValid(curr_tuple))
-						{
-							Form_pg_class curr_form = (Form_pg_class)GETSTRUCT(curr_tuple);
-							Oid curr_reltablespace  = OidIsValid(curr_form->reltablespace) ? curr_form->reltablespace
-							                                                               : MyDatabaseTableSpace;
-							RelFileNode           relfilenode = {.dbNode  = MyDatabaseId,
-							                                     .relNode = curr_form->relfilenode,
-							                                     .spcNode = curr_reltablespace};
-							bool                  found;
-							GlobalRejectMapEntry *blocked_filenode_entry;
-							RejectMapEntry        blocked_filenode_keyitem;
-
-							memset(&blocked_filenode_keyitem, 0, sizeof(RejectMapEntry));
-							memcpy(&blocked_filenode_keyitem.relfilenode, &relfilenode, sizeof(RelFileNode));
-
-							blocked_filenode_entry =
-							        hash_search(local_rejectmap, &blocked_filenode_keyitem, HASH_ENTER_NULL, &found);
-							if (!found && blocked_filenode_entry)
-							{
-								memcpy(&blocked_filenode_entry->auxblockinfo, &keyitem, sizeof(RejectMapEntry));
-								blocked_filenode_entry->segexceeded = rejectmapentry->segexceeded;
-							}
-						}
-					}
-					/*
-					 * The current relation may satisfy multiple blocking conditions,
-					 * we only add it once.
-					 */
-					break;
-				}
-			}
+			ReleaseSysCache(tuple);
 		}
 		else
 		{
