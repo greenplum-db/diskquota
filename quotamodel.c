@@ -1212,6 +1212,16 @@ flush_local_reject_map(void)
 	hash_seq_init(&iter, local_disk_quota_reject_map);
 	while ((localrejectentry = hash_seq_search(&iter)) != NULL)
 	{
+		/*
+		 * If localrejectentry->isexceeded is true, and it alredy exists in disk_quota_reject_map,
+		 * that means the reject entry exists in both last loop and current loop, but its segexceeded
+		 * feild may have changed.
+		 *
+		 * If localrejectentry->isexceeded is true, and it doesn't exist in disk_quota_reject_map,
+		 * then it is a new added reject entry in this loop.
+		 *
+		 * Otherwise, it means the reject entry has gone, we need to delete it.
+		 */
 		if (localrejectentry->isexceeded)
 		{
 			rejectentry = (GlobalRejectMapEntry *)hash_search(disk_quota_reject_map, (void *)&localrejectentry->keyitem,
@@ -1221,21 +1231,23 @@ flush_local_reject_map(void)
 				ereport(WARNING, (errmsg("[diskquota] Shared disk quota reject map size limit reached."
 				                         "Some out-of-limit schemas or roles will be lost"
 				                         "in rejectmap.")));
+				continue;
 			}
-			else
+			/* new db objects which exceed quota limit */
+			if (!found)
 			{
-				/* new db objects which exceed quota limit */
-				if (!found)
-				{
-					rejectentry->keyitem.targetoid     = localrejectentry->keyitem.targetoid;
-					rejectentry->keyitem.databaseoid   = MyDatabaseId;
-					rejectentry->keyitem.targettype    = localrejectentry->keyitem.targettype;
-					rejectentry->keyitem.tablespaceoid = localrejectentry->keyitem.tablespaceoid;
-					rejectentry->segexceeded           = localrejectentry->segexceeded;
-					changed                            = true;
-				}
+				rejectentry->keyitem.targetoid     = localrejectentry->keyitem.targetoid;
+				rejectentry->keyitem.databaseoid   = MyDatabaseId;
+				rejectentry->keyitem.targettype    = localrejectentry->keyitem.targettype;
+				rejectentry->keyitem.tablespaceoid = localrejectentry->keyitem.tablespaceoid;
+				rejectentry->segexceeded           = localrejectentry->segexceeded;
+				changed                            = true;
 			}
-			rejectentry->segexceeded      = localrejectentry->segexceeded;
+			if (rejectentry->segexceeded != localrejectentry->segexceeded)
+			{
+				rejectentry->segexceeded = localrejectentry->segexceeded;
+				changed                  = true;
+			}
 			localrejectentry->isexceeded  = false;
 			localrejectentry->segexceeded = false;
 		}
