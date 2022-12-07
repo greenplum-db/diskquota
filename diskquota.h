@@ -84,6 +84,7 @@ struct DiskQuotaLocks
 {
 	LWLock *active_table_lock;
 	LWLock *reject_map_lock;
+	bool   *reject_map_lock_usable;
 	LWLock *extension_ddl_message_lock;
 	LWLock *extension_ddl_lock; /* ensure create diskquota extension serially */
 	LWLock *monitored_dbid_cache_lock;

@@ -444,6 +444,10 @@ disk_quota_shmem_startup(void)
 	disk_quota_reject_map = ShmemInitHash("rejectmap whose quota limitation is reached", INIT_DISK_QUOTA_REJECT_ENTRIES,
 	                                      MAX_DISK_QUOTA_REJECT_ENTRIES, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
 
+	diskquota_locks.reject_map_lock_usable =
+	        ShmemInitStruct("whether rejectmap lock is usable for LW_SHARED", sizeof(bool), &found);
+	if (!found) *diskquota_locks.reject_map_lock_usable = true;
+
 	init_shm_worker_active_tables();
 
 	init_shm_worker_relation_cache();
@@ -509,6 +513,7 @@ DiskQuotaShmemSize(void)
 	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(Oid)));
 	size = add_size(size, hash_estimate_size(MAX_NUM_MONITORED_DB,
 	                                         sizeof(struct MonitorDBEntryStruct))); // monitored_dbid_cache
+	size = add_size(size, sizeof(bool));
 
 	if (IS_QUERY_DISPATCHER())
 	{
@@ -1538,6 +1543,8 @@ check_rejectmap_by_relfilenode(RelFileNode relfilenode)
 	memset(&keyitem, 0, sizeof(keyitem));
 	memcpy(&keyitem.relfilenode, &relfilenode, sizeof(RelFileNode));
 
+	/* If reject_map_lock is unusable, return true directly. */
+	if (!(*diskquota_locks.reject_map_lock_usable)) return true;
 	LWLockAcquire(diskquota_locks.reject_map_lock, LW_SHARED);
 	entry = hash_search(disk_quota_reject_map, &keyitem, HASH_FIND, &found);
 
@@ -2044,6 +2051,7 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 	}
 	LWLockRelease(diskquota_locks.reject_map_lock);
 
+	*diskquota_locks.reject_map_lock_usable = false;
 	LWLockAcquire(diskquota_locks.reject_map_lock, LW_EXCLUSIVE);
 
 	/* Clear rejectmap entries. */
@@ -2070,6 +2078,7 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 		if (!found && new_entry && !OidIsValid(rejectmapentry->keyitem.targetoid))
 			memcpy(new_entry, rejectmapentry, sizeof(GlobalRejectMapEntry));
 	}
+	*diskquota_locks.reject_map_lock_usable = true;
 	LWLockRelease(diskquota_locks.reject_map_lock);
 
 	PG_RETURN_VOID();
