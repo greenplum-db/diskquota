@@ -2040,7 +2040,10 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 	/* Clear rejectmap entries. */
 	hash_seq_init(&hash_seq, disk_quota_reject_map);
 	while ((rejectmapentry = hash_seq_search(&hash_seq)) != NULL)
+	{
+		if (rejectmapentry->keyitem.relfilenode.dbNode != MyDatabaseId) continue;
 		hash_search(disk_quota_reject_map, &rejectmapentry->keyitem, HASH_REMOVE, NULL);
+	}
 
 	/* Flush the content of local_rejectmap to the global rejectmap. */
 	hash_seq_init(&hash_seq, local_rejectmap);
