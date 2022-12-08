@@ -812,7 +812,7 @@ refresh_disk_quota_usage(bool is_init)
 		/* copy local reject map back to shared reject map */
 		bool reject_map_changed = flush_local_reject_map();
 		/* Dispatch rejectmap entries to segments to perform hard-limit. */
-		if (diskquota_hardlimit && reject_map_changed && hasActiveTable)
+		if (diskquota_hardlimit && (reject_map_changed || hasActiveTable))
 			dispatch_rejectmap(local_active_table_stat_map);
 		hash_destroy(local_active_table_stat_map);
 	}
