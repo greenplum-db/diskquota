@@ -222,7 +222,7 @@ static void transfer_table_for_quota(int64 totalsize, QuotaType type, Oid *old_k
 
 /* functions to refresh disk quota model*/
 static void refresh_disk_quota_usage(bool is_init);
-static void calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map);
+static bool calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map);
 static void flush_to_table_size(void);
 static bool flush_local_reject_map(void);
 static void dispatch_rejectmap(HTAB *local_active_table_stat_map);
@@ -797,17 +797,19 @@ refresh_disk_quota_usage(bool is_init)
 		 */
 		local_active_table_stat_map = gp_fetch_active_tables(is_init);
 		/* recalculate the disk usage of table, schema and role */
-		calculate_table_disk_usage(is_init, local_active_table_stat_map);
+		bool hasActiveTable = calculate_table_disk_usage(is_init, local_active_table_stat_map);
 		for (QuotaType type = 0; type < NUM_QUOTA_TYPES; ++type)
 		{
 			check_quota_map(type);
 		}
+		/* TODO: if there is no need to call flush_to_table_size when hasActiveTable is false */
 		/* flush local table_size_map to user table table_size */
 		flush_to_table_size();
 		/* copy local reject map back to shared reject map */
 		bool reject_map_changed = flush_local_reject_map();
 		/* Dispatch rejectmap entries to segments to perform hard-limit. */
-		if (diskquota_hardlimit && reject_map_changed) dispatch_rejectmap(local_active_table_stat_map);
+		if (diskquota_hardlimit && reject_map_changed && hasActiveTable)
+			dispatch_rejectmap(local_active_table_stat_map);
 		hash_destroy(local_active_table_stat_map);
 	}
 	PG_CATCH();
@@ -869,7 +871,7 @@ merge_uncommitted_table_to_oidlist(List *oidlist)
  *  size from table table_size
  */
 
-static void
+static bool
 calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 {
 	bool                       table_size_map_found;
@@ -883,6 +885,7 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 	TableEntryKey              active_table_key;
 	List                      *oidlist;
 	ListCell                  *l;
+	bool                       hasActiveTable = false;
 
 	/*
 	 * unset is_exist flag for tsentry in table_size_map this is used to
@@ -1002,6 +1005,7 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 			/* skip to recalculate the tables which are not in active list */
 			if (active_tbl_found)
 			{
+				hasActiveTable = true;
 				if (cur_segid == -1)
 				{
 					/* pretend process as utility mode, and append the table size on master */
@@ -1097,6 +1101,7 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 			}
 		}
 	}
+	return hasActiveTable;
 }
 
 /*
