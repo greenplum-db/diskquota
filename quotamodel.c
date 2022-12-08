@@ -444,6 +444,10 @@ disk_quota_shmem_startup(void)
 	disk_quota_reject_map = ShmemInitHash("rejectmap whose quota limitation is reached", INIT_DISK_QUOTA_REJECT_ENTRIES,
 	                                      MAX_DISK_QUOTA_REJECT_ENTRIES, &hash_ctl, HASH_ELEM | HASH_FUNCTION);
 
+	diskquota_locks.reject_map_lock_usable =
+	        ShmemInitStruct("whether rejectmap lock is usable for LW_SHARED", sizeof(bool), &found);
+	if (!found) *diskquota_locks.reject_map_lock_usable = true;
+
 	init_shm_worker_active_tables();
 
 	init_shm_worker_relation_cache();
@@ -509,6 +513,7 @@ DiskQuotaShmemSize(void)
 	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(Oid)));
 	size = add_size(size, hash_estimate_size(MAX_NUM_MONITORED_DB,
 	                                         sizeof(struct MonitorDBEntryStruct))); // monitored_dbid_cache
+	size = add_size(size, sizeof(bool));
 
 	if (IS_QUERY_DISPATCHER())
 	{
@@ -1560,6 +1565,8 @@ check_rejectmap_by_relfilenode(RelFileNode relfilenode)
 	memset(&keyitem, 0, sizeof(keyitem));
 	memcpy(&keyitem.relfilenode, &relfilenode, sizeof(RelFileNode));
 
+	/* If reject_map_lock is unusable, return true directly. */
+	if (!(*diskquota_locks.reject_map_lock_usable)) return true;
 	LWLockAcquire(diskquota_locks.reject_map_lock, LW_SHARED);
 	entry = hash_search(disk_quota_reject_map, &keyitem, HASH_FIND, &found);
 
@@ -1801,6 +1808,7 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 	GlobalRejectMapEntry *rejectmapentry;
 	HASH_SEQ_STATUS       hash_seq;
 	HTAB                 *local_rejectmap;
+	HTAB                 *local_duplicate_rejectmap;
 	HASHCTL               hashctl;
 
 	if (!superuser())
@@ -1830,6 +1838,19 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 	 * local_rejectmap to the global rejectmap at the end of this UDF.
 	 */
 	local_rejectmap = hash_create("local_rejectmap", 1024, &hashctl, HASH_ELEM | HASH_CONTEXT | HASH_FUNCTION);
+
+	memset(&hashctl, 0, sizeof(hashctl));
+	hashctl.keysize   = sizeof(RejectMapEntry);
+	hashctl.entrysize = sizeof(RejectMapEntry);
+	hashctl.hcxt      = CurrentMemoryContext;
+	hashctl.hash      = tag_hash;
+
+	/* To avoid re-update the same rejectmap entry, we use local_duplicate_rejectmap
+	 * to store the entry that exists in both local_rejectmap and disk_quota_reject_map.
+	 */
+	local_duplicate_rejectmap =
+	        hash_create("local_duplicate_rejectmap", 1024, &hashctl, HASH_ELEM | HASH_CONTEXT | HASH_FUNCTION);
+
 	get_typlenbyvalalign(rejectmap_elem_type, &elem_width, &elem_type_by_val, &elem_alignment_code);
 	deconstruct_array(rejectmap_array_type, rejectmap_elem_type, elem_width, elem_type_by_val, elem_alignment_code,
 	                  &datums, &nulls, &count);
@@ -2035,12 +2056,35 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 		}
 	}
 
+	LWLockAcquire(diskquota_locks.reject_map_lock, LW_SHARED);
+	hash_seq_init(&hash_seq, local_rejectmap);
+	while ((rejectmapentry = hash_seq_search(&hash_seq)) != NULL)
+	{
+		bool found;
+		hash_search(disk_quota_reject_map, &rejectmapentry->keyitem, HASH_FIND, &found);
+		/*
+		 * If the entry exists in disk_quota_reject_map, then we move it to local_duplicate_rejectmap.
+		 */
+		if (found)
+		{
+			hash_search(local_duplicate_rejectmap, &rejectmapentry->keyitem, HASH_ENTER, NULL);
+			hash_search(local_rejectmap, &rejectmapentry->keyitem, HASH_REMOVE, NULL);
+		}
+	}
+	LWLockRelease(diskquota_locks.reject_map_lock);
+
+	*diskquota_locks.reject_map_lock_usable = false;
 	LWLockAcquire(diskquota_locks.reject_map_lock, LW_EXCLUSIVE);
 
 	/* Clear rejectmap entries. */
 	hash_seq_init(&hash_seq, disk_quota_reject_map);
 	while ((rejectmapentry = hash_seq_search(&hash_seq)) != NULL)
-		hash_search(disk_quota_reject_map, &rejectmapentry->keyitem, HASH_REMOVE, NULL);
+	{
+		if (rejectmapentry->keyitem.relfilenode.dbNode != MyDatabaseId) continue;
+		bool found;
+		hash_search(local_duplicate_rejectmap, &rejectmapentry->keyitem, HASH_FIND, &found);
+		if (!found) hash_search(disk_quota_reject_map, &rejectmapentry->keyitem, HASH_REMOVE, NULL);
+	}
 
 	/* Flush the content of local_rejectmap to the global rejectmap. */
 	hash_seq_init(&hash_seq, local_rejectmap);
@@ -2057,6 +2101,7 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 		if (!found && new_entry && !OidIsValid(rejectmapentry->keyitem.targetoid))
 			memcpy(new_entry, rejectmapentry, sizeof(GlobalRejectMapEntry));
 	}
+	*diskquota_locks.reject_map_lock_usable = true;
 	LWLockRelease(diskquota_locks.reject_map_lock);
 
 	PG_RETURN_VOID();
