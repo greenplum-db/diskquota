@@ -1795,13 +1795,15 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 	int16                 elem_width;
 	bool                  elem_type_by_val;
 	char                  elem_alignment_code;
-	int                   count;
+	int                   reject_array_count;
+	int                   active_array_count;
 	HeapTupleHeader       lt;
 	bool                  segexceeded;
 	GlobalRejectMapEntry *rejectmapentry;
 	HASH_SEQ_STATUS       hash_seq;
 	HTAB                 *local_rejectmap;
 	HASHCTL               hashctl;
+	bool                  force_clean;
 
 	if (!superuser())
 		ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE), errmsg("must be superuser to update rejectmap")));
@@ -1832,8 +1834,8 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 	local_rejectmap = hash_create("local_rejectmap", 1024, &hashctl, HASH_ELEM | HASH_CONTEXT | HASH_FUNCTION);
 	get_typlenbyvalalign(rejectmap_elem_type, &elem_width, &elem_type_by_val, &elem_alignment_code);
 	deconstruct_array(rejectmap_array_type, rejectmap_elem_type, elem_width, elem_type_by_val, elem_alignment_code,
-	                  &datums, &nulls, &count);
-	for (int i = 0; i < count; ++i)
+	                  &datums, &nulls, &reject_array_count);
+	for (int i = 0; i < reject_array_count; ++i)
 	{
 		RejectMapEntry keyitem;
 		bool           isnull;
@@ -1864,8 +1866,8 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 	 */
 	get_typlenbyvalalign(active_oid_elem_type, &elem_width, &elem_type_by_val, &elem_alignment_code);
 	deconstruct_array(active_oid_array_type, active_oid_elem_type, elem_width, elem_type_by_val, elem_alignment_code,
-	                  &datums, &nulls, &count);
-	for (int i = 0; i < count; ++i)
+	                  &datums, &nulls, &active_array_count);
+	for (int i = 0; i < active_array_count; ++i)
 	{
 		Oid       active_oid = InvalidOid;
 		HeapTuple tuple;
@@ -2038,10 +2040,12 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 	LWLockAcquire(diskquota_locks.reject_map_lock, LW_EXCLUSIVE);
 
 	/* Clear rejectmap entries. */
+	/* Pass two empty arrays to clear the reject map. */
+	force_clean = (reject_array_count == 0) && (active_array_count == 0);
 	hash_seq_init(&hash_seq, disk_quota_reject_map);
 	while ((rejectmapentry = hash_seq_search(&hash_seq)) != NULL)
 	{
-		if (rejectmapentry->keyitem.relfilenode.dbNode != MyDatabaseId) continue;
+		if (!force_clean && rejectmapentry->keyitem.relfilenode.dbNode != MyDatabaseId) continue;
 		hash_search(disk_quota_reject_map, &rejectmapentry->keyitem, HASH_REMOVE, NULL);
 	}
 
