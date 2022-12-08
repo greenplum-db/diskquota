@@ -2058,6 +2058,7 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 	hash_seq_init(&hash_seq, disk_quota_reject_map);
 	while ((rejectmapentry = hash_seq_search(&hash_seq)) != NULL)
 	{
+		if (rejectmapentry->keyitem.relfilenode.dbNode != MyDatabaseId) continue;
 		bool found;
 		hash_search(local_duplicate_rejectmap, &rejectmapentry->keyitem, HASH_FIND, &found);
 		if (!found) hash_search(disk_quota_reject_map, &rejectmapentry->keyitem, HASH_REMOVE, NULL);
