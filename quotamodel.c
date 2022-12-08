@@ -799,7 +799,7 @@ refresh_disk_quota_usage(bool is_init)
 		 * to the current database.
 		 */
 		local_active_table_stat_map = gp_fetch_active_tables(is_init);
-		bool hasActiveTable = (hash_get_num_entries(local_active_table_stat_map) != 0);
+		bool hasActiveTable         = (hash_get_num_entries(local_active_table_stat_map) != 0);
 		/* TODO: if we can skip the following steps when there is no active table */
 		/* recalculate the disk usage of table, schema and role */
 		calculate_table_disk_usage(is_init, local_active_table_stat_map);
@@ -812,7 +812,8 @@ refresh_disk_quota_usage(bool is_init)
 		/* copy local reject map back to shared reject map */
 		bool reject_map_changed = flush_local_reject_map();
 		/* Dispatch rejectmap entries to segments to perform hard-limit. */
-		if (diskquota_hardlimit && reject_map_changed && hasActiveTable) dispatch_rejectmap(local_active_table_stat_map);
+		if (diskquota_hardlimit && reject_map_changed && hasActiveTable)
+			dispatch_rejectmap(local_active_table_stat_map);
 		hash_destroy(local_active_table_stat_map);
 	}
 	PG_CATCH();
