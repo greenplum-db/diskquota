@@ -2071,8 +2071,7 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 		 * rejectmap entry with a valid targetoid to the global rejectmap on segment
 		 * servers.
 		 */
-		if (!found && new_entry)
-			memcpy(new_entry, rejectmapentry, sizeof(GlobalRejectMapEntry));
+		if (!found && new_entry) memcpy(new_entry, rejectmapentry, sizeof(GlobalRejectMapEntry));
 	}
 	LWLockRelease(diskquota_locks.reject_map_lock);
 
