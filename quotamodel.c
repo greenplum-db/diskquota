@@ -2061,13 +2061,17 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 	{
 		bool                  found;
 		GlobalRejectMapEntry *new_entry;
+
+		/* Skip soft limit reject entry */
+		if (OidIsValid(rejectmapentry->keyitem.targetoid)) continue;
+
 		new_entry = hash_search(disk_quota_reject_map, &rejectmapentry->keyitem, HASH_ENTER_NULL, &found);
 		/*
 		 * We don't perform soft-limit on segment servers, so we don't flush the
 		 * rejectmap entry with a valid targetoid to the global rejectmap on segment
 		 * servers.
 		 */
-		if (!found && new_entry && !OidIsValid(rejectmapentry->keyitem.targetoid))
+		if (!found && new_entry)
 			memcpy(new_entry, rejectmapentry, sizeof(GlobalRejectMapEntry));
 	}
 	LWLockRelease(diskquota_locks.reject_map_lock);
