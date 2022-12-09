@@ -119,6 +119,7 @@ static void terminate_all_workers(void);
 static void on_add_db(Oid dbid, MessageResult *code);
 static void on_del_db(Oid dbid, MessageResult *code);
 static bool is_valid_dbid(Oid dbid);
+static bool check_valid_dbid(Oid dbid);
 extern void invalidate_database_rejectmap(Oid dbid);
 static void FreeWorkerOnExit(int code, Datum arg);
 static void FreeWorker(DiskQuotaWorkerEntry *worker);
@@ -594,6 +595,7 @@ disk_quota_launcher_main(Datum main_arg)
 	Oid               curDBId        = 0;
 	bool              advance_one_db = true;
 	bool              timeout        = false;
+	int               try_times      = 0;
 	while (!got_sigterm)
 	{
 		int rc;
@@ -601,8 +603,9 @@ disk_quota_launcher_main(Datum main_arg)
 		/* pick a db to run */
 		if (advance_one_db)
 		{
-			curDB   = next_db(curDB);
-			timeout = false;
+			curDB     = next_db(curDB);
+			timeout   = false;
+			try_times = 0;
 			if (curDB != NULL)
 			{
 				curDBId = curDB->dbid;
@@ -732,6 +735,9 @@ disk_quota_launcher_main(Datum main_arg)
 			advance_one_db = ret;
 			/* has exceeded the next_run_time of current db */
 			timeout = true;
+			/* only try to start bgworker for a database at most 3 times */
+			try_times++;
+			if (try_times >= 3) advance_one_db = true;
 		}
 		else
 		{
@@ -1336,6 +1342,21 @@ is_valid_dbid(Oid dbid)
 	return true;
 }
 
+/* SearchSysCache should be run in a transaction */
+static bool
+check_valid_dbid(Oid dbid)
+{
+	bool          ret;
+	MemoryContext old_ctx;
+	StartTransactionCommand();
+	(void)GetTransactionSnapshot();
+	old_ctx = MemoryContextSwitchTo(TopMemoryContext);
+	ret     = is_valid_dbid(dbid);
+	MemoryContextSwitchTo(old_ctx);
+	CommitTransactionCommand();
+	return ret;
+}
+
 static const char *
 diskquota_status_check_soft_limit()
 {
@@ -1662,6 +1683,8 @@ next_db(DiskquotaDBEntry *curDB)
 		DiskquotaDBEntry *dbEntry = &DiskquotaLauncherShmem->dbArray[nextSlot];
 		nextSlot++;
 		if (!dbEntry->in_use || dbEntry->workerId != INVALID_WORKER_ID || dbEntry->dbid == InvalidOid) continue;
+		/* TODO: should release the invalid db related things */
+		if (!check_valid_dbid(dbEntry->dbid)) continue;
 		result = dbEntry;
 		break;
 	}
