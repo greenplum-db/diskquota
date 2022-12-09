@@ -811,8 +811,12 @@ refresh_disk_quota_usage(bool is_init)
 		flush_to_table_size();
 		/* copy local reject map back to shared reject map */
 		bool reject_map_changed = flush_local_reject_map();
-		/* Dispatch rejectmap entries to segments to perform hard-limit. */
-		if (diskquota_hardlimit && (reject_map_changed || hasActiveTable))
+		/* Dispatch rejectmap entries to segments to perform hard-limit.
+		 * If the bgworker is in init mode, the rejectmap should be refreshed anyway.
+		 * Otherwise, only when the rejectmap is changed or the active_table_list is
+		 * not empty the rejectmap should be dispatched to segments.
+		 */
+		if (is_init || (diskquota_hardlimit && (reject_map_changed || hasActiveTable)))
 			dispatch_rejectmap(local_active_table_stat_map);
 		hash_destroy(local_active_table_stat_map);
 	}
@@ -2045,7 +2049,9 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 	hash_seq_init(&hash_seq, disk_quota_reject_map);
 	while ((rejectmapentry = hash_seq_search(&hash_seq)) != NULL)
 	{
-		if (!force_clean && rejectmapentry->keyitem.relfilenode.dbNode != MyDatabaseId) continue;
+		if (!force_clean && rejectmapentry->keyitem.relfilenode.dbNode != MyDatabaseId &&
+		    rejectmapentry->keyitem.databaseoid != MyDatabaseId)
+			continue;
 		hash_search(disk_quota_reject_map, &rejectmapentry->keyitem, HASH_REMOVE, NULL);
 	}
 
