@@ -15,16 +15,21 @@
  */
 #include "postgres.h"
 
+#include "access/xact.h"
 #include "cdb/cdbdisp.h"
 #include "executor/executor.h"
 
+#include "utils/syscache.h"
 #include "diskquota.h"
 
 #define CHECKED_OID_LIST_NUM 64
 
 static bool quota_check_ExecCheckRTPerms(List *rangeTable, bool ereport_on_violation);
 
+static void fetch_relation_cache(QueryDesc *queryDesc, int eflags);
+
 static ExecutorCheckPerms_hook_type prev_ExecutorCheckPerms_hook;
+static ExecutorStart_hook_type      prev_ExecutorStart_hook;
 
 /*
  * Initialize enforcement hooks.
@@ -35,6 +40,8 @@ init_disk_quota_enforcement(void)
 	/* enforcement hook before query is loading data */
 	prev_ExecutorCheckPerms_hook = ExecutorCheckPerms_hook;
 	ExecutorCheckPerms_hook      = quota_check_ExecCheckRTPerms;
+	prev_ExecutorStart_hook      = ExecutorStart_hook;
+	ExecutorStart_hook           = fetch_relation_cache;
 }
 
 /*
@@ -88,4 +95,34 @@ quota_check_ExecCheckRTPerms(List *rangeTable, bool ereport_on_violation)
 		list_free(indexIds);
 	}
 	return true;
+}
+
+static void
+fetch_relation_cache(QueryDesc *queryDesc, int eflags)
+{
+	ListCell *l;
+	HeapTuple relTup;
+	if (!IsUnderPostmaster) goto execute;
+	if (RecoveryInProgress()) goto execute;
+	if (!IsTransactionState()) goto execute;
+	if (queryDesc->operation != CMD_SELECT)
+	{
+		foreach (l, queryDesc->plannedstmt->rtable)
+		{
+			List          *indexIds;
+			ListCell      *oid;
+			RangeTblEntry *rte = (RangeTblEntry *)lfirst(l);
+			if (rte->rtekind != RTE_RELATION) continue;
+			if (rte->relid < FirstNormalObjectId) continue;
+			// if ((rte->requiredPerms & ACL_INSERT) == 0 && (rte->requiredPerms & ACL_UPDATE) == 0) continue;
+			relTup = SearchSysCache1(RELOID, rte->relid);
+			ReleaseSysCache(relTup);
+		}
+	}
+
+execute:
+	if (prev_ExecutorStart_hook)
+		prev_ExecutorStart_hook(queryDesc, eflags);
+	else
+		standard_ExecutorStart(queryDesc, eflags);
 }

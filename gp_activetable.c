@@ -159,6 +159,9 @@ active_table_hook_smgrextend(RelFileNodeBackend rnode)
 	if (rnode.node.relNode < FirstNormalObjectId) return;
 
 	report_active_table_helper(&rnode);
+
+	if (RecoveryInProgress()) return; 
+	if (!IsTransactionState()) return ;
 	Oid relOid = diskquota_hardlimit ? RelidByRelfilenode(rnode.node.spcNode, rnode.node.relNode) : InvalidOid;
 	quota_check_common(relOid /*reloid*/, &rnode.node);
 }
