@@ -52,7 +52,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 
 \! pgrep -f "[p]ostgres.*bgworker.*t1" | xargs kill;
 \! sleep 0.5 ; ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep | wc -l
-       2
+2
 -- start_ignore
 \! ps -ef | grep postgres | grep "\[diskquota]" | grep -v grep
   503 89701 89678   0  4:01PM ??         0:00.17 postgres:  6000, bgworker: [diskquota] - launcher        
