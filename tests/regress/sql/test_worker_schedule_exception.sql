@@ -5,10 +5,10 @@
 \c
 DROP DATABASE IF EXISTS t1;
 DROP DATABASE IF EXISTS t2;
-CREATE DATABASE t1;
-CREATE DATABASE t2;
 --end_ignore
 
+CREATE DATABASE t1;
+CREATE DATABASE t2;
 \c t1
 CREATE EXTENSION diskquota;
 SELECT diskquota.wait_for_worker_new_epoch();
@@ -29,9 +29,9 @@ SELECT diskquota.pause();
 SELECT diskquota.wait_for_worker_new_epoch();
 DROP EXTENSION diskquota;
 
---start_ignore
 \c contrib_regression
 DROP DATABASE t2;
+--start_ignore
 \! gpconfig -r diskquota.naptime;
 \! gpconfig -r diskquota.max_workers;
 \! gpstop -arf;

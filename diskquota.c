@@ -1342,17 +1342,17 @@ is_valid_dbid(Oid dbid)
 	return true;
 }
 
-/* SearchSysCache should be run in a transaction */
+/*
+ * SearchSysCache should be run in a transaction
+ * TODO: should merge it with is_valid_dbid?
+ */
 static bool
 check_valid_dbid(Oid dbid)
 {
-	bool          ret;
-	MemoryContext old_ctx;
+	bool ret;
 	StartTransactionCommand();
 	(void)GetTransactionSnapshot();
-	old_ctx = MemoryContextSwitchTo(TopMemoryContext);
-	ret     = is_valid_dbid(dbid);
-	MemoryContextSwitchTo(old_ctx);
+	ret = is_valid_dbid(dbid);
 	CommitTransactionCommand();
 	return ret;
 }
