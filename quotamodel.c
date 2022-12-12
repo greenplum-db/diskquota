@@ -1807,7 +1807,6 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 	HASH_SEQ_STATUS       hash_seq;
 	HTAB                 *local_rejectmap;
 	HASHCTL               hashctl;
-	bool                  force_clean;
 
 	if (!superuser())
 		ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE), errmsg("must be superuser to update rejectmap")));
@@ -2045,11 +2044,10 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 
 	/* Clear rejectmap entries. */
 	/* Pass two empty arrays to clear the reject map. */
-	force_clean = (reject_array_count == 0) && (active_array_count == 0);
 	hash_seq_init(&hash_seq, disk_quota_reject_map);
 	while ((rejectmapentry = hash_seq_search(&hash_seq)) != NULL)
 	{
-		if (!force_clean && rejectmapentry->keyitem.relfilenode.dbNode != MyDatabaseId &&
+		if (rejectmapentry->keyitem.relfilenode.dbNode != MyDatabaseId &&
 		    rejectmapentry->keyitem.databaseoid != MyDatabaseId)
 			continue;
 		hash_search(disk_quota_reject_map, &rejectmapentry->keyitem, HASH_REMOVE, NULL);
