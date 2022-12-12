@@ -811,7 +811,8 @@ refresh_disk_quota_usage(bool is_init)
 		flush_to_table_size();
 		/* copy local reject map back to shared reject map */
 		bool reject_map_changed = flush_local_reject_map();
-		/* Dispatch rejectmap entries to segments to perform hard-limit.
+		/*
+		 * Dispatch rejectmap entries to segments to perform hard-limit.
 		 * If the bgworker is in init mode, the rejectmap should be refreshed anyway.
 		 * Otherwise, only when the rejectmap is changed or the active_table_list is
 		 * not empty the rejectmap should be dispatched to segments.
@@ -2043,7 +2044,6 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 	LWLockAcquire(diskquota_locks.reject_map_lock, LW_EXCLUSIVE);
 
 	/* Clear rejectmap entries. */
-	/* Pass two empty arrays to clear the reject map. */
 	hash_seq_init(&hash_seq, disk_quota_reject_map);
 	while ((rejectmapentry = hash_seq_search(&hash_seq)) != NULL)
 	{
@@ -2061,7 +2061,7 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 		GlobalRejectMapEntry *new_entry;
 
 		/*
-		 * Skip soft limit reject entry We don't perform soft-limit on segment servers, so we don't flush the
+		 * Skip soft limit reject entry. We don't perform soft-limit on segment servers, so we don't flush the
 		 * rejectmap entry with a valid targetoid to the global rejectmap on segment servers.
 		 */
 		if (OidIsValid(rejectmapentry->keyitem.targetoid)) continue;
