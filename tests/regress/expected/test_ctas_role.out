@@ -15,9 +15,7 @@ GRANT USAGE ON SCHEMA diskquota TO hardlimit_r;
 SET ROLE hardlimit_r;
 -- heap table
 CREATE TABLE t1 (i) AS SELECT generate_series(1, 100000000) DISTRIBUTED BY (i);
-NOTICE:  Table doesn't have 'DISTRIBUTED BY' clause -- Using column(s) named 'generate_series' as the Greenplum Database data distribution key for this table.
-HINT:  The 'DISTRIBUTED BY' clause determines the distribution of data. Make sure column(s) chosen are the optimal data distribution key to minimize skew.
-[hardlimit] role's disk space quota exceeded
+ERROR:  role's disk space quota exceeded with name: hardlimit_r  (seg0 127.0.0.1:6002 pid=38242)
 SELECT diskquota.wait_for_worker_new_epoch();
  wait_for_worker_new_epoch 
 ---------------------------
@@ -28,7 +26,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 CREATE TEMP TABLE t2 (i) AS SELECT generate_series(1, 100000000);
 NOTICE:  Table doesn't have 'DISTRIBUTED BY' clause -- Using column(s) named 'generate_series' as the Greenplum Database data distribution key for this table.
 HINT:  The 'DISTRIBUTED BY' clause determines the distribution of data. Make sure column(s) chosen are the optimal data distribution key to minimize skew.
-[hardlimit] role's disk space quota exceeded
+ERROR:  role's disk space quota exceeded with name: hardlimit_r  (seg1 127.0.0.1:6003 pid=38243)
 SELECT diskquota.wait_for_worker_new_epoch();
  wait_for_worker_new_epoch 
 ---------------------------
@@ -37,9 +35,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 
 -- toast table
 CREATE TABLE toast_table (i) AS SELECT ARRAY(SELECT generate_series(1,10000)) FROM generate_series(1, 100000) DISTRIBUTED BY (i);
-NOTICE:  Table doesn't have 'DISTRIBUTED BY' clause -- Using column(s) named 'array' as the Greenplum Database data distribution key for this table.
-HINT:  The 'DISTRIBUTED BY' clause determines the distribution of data. Make sure column(s) chosen are the optimal data distribution key to minimize skew.
-[hardlimit] role's disk space quota exceeded
+ERROR:  role's disk space quota exceeded with name: hardlimit_r  (seg1 127.0.0.1:6003 pid=38243)
 SELECT diskquota.wait_for_worker_new_epoch();
  wait_for_worker_new_epoch 
 ---------------------------
@@ -48,9 +44,7 @@ SELECT diskquota.wait_for_worker_new_epoch();
 
 -- ao table
 CREATE TABLE ao_table (i) WITH (appendonly=true) AS SELECT generate_series(1, 100000000) DISTRIBUTED BY (i);
-NOTICE:  Table doesn't have 'DISTRIBUTED BY' clause -- Using column(s) named 'generate_series' as the Greenplum Database data distribution key for this table.
-HINT:  The 'DISTRIBUTED BY' clause determines the distribution of data. Make sure column(s) chosen are the optimal data distribution key to minimize skew.
-[hardlimit] role's disk space quota exceeded
+ERROR:  role's disk space quota exceeded with name: hardlimit_r  (seg0 127.0.0.1:6002 pid=38242)
 SELECT diskquota.wait_for_worker_new_epoch();
  wait_for_worker_new_epoch 
 ---------------------------
@@ -62,7 +56,7 @@ CREATE TABLE aocs_table WITH (appendonly=true, orientation=column)
     AS SELECT i, ARRAY(SELECT generate_series(1,10000)) FROM generate_series(1, 100000) AS i;
 NOTICE:  Table doesn't have 'DISTRIBUTED BY' clause -- Using column(s) named 'i' as the Greenplum Database data distribution key for this table.
 HINT:  The 'DISTRIBUTED BY' clause determines the distribution of data. Make sure column(s) chosen are the optimal data distribution key to minimize skew.
-[hardlimit] role's disk space quota exceeded
+ERROR:  role's disk space quota exceeded with name: hardlimit_r  (seg2 127.0.0.1:6004 pid=38244)
 SELECT diskquota.wait_for_worker_new_epoch();
  wait_for_worker_new_epoch 
 ---------------------------
