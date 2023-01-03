@@ -163,7 +163,12 @@ active_table_hook_smgrextend(RelFileNodeBackend rnode)
 
 	if (diskquota_hardlimit)
 	{
-		if (IsTransactionState()) relOid = RelidByRelfilenode(rnode.node.spcNode, rnode.node.relNode);
+		if (IsTransactionState()) 
+		{
+			relOid = RelidByRelfilenode(rnode.node.spcNode, rnode.node.relNode);
+			elog(LOG, "get rel oid by relfile node: %u", relOid);
+		}
+
 		quota_check_common(relOid /*reloid*/, &rnode.node);
 	}
 }

@@ -1469,7 +1469,7 @@ do_load_quotas(void)
 static bool
 get_rel_owner_schema_tablespace(Oid relid, Oid *ownerOid, Oid *nsOid, Oid *tablespaceoid)
 {
-	HeapTuple tp;
+	bool found = false;
 
 	/*
 	 * Since we don't take any lock on relation, check for cache
@@ -1477,11 +1477,11 @@ get_rel_owner_schema_tablespace(Oid relid, Oid *ownerOid, Oid *nsOid, Oid *table
 	 * inconsistency.
 	 */
 	AcceptInvalidationMessages();
-	tp         = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
-	bool found = HeapTupleIsValid(tp);
-	if (HeapTupleIsValid(tp))
+	Relation rd = RelationIdGetRelation(relid);
+	if (RelationIsValid(rd))
 	{
-		Form_pg_class reltup = (Form_pg_class)GETSTRUCT(tp);
+		found = true;
+		Form_pg_class reltup = rd->rd_rel;
 
 		*ownerOid      = reltup->relowner;
 		*nsOid         = reltup->relnamespace;
@@ -1492,7 +1492,7 @@ get_rel_owner_schema_tablespace(Oid relid, Oid *ownerOid, Oid *nsOid, Oid *table
 			*tablespaceoid = MyDatabaseTableSpace;
 		}
 
-		ReleaseSysCache(tp);
+		RelationClose(rd);
 	}
 	return found;
 }
@@ -1861,11 +1861,11 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 		 */
 		AcceptInvalidationMessages();
 		tuple = SearchSysCache1(RELOID, active_oid);
-		/* Table is not commited */
 		if (HeapTupleIsValid(tuple))
 		{
 			ReleaseSysCache(tuple);
 		}
+		/* Table is not commited */
 		else
 		{
 			/*
