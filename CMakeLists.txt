@@ -83,6 +83,21 @@ ExternalProject_Add(
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON
 )
 
+set(deps_INSTALL_DIR ${CMAKE_CURRENT_BINARY_DIR}/external_deps)
+ExternalProject_Add(
+    cmocka
+    URL
+    https://cmocka.org/files/1.1/cmocka-1.1.5.tar.xz
+    URL_MD5
+    91f95cd5db88b9b120d191b18d367193
+    DOWNLOAD_DIR
+    ${DOWNLOAD_DIR}
+    CMAKE_ARGS
+    -DCMAKE_INSTALL_PREFIX=${deps_INSTALL_DIR}
+    -DCMAKE_INSTALL_LIBDIR=lib
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+)
+
 set(SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
 file(GLOB diskquota_SRC "${SRC_DIR}/*.c")
 
