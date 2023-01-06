@@ -90,3 +90,27 @@ add_dependencies(installcheck isolation2 regress)
 #     --use-existing)
 # add_dependencies(regress_truncate_loop regress_config)
 # add_dependencies(installcheck regress_truncate_loop)
+
+add_executable(test_unit_config_parse unit_test/test_unit_config_parse.c)
+add_dependencies(test_unit_config_parse cmocka cjson)
+set_target_properties(
+  test_unit_config_parse
+  PROPERTIES OUTPUT_NAME "test_unit_config_parse"
+             PREFIX ""
+             RUNTIME_OUTPUT_DIRECTORY "unit_test/"
+             C_STANDARD 99
+             LINKER_LANGUAGE "C")
+target_include_directories(
+  test_unit_config_parse PRIVATE
+  ${CMAKE_SOURCE_DIR}
+  ${PG_INCLUDE_DIR}
+  ${PG_INCLUDE_DIR_SERVER}
+  ${deps_INSTALL_DIR}/include)
+
+target_link_libraries(
+  test_unit_config_parse
+  ${deps_INSTALL_DIR}/lib/libcjson.a
+  ${deps_INSTALL_DIR}/lib/libcmocka.so)
+
+add_custom_target(ut 
+  COMMAND test_unit_config_parse)
