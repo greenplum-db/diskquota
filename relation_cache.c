@@ -225,7 +225,7 @@ parse_primary_table_oid(Oid relid, bool on_bgworker)
 	else
 	{
 #if GP_VERSION_NUM < 70000
-		rel = diskquota_relation_open(relid, AccessShareLock);
+		rel = diskquota_relation_open(relid, NoLock);
 #else
 		rel = diskquota_relation_open(relid, AccessShareLock);
 #endif /* GP_VERSION_NUM */
