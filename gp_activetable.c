@@ -110,7 +110,7 @@ init_shm_worker_active_tables(void)
 	ctl.keysize          = sizeof(Oid);
 	ctl.entrysize        = sizeof(Oid);
 	altered_reloid_cache = DiskquotaShmemInitHash("altered_reloid_cache", diskquota_max_active_tables,
-	                                              diskquota_max_active_tables, &ctl, HASH_ELEM, DISKQUOTA_TAG_HASH);
+	                                              diskquota_max_active_tables, &ctl, HASH_ELEM, DISKQUOTA_OID_HASH);
 }
 
 /*
@@ -749,7 +749,7 @@ get_active_tables_oid(void)
 	ctl.entrysize              = sizeof(Oid);
 	ctl.hcxt                   = CurrentMemoryContext;
 	local_altered_reloid_cache = diskquota_hash_create("local_altered_reloid_cache", 1024, &ctl,
-	                                                   HASH_ELEM | HASH_CONTEXT, DISKQUOTA_TAG_HASH);
+	                                                   HASH_ELEM | HASH_CONTEXT, DISKQUOTA_OID_HASH);
 
 	/* Move active table from shared memory to local active table map */
 	LWLockAcquire(diskquota_locks.active_table_lock, LW_EXCLUSIVE);

@@ -43,18 +43,16 @@ init_shm_worker_relation_cache(void)
 	HASHCTL ctl;
 
 	memset(&ctl, 0, sizeof(ctl));
-
 	ctl.keysize    = sizeof(Oid);
 	ctl.entrysize  = sizeof(DiskQuotaRelationCacheEntry);
 	relation_cache = DiskquotaShmemInitHash("relation_cache", diskquota_max_active_tables, diskquota_max_active_tables,
-	                                        &ctl, HASH_ELEM, DISKQUOTA_TAG_HASH);
+	                                        &ctl, HASH_ELEM, DISKQUOTA_OID_HASH);
 
 	memset(&ctl, 0, sizeof(ctl));
-
 	ctl.keysize   = sizeof(Oid);
 	ctl.entrysize = sizeof(DiskQuotaRelidCacheEntry);
 	relid_cache = DiskquotaShmemInitHash("relid_cache", diskquota_max_active_tables, diskquota_max_active_tables, &ctl,
-	                                     HASH_ELEM, DISKQUOTA_TAG_HASH);
+	                                     HASH_ELEM, DISKQUOTA_OID_HASH);
 }
 
 Oid
@@ -364,7 +362,7 @@ show_relation_cache(PG_FUNCTION_ARGS)
 		hashctl.hcxt      = CurrentMemoryContext;
 
 		relation_cache_ctx->relation_cache = diskquota_hash_create("relation_cache_ctx->relation_cache", 1024, &hashctl,
-		                                                           HASH_ELEM | HASH_CONTEXT, DISKQUOTA_TAG_HASH);
+		                                                           HASH_ELEM | HASH_CONTEXT, DISKQUOTA_OID_HASH);
 
 		LWLockAcquire(diskquota_locks.relation_cache_lock, LW_SHARED);
 		hash_seq_init(&hash_seq, relation_cache);
