@@ -156,12 +156,8 @@ update_relation_entry(Oid relid, DiskQuotaRelationCacheEntry *relation_entry, Di
 		relation_entry->rnode.backend = rel->rd_backend;
 		relation_entry->owneroid      = rel->rd_rel->relowner;
 		relation_entry->namespaceoid  = rel->rd_rel->relnamespace;
-#if GP_VERSION_NUM < 70000
-		relation_entry->relstorage = rel->rd_rel->relstorage;
-#else
-		relation_entry->relstorage = 0;
-#endif /* GP_VERSION_NUM */
-		relation_entry->relam = rel->rd_rel->relam;
+		relation_entry->relstorage    = DiskquotaGetRelstorage(rel->rd_rel);
+		relation_entry->relam         = rel->rd_rel->relam;
 	}
 
 	if (relid_entry)
@@ -233,7 +229,7 @@ parse_primary_table_oid(Oid relid, bool on_bgworker)
 #if GP_VERSION_NUM < 70000
 		rel = diskquota_relation_open(relid, AccessShareLock);
 #else
-		rel                        = diskquota_relation_open(relid, AccessShareLock);
+		rel = diskquota_relation_open(relid, AccessShareLock);
 #endif /* GP_VERSION_NUM */
 		if (rel == NULL)
 		{
@@ -485,13 +481,8 @@ get_relation_entry_from_pg_class(Oid relid, DiskQuotaRelationCacheEntry *relatio
 	relation_entry->primary_table_relid = relid;
 	relation_entry->owneroid            = classForm->relowner;
 	relation_entry->namespaceoid        = classForm->relnamespace;
-#if GP_VERSION_NUM < 70000
-	relation_entry->relstorage = classForm->relstorage;
-#else
-
-	relation_entry->relstorage = 0;
-#endif /* GP_VERSION_NUM */
-	relation_entry->relam = classForm->relam;
+	relation_entry->relstorage          = DiskquotaGetRelstorage(classForm);
+	relation_entry->relam               = classForm->relam;
 	relation_entry->rnode.node.spcNode =
 	        OidIsValid(classForm->reltablespace) ? classForm->reltablespace : MyDatabaseTableSpace;
 	relation_entry->rnode.node.dbNode  = MyDatabaseId;
@@ -505,12 +496,13 @@ get_relation_entry_from_pg_class(Oid relid, DiskQuotaRelationCacheEntry *relatio
 		add_auxrelation_to_relation_entry(classForm->reltoastrelid, relation_entry);
 	}
 
-	if (TableIsAoRows(classForm->relstorage, classForm->relam) ||
-	    TableIsAoCols(classForm->relstorage, classForm->relam))
+	heap_freetuple(classTup);
+
+	if (TableIsAoRows(relation_entry->relstorage, relation_entry->relam) ||
+	    TableIsAoCols(relation_entry->relstorage, relation_entry->relam))
 	{
 		is_ao = true;
 	}
-	heap_freetuple(classTup);
 
 	/* ao table */
 	if (is_ao)
@@ -594,13 +586,8 @@ get_relfilenode_by_relid(Oid relid, RelFileNodeBackend *rnode, char *relstorage,
 		rnode->node.dbNode  = MyDatabaseId;
 		rnode->node.relNode = classForm->relfilenode;
 		rnode->backend      = classForm->relpersistence == RELPERSISTENCE_TEMP ? TempRelBackendId : InvalidBackendId;
-#if GP_VERSION_NUM < 70000
-		*relstorage = classForm->relstorage;
-#else
-
-		*relstorage = 0;
-#endif /* GP_VERSION_NUM */
-		*relam = classForm->relam;
+		*relstorage         = DiskquotaGetRelstorage(classForm);
+		*relam              = classForm->relam;
 		heap_freetuple(classTup);
 		remove_cache_entry(relid, InvalidOid);
 		return;

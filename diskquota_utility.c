@@ -261,12 +261,8 @@ calculate_all_table_size()
 		rnode.node.relNode = classForm->relfilenode;
 		rnode.node.spcNode = OidIsValid(classForm->reltablespace) ? classForm->reltablespace : MyDatabaseTableSpace;
 		rnode.backend      = classForm->relpersistence == RELPERSISTENCE_TEMP ? TempRelBackendId : InvalidBackendId;
-#if GP_VERSION_NUM < 70000
-		relstorage = classForm->relstorage;
-#else
-		/* relstorage has been removed on gpdb7 */
-		relstorage = 0;
-#endif /* GP_VERSION_NUM */
+		relstorage         = DiskquotaGetRelstorage(classForm);
+
 		tablesize = calculate_relation_size_all_forks(&rnode, relstorage, classForm->relam);
 
 		keyitem.reloid = relid;
