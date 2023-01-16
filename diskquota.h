@@ -39,9 +39,9 @@
 #define SEGMENT_SIZE_ARRAY_LENGTH 100
 typedef enum
 {
-	diskquota_tag_hash = 0,
-	diskquota_oid_hash,
-	diskquota_string_hash,
+	DISKQUOTA_TAG_HASH = 0,
+	DISKQUOTA_OID_HASH,
+	DISKQUOTA_STRING_HASH,
 } DiskquotaHashFunction;
 
 /* max number of monitored database with diskquota enabled */

@@ -104,13 +104,13 @@ init_shm_worker_active_tables(void)
 	ctl.keysize       = sizeof(DiskQuotaActiveTableFileEntry);
 	ctl.entrysize     = sizeof(DiskQuotaActiveTableFileEntry);
 	active_tables_map = DiskquotaShmemInitHash("active_tables", diskquota_max_active_tables,
-	                                           diskquota_max_active_tables, &ctl, HASH_ELEM, diskquota_tag_hash);
+	                                           diskquota_max_active_tables, &ctl, HASH_ELEM, DISKQUOTA_TAG_HASH);
 
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize          = sizeof(Oid);
 	ctl.entrysize        = sizeof(Oid);
 	altered_reloid_cache = DiskquotaShmemInitHash("altered_reloid_cache", diskquota_max_active_tables,
-	                                              diskquota_max_active_tables, &ctl, HASH_ELEM, diskquota_tag_hash);
+	                                              diskquota_max_active_tables, &ctl, HASH_ELEM, DISKQUOTA_TAG_HASH);
 }
 
 /*
@@ -369,7 +369,7 @@ gp_fetch_active_tables(bool is_init)
 	ctl.hcxt      = CurrentMemoryContext;
 
 	local_table_stats_map = diskquota_hash_create("local active table map with relfilenode info", 1024, &ctl,
-	                                              HASH_ELEM | HASH_CONTEXT, diskquota_tag_hash);
+	                                              HASH_ELEM | HASH_CONTEXT, DISKQUOTA_TAG_HASH);
 
 	if (is_init)
 	{
@@ -602,7 +602,7 @@ get_active_tables_stats(ArrayType *array)
 	ctl.keysize   = sizeof(TableEntryKey);
 	ctl.entrysize = sizeof(DiskQuotaActiveTableEntry);
 	ctl.hcxt      = CurrentMemoryContext;
-	local_table   = diskquota_hash_create("local table map", 1024, &ctl, HASH_ELEM | HASH_CONTEXT, diskquota_tag_hash);
+	local_table   = diskquota_hash_create("local table map", 1024, &ctl, HASH_ELEM | HASH_CONTEXT, DISKQUOTA_TAG_HASH);
 
 	for (i = 0; i < nitems; i++)
 	{
@@ -742,14 +742,14 @@ get_active_tables_oid(void)
 	ctl.entrysize               = sizeof(DiskQuotaActiveTableFileEntry);
 	ctl.hcxt                    = CurrentMemoryContext;
 	local_active_table_file_map = diskquota_hash_create("local active table map with relfilenode info", 1024, &ctl,
-	                                                    HASH_ELEM | HASH_CONTEXT, diskquota_tag_hash);
+	                                                    HASH_ELEM | HASH_CONTEXT, DISKQUOTA_TAG_HASH);
 
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize                = sizeof(Oid);
 	ctl.entrysize              = sizeof(Oid);
 	ctl.hcxt                   = CurrentMemoryContext;
 	local_altered_reloid_cache = diskquota_hash_create("local_altered_reloid_cache", 1024, &ctl,
-	                                                   HASH_ELEM | HASH_CONTEXT, diskquota_tag_hash);
+	                                                   HASH_ELEM | HASH_CONTEXT, DISKQUOTA_TAG_HASH);
 
 	/* Move active table from shared memory to local active table map */
 	LWLockAcquire(diskquota_locks.active_table_lock, LW_EXCLUSIVE);
@@ -781,7 +781,7 @@ get_active_tables_oid(void)
 	ctl.entrysize                = sizeof(DiskQuotaActiveTableEntry);
 	ctl.hcxt                     = CurrentMemoryContext;
 	local_active_table_stats_map = diskquota_hash_create("local active table map with relfilenode info", 1024, &ctl,
-	                                                     HASH_ELEM | HASH_CONTEXT, diskquota_oid_hash);
+	                                                     HASH_ELEM | HASH_CONTEXT, DISKQUOTA_OID_HASH);
 
 	remove_committed_relation_from_cache();
 
@@ -1043,7 +1043,7 @@ pull_active_list_from_seg(void)
 	ctl.entrysize              = sizeof(DiskQuotaActiveTableEntry);
 	ctl.hcxt                   = CurrentMemoryContext;
 	local_active_table_oid_map = diskquota_hash_create("local active table map with relfilenode info", 1024, &ctl,
-	                                                   HASH_ELEM | HASH_CONTEXT, diskquota_oid_hash);
+	                                                   HASH_ELEM | HASH_CONTEXT, DISKQUOTA_OID_HASH);
 
 	/* first get all oid of tables which are active table on any segment */
 	sql = "select * from diskquota.diskquota_fetch_table_stat(0, '{}'::oid[])";

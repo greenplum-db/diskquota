@@ -232,7 +232,7 @@ calculate_all_table_size()
 	hashctl.hcxt      = CurrentMemoryContext;
 
 	local_table_size_map =
-	        diskquota_hash_create("local_table_size_map", 1024, &hashctl, HASH_ELEM | HASH_CONTEXT, diskquota_tag_hash);
+	        diskquota_hash_create("local_table_size_map", 1024, &hashctl, HASH_ELEM | HASH_CONTEXT, DISKQUOTA_TAG_HASH);
 	classRel = heap_open(RelationRelationId, AccessShareLock);
 #if GP_VERSION_NUM < 70000
 	relScan = heap_beginscan_catalog(classRel, 0, NULL);
@@ -1640,9 +1640,9 @@ HTAB *
 diskquota_hash_create(const char *tabname, long nelem, HASHCTL *info, int flags, DiskquotaHashFunction hashFunction)
 {
 #if GP_VERSION_NUM < 70000
-	if (hashFunction == diskquota_tag_hash)
+	if (hashFunction == DISKQUOTA_TAG_HASH)
 		info->hash = tag_hash;
-	else if (hashFunction == diskquota_oid_hash)
+	else if (hashFunction == DISKQUOTA_OID_HASH)
 		info->hash = oid_hash;
 	else
 		info->hash = string_hash;
@@ -1661,9 +1661,9 @@ DiskquotaShmemInitHash(const char           *name,       /* table string name fo
                        DiskquotaHashFunction hashFunction)
 {
 #if GP_VERSION_NUM < 70000
-	if (hashFunction == diskquota_tag_hash)
+	if (hashFunction == DISKQUOTA_TAG_HASH)
 		infoP->hash = tag_hash;
-	else if (hashFunction == diskquota_oid_hash)
+	else if (hashFunction == DISKQUOTA_OID_HASH)
 		infoP->hash = oid_hash;
 	else
 		infoP->hash = string_hash;
