@@ -413,9 +413,9 @@ show_relation_cache(PG_FUNCTION_ARGS)
 		values[6]  = ObjectIdGetDatum(entry->rnode.node.spcNode);
 		values[7]  = ObjectIdGetDatum(entry->rnode.node.dbNode);
 		values[8]  = ObjectIdGetDatum(entry->rnode.node.relNode);
-		values[9]  = PointerGetDatum(entry->relstorage);
+		values[9]  = CharGetDatum(entry->relstorage);
 		values[10] = PointerGetDatum(array);
-		values[11] = PointerGetDatum(entry->relam);
+		values[11] = ObjectIdGetDatum(entry->relam);
 
 		memset(nulls, false, sizeof(nulls));
 		tuple  = heap_form_tuple(funcctx->tuple_desc, values, nulls);

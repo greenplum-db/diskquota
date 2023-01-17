@@ -39,8 +39,6 @@ commit;
 
 DROP table t3;
 
---start_ignore
--- ao_issue
 -- AO table
 begin;
 CREATE TABLE ao (i int) WITH (appendonly=true) DISTRIBUTED BY (i);
@@ -98,4 +96,3 @@ SELECT tableid::regclass, size, segid FROM diskquota.table_size WHERE tableid = 
 SELECT pg_table_size('aocs');
 commit;
 DROP TABLE aocs;
--- end_ignore

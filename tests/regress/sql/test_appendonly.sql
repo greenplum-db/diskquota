@@ -15,8 +15,6 @@ INSERT INTO t_aoco SELECT generate_series(1, 100);
 
 SELECT diskquota.wait_for_worker_new_epoch();
 
--- start_ignore
--- ao_issue
 -- Query the size of t_ao.
 SELECT tableid::regclass, size
   FROM diskquota.table_size
@@ -30,7 +28,6 @@ SELECT tableid::regclass, size
   WHERE tableid=(SELECT oid FROM pg_class WHERE relname='t_aoco') and segid=-1;
 
 SELECT pg_table_size('t_aoco');
--- end_ignore
 
 -- 2. Test that we are able to perform quota limit on appendonly tables.
 SELECT diskquota.set_schema_quota('s_appendonly', '1 MB');
