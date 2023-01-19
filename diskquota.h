@@ -287,5 +287,5 @@ extern void         update_monitordb_status(Oid dbid, uint32 status);
 extern HTAB        *diskquota_hash_create(const char *tabname, long nelem, HASHCTL *info, int flags,
                                           DiskquotaHashFunction hashFunction);
 extern HTAB *DiskquotaShmemInitHash(const char *name, long init_size, long max_size, HASHCTL *infoP, int hash_flags,
-                             DiskquotaHashFunction hash_function);
+                                    DiskquotaHashFunction hash_function);
 #endif
