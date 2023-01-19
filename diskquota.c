@@ -572,6 +572,13 @@ void
 disk_quota_launcher_main(Datum main_arg)
 {
 	time_t loop_begin, loop_end;
+
+	/* the launcher should exit when the master boots in utility mode */
+	if (Gp_role != GP_ROLE_DISPATCH)
+	{
+		proc_exit(0);
+	}
+
 	MemoryContextSwitchTo(TopMemoryContext);
 	init_bgworker_handles();
 
@@ -601,8 +608,6 @@ disk_quota_launcher_main(Datum main_arg)
 	set_config_option("application_name", DISKQUOTA_APPLICATION_NAME, PGC_USERSET, PGC_S_SESSION, GUC_ACTION_SAVE, true,
 	                  0, true);
 #endif /* GP_VERSION_NUM */
-	/* diskquota launcher should has Gp_role as dispatcher */
-	Gp_role = GP_ROLE_DISPATCH;
 
 	/*
 	 * use table diskquota_namespace.database_list to store diskquota enabled
