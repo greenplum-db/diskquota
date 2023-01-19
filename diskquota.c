@@ -22,6 +22,7 @@
 
 #include "funcapi.h"
 #include "access/xact.h"
+#include "cdb/cdbgang.h"
 #include "cdb/cdbvars.h"
 #include "commands/dbcommands.h"
 #include "executor/spi.h"
@@ -30,11 +31,12 @@
 #include "port/atomics.h"
 #include "storage/ipc.h"
 #include "storage/proc.h"
-#include "tcop/idle_resource_cleaner.h"
+#include "storage/sinval.h"
 #include "tcop/utility.h"
 #include "utils/builtins.h"
 #include "utils/faultinjector.h"
 #include "utils/guc.h"
+#include "utils/memutils.h"
 #include "utils/ps_status.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
@@ -62,105 +64,99 @@ extern int usleep(useconds_t usec); // in <unistd.h>
 static volatile sig_atomic_t got_sighup  = false;
 static volatile sig_atomic_t got_sigterm = false;
 static volatile sig_atomic_t got_sigusr1 = false;
+static volatile sig_atomic_t got_sigusr2 = false;
 
 /* GUC variables */
-int  diskquota_naptime           = 0;
-int  diskquota_max_active_tables = 0;
-int  diskquota_worker_timeout    = 60; /* default timeout is 60 seconds */
-bool diskquota_hardlimit         = false;
+int  diskquota_naptime            = 0;
+int  diskquota_max_active_tables  = 0;
+int  diskquota_worker_timeout     = 60; /* default timeout is 60 seconds */
+bool diskquota_hardlimit          = false;
+int  diskquota_max_workers        = 10;
+int  diskquota_max_table_segments = 0;
 
 DiskQuotaLocks       diskquota_locks;
 ExtensionDDLMessage *extension_ddl_message = NULL;
 
-/* using hash table to support incremental update the table size entry.*/
-HTAB      *disk_quota_worker_map = NULL;
-static int num_db                = 0;
+// Only access in diskquota worker, different from each worker.
+// a pointer to DiskquotaLauncherShmem->workerEntries in shared memory
+static DiskQuotaWorkerEntry *volatile MyWorkerInfo = NULL;
 
-bool
-diskquota_is_paused()
+// how many database diskquota are monitoring on
+static int num_db = 0;
+
+/* how many TableSizeEntry are maintained in all the table_size_map in shared memory*/
+pg_atomic_uint32 *diskquota_table_size_entry_num;
+
+static DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
+
+#define MIN_SLEEPTIME 100 /* milliseconds */
+
+/*
+ * bgworker handles, in launcher local memory,
+ * bgworker_handles[i] is the handle of DiskquotaLauncherShmem-><hidden memory space>[i]
+ * the actually useable reference is DiskquotaLauncherShmem->{freeWorkers, runningWorkers}
+ *
+ * size: GUC diskquota_max_workers
+ */
+BackgroundWorkerHandle **bgworker_handles;
+
+typedef enum
 {
-	Assert(MyDatabaseId != InvalidOid);
-	bool paused;
-
-	LWLockAcquire(diskquota_locks.worker_map_lock, LW_SHARED);
-	{
-		DiskQuotaWorkerEntry *hash_entry;
-		bool                  found;
-
-		hash_entry =
-		        (DiskQuotaWorkerEntry *)hash_search(disk_quota_worker_map, (void *)&MyDatabaseId, HASH_FIND, &found);
-		paused = found ? hash_entry->is_paused : false;
-	}
-	LWLockRelease(diskquota_locks.worker_map_lock);
-
-	return paused;
-}
-
-bool
-diskquota_is_readiness_logged()
-{
-	Assert(MyDatabaseId != InvalidOid);
-	bool is_readiness_logged;
-
-	LWLockAcquire(diskquota_locks.worker_map_lock, LW_SHARED);
-	{
-		DiskQuotaWorkerEntry *hash_entry;
-		bool                  found;
-
-		hash_entry =
-		        (DiskQuotaWorkerEntry *)hash_search(disk_quota_worker_map, (void *)&MyDatabaseId, HASH_FIND, &found);
-		is_readiness_logged = found ? hash_entry->is_readiness_logged : false;
-	}
-	LWLockRelease(diskquota_locks.worker_map_lock);
-
-	return is_readiness_logged;
-}
-
-void
-diskquota_set_readiness_logged()
-{
-	Assert(MyDatabaseId != InvalidOid);
-
-	/*
-	 * We actually need ROW EXCLUSIVE lock here. Given that the current worker
-	 * is the the only process that modifies the entry, it is safe to only take
-	 * the shared lock.
-	 */
-	LWLockAcquire(diskquota_locks.worker_map_lock, LW_SHARED);
-	{
-		DiskQuotaWorkerEntry *hash_entry;
-		bool                  found;
-
-		hash_entry =
-		        (DiskQuotaWorkerEntry *)hash_search(disk_quota_worker_map, (void *)&MyDatabaseId, HASH_FIND, &found);
-		hash_entry->is_readiness_logged = true;
-	}
-	LWLockRelease(diskquota_locks.worker_map_lock);
-}
-
+	SUCCESS,
+	INVALID_DB,
+	NO_FREE_WORKER,
+	UNKNOWN,
+} StartWorkerState;
 /* functions of disk quota*/
 void _PG_init(void);
 void _PG_fini(void);
 void disk_quota_worker_main(Datum);
 void disk_quota_launcher_main(Datum);
 
-static void disk_quota_sigterm(SIGNAL_ARGS);
-static void disk_quota_sighup(SIGNAL_ARGS);
-static void define_guc_variables(void);
-static bool start_worker_by_dboid(Oid dbid);
-static void start_workers_from_dblist(void);
-static void create_monitor_db_table(void);
-static void add_dbid_to_database_list(Oid dbid);
-static void del_dbid_from_database_list(Oid dbid);
-static void process_extension_ddl_message(void);
+static void             disk_quota_sigterm(SIGNAL_ARGS);
+static void             disk_quota_sighup(SIGNAL_ARGS);
+static void             define_guc_variables(void);
+static StartWorkerState start_worker(DiskquotaDBEntry *dbEntry);
+static void             create_monitor_db_table(void);
+static void             add_dbid_to_database_list(Oid dbid);
+static void             del_dbid_from_database_list(Oid dbid);
+static void             process_extension_ddl_message(void);
 static void do_process_extension_ddl_message(MessageResult *code, ExtensionDDLMessage local_extension_ddl_message);
-static void try_kill_db_worker(Oid dbid);
 static void terminate_all_workers(void);
 static void on_add_db(Oid dbid, MessageResult *code);
 static void on_del_db(Oid dbid, MessageResult *code);
 static bool is_valid_dbid(Oid dbid);
 extern void invalidate_database_rejectmap(Oid dbid);
+static void FreeWorkerOnExit(int code, Datum arg);
+static void FreeWorker(DiskQuotaWorkerEntry *worker);
+static void init_database_list(void);
+static DiskquotaDBEntry       *next_db(DiskquotaDBEntry *curDB);
+static DiskQuotaWorkerEntry   *next_worker(void);
+static DiskquotaDBEntry       *add_db_entry(Oid dbid);
+static void                    release_db_entry(Oid dbid);
+static char                   *get_db_name(Oid dbid);
+static void                    reset_worker(DiskQuotaWorkerEntry *dq_worker);
+static void                    vacuum_db_entry(DiskquotaDBEntry *db);
+static void                    init_bgworker_handles(void);
+static BackgroundWorkerHandle *get_bgworker_handle(uint32 worker_id);
+static void                    free_bgworker_handle(uint32 worker_id);
+static BgwHandleStatus         WaitForBackgroundWorkerShutdown(BackgroundWorkerHandle *handle);
 
+/*
+ * diskquota_launcher_shmem_size
+ *		Compute space needed for diskquota launcher related shared memory
+ */
+Size
+diskquota_launcher_shmem_size(void)
+{
+	Size size;
+
+	size = MAXALIGN(sizeof(DiskquotaLauncherShmemStruct));
+	size = add_size(size, mul_size(diskquota_max_workers,
+	                               sizeof(struct DiskQuotaWorkerEntry))); // hidden memory for DiskQuotaWorkerEntry
+	size = add_size(size, mul_size(MAX_NUM_MONITORED_DB, sizeof(struct DiskquotaDBEntry))); // hidden memory for dbArray
+	return size;
+}
 /*
  * Entrypoint of diskquota module.
  *
@@ -191,9 +187,6 @@ _PG_init(void)
 	init_disk_quota_shmem();
 	init_disk_quota_enforcement();
 	init_active_table_hook();
-
-	/* Add dq_object_access_hook to handle drop extension event. */
-	register_diskquota_object_access_hook();
 
 	/* start disk quota launcher only on master */
 	if (!IS_QUERY_DISPATCHER())
@@ -268,6 +261,21 @@ disk_quota_sigusr1(SIGNAL_ARGS)
 }
 
 /*
+ * Signal handler for SIGUSR2
+ * Set a flag to tell the launcher to handle extension ddl message
+ */
+static void
+disk_quota_sigusr2(SIGNAL_ARGS)
+{
+	int save_errno = errno;
+
+	got_sigusr2 = true;
+
+	if (MyProc) SetLatch(&MyProc->procLatch);
+
+	errno = save_errno;
+}
+/*
  * Define GUC variables used by diskquota
  */
 static void
@@ -283,12 +291,20 @@ define_guc_variables(void)
 	                        2, min_naptime, INT_MAX, PGC_SIGHUP, 0, NULL, NULL, NULL);
 
 	DefineCustomIntVariable("diskquota.max_active_tables", "Max number of active tables monitored by disk-quota.", NULL,
-	                        &diskquota_max_active_tables, 1 * 1024 * 1024, 1, INT_MAX, PGC_SIGHUP, 0, NULL, NULL, NULL);
+	                        &diskquota_max_active_tables, 300 * 1024, 1, INT_MAX, PGC_POSTMASTER, 0, NULL, NULL, NULL);
 
 	DefineCustomIntVariable("diskquota.worker_timeout", "Duration between each check (in seconds).", NULL,
 	                        &diskquota_worker_timeout, 60, 1, INT_MAX, PGC_SIGHUP, 0, NULL, NULL, NULL);
 	DefineCustomBoolVariable("diskquota.hard_limit", "Set this to 'on' to enable disk-quota hardlimit.", NULL,
 	                         &diskquota_hardlimit, false, PGC_SIGHUP, 0, NULL, NULL, NULL);
+	DefineCustomIntVariable(
+	        "diskquota.max_workers",
+	        "Max number of backgroud workers to run diskquota extension, should be less than max_worker_processes.",
+	        NULL, &diskquota_max_workers, 10, 1, 20, PGC_POSTMASTER, 0, NULL, NULL, NULL);
+	DefineCustomIntVariable("diskquota.max_table_segments", "Max number of tables segments on the cluster.", NULL,
+	                        &diskquota_max_table_segments, 10 * 1024 * 1024,
+	                        INIT_NUM_TABLE_SIZE_ENTRIES * MAX_NUM_MONITORED_DB, INT_MAX, PGC_POSTMASTER, 0, NULL, NULL,
+	                        NULL);
 }
 
 /* ---- Functions for disk quota worker process ---- */
@@ -308,12 +324,24 @@ disk_quota_worker_main(Datum main_arg)
 	/* Disable ORCA to avoid fallback */
 	optimizer = false;
 
-	ereport(LOG, (errmsg("[diskquota] start disk quota worker process to monitor database:%s", dbname)));
-
+	ereport(DEBUG1, (errmsg("[diskquota] start disk quota worker process to monitor database:%s", dbname)));
 	/* Establish signal handlers before unblocking signals. */
 	pqsignal(SIGHUP, disk_quota_sighup);
 	pqsignal(SIGTERM, disk_quota_sigterm);
 	pqsignal(SIGUSR1, disk_quota_sigusr1);
+
+	MyWorkerInfo = (DiskQuotaWorkerEntry *)DatumGetPointer(MyBgworkerEntry->bgw_main_arg);
+	Assert(MyWorkerInfo != NULL);
+	if (!MyWorkerInfo->dbEntry->inited)
+		ereport(LOG, (errmsg("[diskquota] start disk quota worker process to monitor database:%s", dbname)));
+	/*
+	 * The shmem exit hook is registered after registering disk_quota_sigterm.
+	 * So if the SIGTERM arrives before this statement, the shmem exit hook
+	 * won't be called.
+	 *
+	 * TODO: launcher to free the unused worker?
+	 */
+	on_shmem_exit(FreeWorkerOnExit, 0);
 
 	/* We're now ready to receive signals */
 	BackgroundWorkerUnblockSignals();
@@ -331,9 +359,10 @@ disk_quota_worker_main(Datum main_arg)
 	 * Initialize diskquota related local hash map and refresh model
 	 * immediately
 	 */
-	init_disk_quota_model();
+	init_disk_quota_model(MyWorkerInfo->dbEntry->id);
 
-	// check current binary version and SQL DLL version are matched
+	// FIXME: version check should be run for each starting bgworker?
+	//  check current binary version and SQL DLL version are matched
 	int times = 0;
 	while (!got_sigterm)
 	{
@@ -343,6 +372,7 @@ disk_quota_worker_main(Datum main_arg)
 		int has_error = worker_spi_get_extension_version(&major, &minor) != 0;
 
 		if (major == DISKQUOTA_MAJOR_VERSION && minor == DISKQUOTA_MINOR_VERSION) break;
+		MemoryAccounting_Reset();
 
 		if (has_error)
 		{
@@ -385,10 +415,14 @@ disk_quota_worker_main(Datum main_arg)
 	 */
 	init_ps_display("bgworker:", "[diskquota]", dbname, "");
 
+	/* suppose the database is ready, if not, then set it to false */
+	bool is_ready = true;
 	/* Waiting for diskquota state become ready */
 	while (!got_sigterm)
 	{
 		int rc;
+		/* If the database has been inited before, no need to check the ready state again */
+		if (MyWorkerInfo->dbEntry->inited) break;
 
 		CHECK_FOR_INTERRUPTS();
 
@@ -400,7 +434,15 @@ disk_quota_worker_main(Datum main_arg)
 		 */
 		if (check_diskquota_state_is_ready())
 		{
+			is_ready = true;
 			break;
+		}
+
+		MemoryAccounting_Reset();
+		if (is_ready)
+		{
+			update_monitordb_status(MyWorkerInfo->dbEntry->dbid, DB_UNREADY);
+			is_ready = false;
 		}
 		rc = WaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH, diskquota_naptime * 1000L);
 		ResetLatch(&MyProc->procLatch);
@@ -423,26 +465,35 @@ disk_quota_worker_main(Datum main_arg)
 		}
 	}
 
-	/* if received sigterm, just exit the worker process */
-	if (got_sigterm)
-	{
-		ereport(LOG, (errmsg("[diskquota] bgworker for \"%s\" is being terminated by SIGTERM.", dbname)));
-		/* clear the out-of-quota rejectmap in shared memory */
-		invalidate_database_rejectmap(MyDatabaseId);
-		proc_exit(0);
-	}
-
-	/* Refresh quota model with init mode */
-	refresh_disk_quota_model(true);
-
-	ereport(LOG, (errmsg("[diskquota] start bgworker loop for database: \"%s\"", dbname)));
-	/*
-	 * Main loop: do this until the SIGTERM handler tells us to terminate
-	 */
+	if (!MyWorkerInfo->dbEntry->inited) update_monitordb_status(MyWorkerInfo->dbEntry->dbid, DB_RUNNING);
+	bool is_gang_destroyed = false;
 	while (!got_sigterm)
 	{
 		int rc;
 
+		SIMPLE_FAULT_INJECTOR("diskquota_worker_main");
+		if (!diskquota_is_paused())
+		{
+			/* Refresh quota model with init mode */
+			refresh_disk_quota_model(!MyWorkerInfo->dbEntry->inited);
+			MyWorkerInfo->dbEntry->inited = true;
+			is_gang_destroyed             = false;
+		}
+		else if (!is_gang_destroyed)
+		{
+			DisconnectAndDestroyAllGangs(false);
+			is_gang_destroyed = true;
+		}
+		worker_increase_epoch(MyWorkerInfo->dbEntry->dbid);
+
+		// GPDB6 opend a MemoryAccount for us without asking us.
+		// and GPDB6 did not release the MemoryAccount after SPI finish.
+		// Reset the MemoryAccount although we never create it.
+		MemoryAccounting_Reset();
+		if (DiskquotaLauncherShmem->isDynamicWorker)
+		{
+			break;
+		}
 		CHECK_FOR_INTERRUPTS();
 
 		/*
@@ -470,20 +521,17 @@ disk_quota_worker_main(Datum main_arg)
 			got_sighup = false;
 			ProcessConfigFile(PGC_SIGHUP);
 		}
-
-		SIMPLE_FAULT_INJECTOR("diskquota_worker_main");
-
-		/* Do the work */
-		if (!diskquota_is_paused()) refresh_disk_quota_model(false);
-
-		/* Reset memory account to fix memory leak */
-		MemoryAccounting_Reset();
-		worker_increase_epoch(MyDatabaseId);
 	}
 
-	ereport(LOG, (errmsg("[diskquota] bgworker for \"%s\" is being terminated by SIGTERM.", dbname)));
-	/* clear the out-of-quota rejectmap in shared memory */
-	invalidate_database_rejectmap(MyDatabaseId);
+	if (got_sigterm)
+		ereport(LOG, (errmsg("[diskquota] stop disk quota worker process to monitor database:%s", dbname)));
+	ereport(DEBUG1, (errmsg("[diskquota] stop disk quota worker process to monitor database:%s", dbname)));
+#if DISKQUOTA_DEBUG
+	long secs;
+	int  usecs;
+	TimestampDifference(MyWorkerInfo->dbEntry->last_run_time, GetCurrentTimestamp(), &secs, &usecs);
+	MyWorkerInfo->dbEntry->cost = secs * 1000L + usecs / 1000L;
+#endif
 	proc_exit(0);
 }
 
@@ -507,19 +555,20 @@ void
 disk_quota_launcher_main(Datum main_arg)
 {
 	time_t loop_begin, loop_end;
+	MemoryContextSwitchTo(TopMemoryContext);
+	init_bgworker_handles();
 
 	/* establish signal handlers before unblocking signals. */
 	pqsignal(SIGHUP, disk_quota_sighup);
 	pqsignal(SIGTERM, disk_quota_sigterm);
 	pqsignal(SIGUSR1, disk_quota_sigusr1);
-
+	pqsignal(SIGUSR2, disk_quota_sigusr2);
 	/* we're now ready to receive signals */
 	BackgroundWorkerUnblockSignals();
 
 	LWLockAcquire(diskquota_locks.extension_ddl_message_lock, LW_EXCLUSIVE);
 	extension_ddl_message->launcher_pid = MyProcPid;
 	LWLockRelease(diskquota_locks.extension_ddl_message_lock);
-
 	/*
 	 * connect to our database 'diskquota'. launcher process will exit if
 	 * 'diskquota' database is not existed.
@@ -538,22 +587,78 @@ disk_quota_launcher_main(Datum main_arg)
 	 */
 	create_monitor_db_table();
 
-	/*
-	 * firstly start worker processes for each databases with diskquota
-	 * enabled.
-	 */
-	start_workers_from_dblist();
+	init_database_list();
+	DisconnectAndDestroyAllGangs(false);
 
-	ereport(LOG, (errmsg("[diskquota launcher] start main loop")));
-	/* main loop: do this until the SIGTERM handler tells us to terminate. */
-	EnableClientWaitTimeoutInterrupt();
-	StartIdleResourceCleanupTimers();
 	loop_end = time(NULL);
+
+	struct timeval nap;
+	nap.tv_sec  = diskquota_naptime;
+	nap.tv_usec = 0;
+	/* main loop: do this until the SIGTERM handler tells us to terminate. */
+	ereport(LOG, (errmsg("[diskquota launcher] start main loop")));
+	DiskquotaDBEntry *curDB          = NULL;
+	Oid               curDBId        = 0;
+	bool              advance_one_db = true;
+	bool              timeout        = false;
+	int               try_times      = 0;
 	while (!got_sigterm)
 	{
 		int rc;
-
 		CHECK_FOR_INTERRUPTS();
+		/* pick a db to run */
+		if (advance_one_db)
+		{
+			curDB     = next_db(curDB);
+			timeout   = false;
+			try_times = 0;
+			if (curDB != NULL)
+			{
+				curDBId = curDB->dbid;
+				elog(DEBUG1, "[diskquota] next db to run:%u", curDBId);
+			}
+			else
+				elog(DEBUG1, "[diskquota] no db to run");
+		}
+		/*
+		 * Modify wait time
+		 *
+		 * If there is no db needed to run or has exceeded the next_run_time,
+		 * just sleep to wait a db or a free worker.
+		 *
+		 * Otherwise check the next_run_time to determin how much time to wait
+		 */
+		if (timeout || curDB == NULL)
+		{
+			nap.tv_sec  = diskquota_naptime > 0 ? diskquota_naptime : 1;
+			nap.tv_usec = 0;
+		}
+		else
+		{
+			TimestampTz curTime = GetCurrentTimestamp();
+			long        sec;
+			int         usec;
+			TimestampDifference(curTime, curDB->next_run_time, &sec, &usec);
+			nap.tv_sec  = sec;
+			nap.tv_usec = usec;
+
+			/* if the sleep time is too short, just skip the sleeping */
+			if (nap.tv_sec == 0 && nap.tv_usec < MIN_SLEEPTIME * 1000L)
+			{
+				nap.tv_usec = 0;
+			}
+
+			/* if the sleep time is too long, advance the next_run_time */
+			if (nap.tv_sec > diskquota_naptime)
+			{
+				nap.tv_sec           = diskquota_naptime;
+				nap.tv_usec          = 0;
+				curDB->next_run_time = TimestampTzPlusMilliseconds(curTime, diskquota_naptime * 1000L);
+			}
+		}
+
+		bool sigusr1 = false;
+		bool sigusr2 = false;
 
 		/*
 		 * background workers mustn't call usleep() or any direct equivalent:
@@ -561,36 +666,95 @@ disk_quota_launcher_main(Datum main_arg)
 		 * necessary, but is awakened if postmaster dies.  That way the
 		 * background process goes away immediately in an emergency.
 		 */
-		rc = WaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH, diskquota_naptime * 1000L);
-		ResetLatch(&MyProc->procLatch);
 
-		// wait at least one time slice, avoid 100% CPU usage
-		if (!diskquota_naptime) usleep(1);
-
-		/* Emergency bailout if postmaster has died */
-		if (rc & WL_POSTMASTER_DEATH)
+		if (nap.tv_sec != 0 || nap.tv_usec != 0)
 		{
-			ereport(LOG, (errmsg("[diskquota launcher] launcher is being terminated by postmaster death.")));
-			proc_exit(1);
+			elog(DEBUG1, "[diskquota] naptime sec:%ld, usec:%ld", nap.tv_sec, nap.tv_usec);
+			rc = WaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
+			               (nap.tv_sec * 1000L) + (nap.tv_usec / 1000L));
+			ResetLatch(&MyProc->procLatch);
+
+			/* Emergency bailout if postmaster has died */
+			if (rc & WL_POSTMASTER_DEATH)
+			{
+				ereport(LOG, (errmsg("[diskquota launcher] launcher is being terminated by postmaster death.")));
+				proc_exit(1);
+			}
 		}
-
 		/* process extension ddl message */
-		if (got_sigusr1)
+		if (got_sigusr2)
 		{
-			got_sigusr1 = false;
-			CancelIdleResourceCleanupTimers();
+			elog(DEBUG1, "[diskquota] got sigusr2");
+			got_sigusr2 = false;
 			process_extension_ddl_message();
-			StartIdleResourceCleanupTimers();
+			sigusr2 = true;
 		}
 
 		/* in case of a SIGHUP, just reload the configuration. */
 		if (got_sighup)
 		{
+			elog(DEBUG1, "[diskquota] got sighup");
 			got_sighup = false;
-			CancelIdleResourceCleanupTimers();
 			ProcessConfigFile(PGC_SIGHUP);
-			StartIdleResourceCleanupTimers();
 		}
+
+		/*
+		 * When the bgworker for diskquota worker starts or stops,
+		 * postmsater prosess will send sigusr1 to launcher as
+		 * worker.bgw_notify_pid has been set to launcher pid.
+		 */
+		if (got_sigusr1)
+		{
+			elog(DEBUG1, "[diskquota] got sigusr1");
+			got_sigusr1 = false;
+			sigusr1     = true;
+		}
+
+		/*
+		 * Try to starts a bgworker for the curDB
+		 *
+		 */
+
+		/*
+		 * When db list is empty, curDB is NULL.
+		 * When curDB->in_use is false means dbEtnry has been romoved
+		 * When curDB->dbid doesn't equtal curDBId, it means the slot has
+		 * been used by another db
+		 *
+		 * For the above conditions, we just skip this loop and try to fetch
+		 * next db to run.
+		 */
+		if (curDB == NULL || !curDB->in_use || curDB->dbid != curDBId)
+		{
+			advance_one_db = true;
+			continue;
+		}
+
+		/*
+		 * Try to start a worker to run the db if has exceeded the next_run_time.
+		 * if start_worker fails, advance_one_db will be set to false, so in the
+		 * next loop will run the db again.
+		 */
+		if (TimestampDifferenceExceeds(curDB->next_run_time, GetCurrentTimestamp(), MIN_SLEEPTIME))
+		{
+			StartWorkerState ret = start_worker(curDB);
+			/* when start_worker successfully or db is invalid, pick up next db to run */
+			advance_one_db = (ret == SUCCESS || ret == INVALID_DB) ? true : false;
+			if (!advance_one_db)
+			{
+				/* has exceeded the next_run_time of current db */
+				timeout = true;
+				/* when start_worker return is not 2(no free worker), increase the try_times*/
+				if (ret != NO_FREE_WORKER) try_times++;
+				/* only try to start bgworker for a database at most 3 times */
+				if (try_times >= 3) advance_one_db = true;
+			}
+		}
+		else
+		{
+			advance_one_db = false;
+		}
+
 		loop_begin = loop_end;
 		loop_end   = time(NULL);
 		if (isAbnormalLoopTime(loop_end - loop_begin))
@@ -622,8 +786,23 @@ create_monitor_db_table(void)
 	bool        pushed_active_snap = false;
 	bool        ret                = true;
 
+	/*
+	 * Create function diskquota.diskquota_fetch_table_stat in launcher
+	 * We need this function to distribute dbid to segments when creating
+	 * a diskquota extension.
+	 */
 	sql = "create schema if not exists diskquota_namespace;"
-	      "create table if not exists diskquota_namespace.database_list(dbid oid not null unique);";
+	      "create table if not exists diskquota_namespace.database_list(dbid oid not null unique);"
+	      "DROP SCHEMA IF EXISTS " LAUNCHER_SCHEMA
+	      " CASCADE;"
+	      "CREATE SCHEMA " LAUNCHER_SCHEMA
+	      ";"
+	      "CREATE TYPE " LAUNCHER_SCHEMA
+	      ".diskquota_active_table_type AS (TABLE_OID oid, TABLE_SIZE int8, GP_SEGMENT_ID "
+	      "smallint);"
+	      "CREATE FUNCTION " LAUNCHER_SCHEMA ".diskquota_fetch_table_stat(int4, oid[]) RETURNS setof " LAUNCHER_SCHEMA
+	      ".diskquota_active_table_type AS '$libdir/" DISKQUOTA_BINARY_NAME
+	      ".so', 'diskquota_fetch_table_stat' LANGUAGE C VOLATILE;";
 
 	StartTransactionCommand();
 
@@ -682,7 +861,7 @@ create_monitor_db_table(void)
  * diskquota-enabled databases from diskquota_namespace.database_list
  */
 static void
-start_workers_from_dblist(void)
+init_database_list(void)
 {
 	TupleDesc tupdesc;
 	int       num = 0;
@@ -696,6 +875,7 @@ start_workers_from_dblist(void)
 	 */
 	StartTransactionCommand();
 	PushActiveSnapshot(GetTransactionSnapshot());
+
 	ret = SPI_connect();
 	if (ret != SPI_OK_CONNECT)
 		ereport(ERROR,
@@ -710,15 +890,16 @@ start_workers_from_dblist(void)
 	{
 		ereport(LOG, (errmsg("[diskquota launcher], natts/atttypid: %d.",
 		                     tupdesc->natts != 1 ? tupdesc->natts : tupdesc->attrs[0]->atttypid)));
-		ereport(ERROR, (errmsg("[diskquota launcher] table database_list corrupt, laucher will exit. natts: ")));
+		ereport(ERROR, (errmsg("[diskquota launcher] table database_list corrupt, launcher will exit. natts: ")));
 	}
 
 	for (i = 0; i < SPI_processed; i++)
 	{
-		HeapTuple tup;
-		Oid       dbid;
-		Datum     dat;
-		bool      isnull;
+		HeapTuple         tup;
+		Oid               dbid;
+		Datum             dat;
+		bool              isnull;
+		DiskquotaDBEntry *dbEntry;
 
 		tup = SPI_tuptable->vals[i];
 		dat = SPI_getbinval(tup, tupdesc, 1, &isnull);
@@ -730,11 +911,9 @@ start_workers_from_dblist(void)
 			                     dbid)));
 			continue;
 		}
-		ereport(WARNING, (errmsg("[diskquota launcher] start workers")));
-		if (!start_worker_by_dboid(dbid))
-			ereport(ERROR, (errmsg("[diskquota launcher] start worker process of database(oid:%u) failed", dbid)));
+		dbEntry = add_db_entry(dbid);
+		if (dbEntry == NULL) continue;
 		num++;
-
 		/*
 		 * diskquota only supports to monitor at most MAX_NUM_MONITORED_DB
 		 * databases
@@ -748,11 +927,20 @@ start_workers_from_dblist(void)
 		}
 	}
 	num_db = num;
+	/* As update_monitor_db_mpp needs to execute sql, so can not put in the loop above */
+	for (int i = 0; i < MAX_NUM_MONITORED_DB; i++)
+	{
+		DiskquotaDBEntry *dbEntry = &DiskquotaLauncherShmem->dbArray[i];
+		if (dbEntry->in_use)
+		{
+			update_monitor_db_mpp(dbEntry->dbid, ADD_DB_TO_MONITOR, LAUNCHER_SCHEMA);
+		}
+	}
 	SPI_finish();
 	PopActiveSnapshot();
 	CommitTransactionCommand();
-
 	/* TODO: clean invalid database */
+	if (num_db > diskquota_max_workers) DiskquotaLauncherShmem->isDynamicWorker = true;
 }
 
 /*
@@ -773,9 +961,11 @@ process_extension_ddl_message()
 	/* create/drop extension message must be valid */
 	if (local_extension_ddl_message.req_pid == 0 || local_extension_ddl_message.launcher_pid != MyProcPid) return;
 
-	ereport(LOG, (errmsg("[diskquota launcher]: received create/drop extension diskquota message")));
+	ereport(LOG,
+	        (errmsg("[diskquota launcher]: received create/drop extension diskquota message, extension launcher")));
 
 	do_process_extension_ddl_message(&code, local_extension_ddl_message);
+	MemoryAccounting_Reset();
 
 	/* Send createdrop extension diskquota result back to QD */
 	LWLockAcquire(diskquota_locks.extension_ddl_message_lock, LW_EXCLUSIVE);
@@ -828,7 +1018,7 @@ do_process_extension_ddl_message(MessageResult *code, ExtensionDDLMessage local_
 				break;
 			case CMD_DROP_EXTENSION:
 				on_del_db(local_extension_ddl_message.dbid, code);
-				num_db--;
+				if (num_db > 0) num_db--;
 				*code = ERR_OK;
 				break;
 			default:
@@ -856,6 +1046,58 @@ do_process_extension_ddl_message(MessageResult *code, ExtensionDDLMessage local_
 		CommitTransactionCommand();
 	else
 		AbortCurrentTransaction();
+	/* update something in memory after transaction committed */
+	if (ret)
+	{
+		PG_TRY();
+		{
+			/* update_monitor_db_mpp runs sql to distribute dbid to segments */
+			StartTransactionCommand();
+			PushActiveSnapshot(GetTransactionSnapshot());
+			pushed_active_snap = true;
+			Oid dbid           = local_extension_ddl_message.dbid;
+			int ret_code       = SPI_connect();
+			if (ret_code != SPI_OK_CONNECT)
+			{
+				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+				                errmsg("unable to connect to execute internal query. return code: %d.", ret_code)));
+			}
+			switch (local_extension_ddl_message.cmd)
+			{
+				case CMD_CREATE_EXTENSION:
+					if (num_db > diskquota_max_workers) DiskquotaLauncherShmem->isDynamicWorker = true;
+					add_db_entry(dbid);
+					/* TODO: how about this failed? */
+					update_monitor_db_mpp(dbid, ADD_DB_TO_MONITOR, LAUNCHER_SCHEMA);
+					break;
+				case CMD_DROP_EXTENSION:
+					if (num_db <= diskquota_max_workers) DiskquotaLauncherShmem->isDynamicWorker = false;
+					/* terminate bgworker in release_db_entry rountine */
+					release_db_entry(dbid);
+					update_monitor_db_mpp(dbid, REMOVE_DB_FROM_BEING_MONITORED, LAUNCHER_SCHEMA);
+					/* clear the out-of-quota rejectmap in shared memory */
+					invalidate_database_rejectmap(dbid);
+					break;
+				default:
+					ereport(LOG, (errmsg("[diskquota launcher]:received unsupported message cmd=%d",
+					                     local_extension_ddl_message.cmd)));
+					break;
+			}
+			SPI_finish();
+			if (pushed_active_snap) PopActiveSnapshot();
+			CommitTransactionCommand();
+		}
+		PG_CATCH();
+		{
+			error_context_stack = NULL;
+			HOLD_INTERRUPTS();
+			EmitErrorReport();
+			FlushErrorState();
+			RESUME_INTERRUPTS();
+		}
+		PG_END_TRY();
+	}
+	DisconnectAndDestroyAllGangs(false);
 }
 
 /*
@@ -891,12 +1133,6 @@ on_add_db(Oid dbid, MessageResult *code)
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
-
-	if (!start_worker_by_dboid(dbid))
-	{
-		*code = ERR_START_WORKER;
-		ereport(ERROR, (errmsg("[diskquota launcher] failed to start worker - dbid=%u", dbid)));
-	}
 }
 
 /*
@@ -904,7 +1140,7 @@ on_add_db(Oid dbid, MessageResult *code)
  * do:
  * 1. kill the associated worker process
  * 2. delete dbid from diskquota_namespace.database_list
- * 3. invalidate reject-map entries and monitoring_dbid_cache from shared memory
+ * 3. invalidate reject-map entries and monitored_dbid_cache from shared memory
  */
 static void
 on_del_db(Oid dbid, MessageResult *code)
@@ -914,9 +1150,6 @@ on_del_db(Oid dbid, MessageResult *code)
 		*code = ERR_INVALID_DBID;
 		ereport(ERROR, (errmsg("[diskquota launcher] invalid database oid")));
 	}
-
-	/* tell postmaster to stop this bgworker */
-	try_kill_db_worker(dbid);
 
 	/*
 	 * delete dbid from diskquota_namespace.database_list set *code to
@@ -999,117 +1232,66 @@ del_dbid_from_database_list(Oid dbid)
 }
 
 /*
- * When drop exention database, diskquota laucher will receive a message
- * to kill the diskquota worker process which monitoring the target database.
- */
-static void
-try_kill_db_worker(Oid dbid)
-{
-	DiskQuotaWorkerEntry *hash_entry;
-	bool                  found;
-
-	LWLockAcquire(diskquota_locks.worker_map_lock, LW_EXCLUSIVE);
-	hash_entry = (DiskQuotaWorkerEntry *)hash_search(disk_quota_worker_map, (void *)&dbid, HASH_REMOVE, &found);
-	if (found)
-	{
-		BackgroundWorkerHandle *handle;
-
-		handle = hash_entry->handle;
-		if (handle)
-		{
-			TerminateBackgroundWorker(handle);
-			pfree(handle);
-		}
-	}
-	LWLockRelease(diskquota_locks.worker_map_lock);
-}
-
-/*
  * When launcher exits, it should also terminate all the workers.
  */
 static void
 terminate_all_workers(void)
 {
-	DiskQuotaWorkerEntry *hash_entry;
-	HASH_SEQ_STATUS       iter;
-
-	LWLockAcquire(diskquota_locks.worker_map_lock, LW_EXCLUSIVE);
-
-	hash_seq_init(&iter, disk_quota_worker_map);
-
-	/*
-	 * terminate the worker processes. since launcher will exit immediately,
-	 * we skip to clear the disk_quota_worker_map and monitoring_dbid_cache
-	 */
-	while ((hash_entry = hash_seq_search(&iter)) != NULL)
+	dlist_iter              iterdb;
+	DiskQuotaWorkerEntry   *worker;
+	BackgroundWorkerHandle *handle;
+	LWLockAcquire(diskquota_locks.workerlist_lock, LW_SHARED);
+	dlist_foreach(iterdb, &DiskquotaLauncherShmem->runningWorkers)
 	{
-		if (hash_entry->handle) TerminateBackgroundWorker(hash_entry->handle);
+		worker = dlist_container(DiskQuotaWorkerEntry, node, iterdb.cur);
+		handle = get_bgworker_handle(worker->id);
+		if (handle != NULL) TerminateBackgroundWorker(handle);
 	}
-	LWLockRelease(diskquota_locks.worker_map_lock);
-}
-
-static bool
-worker_create_entry(Oid dbid)
-{
-	DiskQuotaWorkerEntry *workerentry = NULL;
-	bool                  found       = false;
-
-	LWLockAcquire(diskquota_locks.worker_map_lock, LW_EXCLUSIVE);
-
-	workerentry = (DiskQuotaWorkerEntry *)hash_search(disk_quota_worker_map, (void *)&dbid, HASH_ENTER, &found);
-	if (!found)
-	{
-		workerentry->handle = NULL;
-		pg_atomic_write_u32(&(workerentry->epoch), 0);
-		workerentry->is_paused           = false;
-		workerentry->is_readiness_logged = false;
-	}
-
-	LWLockRelease(diskquota_locks.worker_map_lock);
-	return found;
-}
-
-static bool
-worker_set_handle(Oid dbid, BackgroundWorkerHandle *handle)
-{
-	DiskQuotaWorkerEntry *workerentry = NULL;
-	bool                  found       = false;
-
-	LWLockAcquire(diskquota_locks.worker_map_lock, LW_EXCLUSIVE);
-
-	workerentry = (DiskQuotaWorkerEntry *)hash_search(disk_quota_worker_map, (void *)&dbid, HASH_ENTER, &found);
-	if (found)
-	{
-		workerentry->handle = handle;
-	}
-	LWLockRelease(diskquota_locks.worker_map_lock);
-	if (!found)
-	{
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-		                errmsg("[diskquota] worker not found for database \"%s\"", get_database_name(dbid))));
-	}
-	return found;
+	LWLockRelease(diskquota_locks.workerlist_lock);
 }
 
 /*
  * Dynamically launch an disk quota worker process.
- * This function is called when laucher process receive
- * a 'create extension diskquota' message.
+ * This function is called when launcher process
+ * schedules a database's diskquota worker to run.
+ *
+ * return:
+ * SUCCESS means starting the bgworker sucessfully.
+ * INVALID_DB means the database is invalid
+ * NO_FREE_WORKER means there is no avaliable free workers
+ * UNKNOWN means registering or starting the bgworker
+ * failed, maybe there is no free bgworker, or
+ * forking a process failed and so on.
  */
-static bool
-start_worker_by_dboid(Oid dbid)
+
+static StartWorkerState
+start_worker(DiskquotaDBEntry *dbEntry)
 {
-	BackgroundWorker        worker;
-	BackgroundWorkerHandle *handle;
-	BgwHandleStatus         status;
-	MemoryContext           old_ctx;
-	char                   *dbname;
-	pid_t                   pid;
-	bool                    ret;
+	BackgroundWorker      worker;
+	bool                  ret;
+	DiskQuotaWorkerEntry *dq_worker;
+	MemoryContext         old_ctx;
+	char                 *dbname = NULL;
+	int                   result = SUCCESS;
 
-	/* Create entry first so that it can be checked by bgworker and QD. */
-	worker_create_entry(dbid);
+	dq_worker = next_worker();
+	if (dq_worker == NULL)
+	{
+		elog(DEBUG1, "[diskquota] no free workers");
+		result = NO_FREE_WORKER;
+		return result;
+	}
+	/* free the BackgroundWorkerHandle used by last database */
+	free_bgworker_handle(dq_worker->id);
 
+	dbEntry->workerId  = dq_worker->id;
+	dq_worker->dbEntry = dbEntry;
+
+#if DISKQUOTA_DEBUG
+	dbEntry->last_run_time = GetCurrentTimestamp();
+#endif
+
+	/* register a dynamic bgworker and wait for it to start */
 	memset(&worker, 0, sizeof(BackgroundWorker));
 	worker.bgw_flags      = BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
 	worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
@@ -1123,33 +1305,54 @@ start_worker_by_dboid(Oid dbid)
 	worker.bgw_restart_time = BGW_NEVER_RESTART;
 	sprintf(worker.bgw_library_name, DISKQUOTA_BINARY_NAME);
 	sprintf(worker.bgw_function_name, "disk_quota_worker_main");
-
-	dbname = get_database_name(dbid);
-	Assert(dbname != NULL);
+	dbname = get_db_name(dbEntry->dbid);
+	if (dbname == NULL)
+	{
+		result = INVALID_DB;
+		goto Failed;
+	}
 	snprintf(worker.bgw_name, sizeof(worker.bgw_name), "%s", dbname);
 	pfree(dbname);
+
 	/* set bgw_notify_pid so that we can use WaitForBackgroundWorkerStartup */
 	worker.bgw_notify_pid = MyProcPid;
-	worker.bgw_main_arg   = (Datum)0;
+	worker.bgw_main_arg   = (Datum)PointerGetDatum(dq_worker);
 
 	old_ctx = MemoryContextSwitchTo(TopMemoryContext);
-	ret     = RegisterDynamicBackgroundWorker(&worker, &handle);
+	ret     = RegisterDynamicBackgroundWorker(&worker, &(bgworker_handles[dq_worker->id]));
 	MemoryContextSwitchTo(old_ctx);
-	if (!ret) return false;
-	status = WaitForBackgroundWorkerStartup(handle, &pid);
+	if (!ret)
+	{
+		elog(WARNING, "Create bgworker failed");
+		result = UNKNOWN;
+		goto Failed;
+	}
+	BgwHandleStatus status;
+	pid_t           pid;
+	status = WaitForBackgroundWorkerStartup(bgworker_handles[dq_worker->id], &pid);
 	if (status == BGWH_STOPPED)
-		ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_RESOURCES), errmsg("could not start background process"),
-		                errhint("More details may be available in the server log.")));
+	{
+		ereport(WARNING, (errcode(ERRCODE_INSUFFICIENT_RESOURCES), errmsg("could not start background process"),
+		                  errhint("More details may be available in the server log.")));
+		result = UNKNOWN;
+		goto Failed;
+	}
 	if (status == BGWH_POSTMASTER_DIED)
-		ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_RESOURCES),
-		                errmsg("cannot start background processes without postmaster"),
-		                errhint("Kill all remaining database processes and restart the database.")));
+	{
+		ereport(WARNING, (errcode(ERRCODE_INSUFFICIENT_RESOURCES),
+		                  errmsg("cannot start background processes without postmaster"),
+		                  errhint("Kill all remaining database processes and restart the database.")));
+		result = UNKNOWN;
+		goto Failed;
+	}
 
 	Assert(status == BGWH_STARTED);
+	return result;
+Failed:
 
-	/* Save the handle to the worker map to check the liveness. */
-	worker_set_handle(dbid, handle);
-	return true;
+	elog(DEBUG1, "[diskquota] diskquota, starts diskquota failed");
+	FreeWorker(dq_worker);
+	return result;
 }
 
 /*
@@ -1167,73 +1370,20 @@ is_valid_dbid(Oid dbid)
 	return true;
 }
 
-bool
-worker_increase_epoch(Oid database_oid)
-{
-	LWLockAcquire(diskquota_locks.worker_map_lock, LW_SHARED);
-
-	bool                  found = false;
-	DiskQuotaWorkerEntry *workerentry =
-	        (DiskQuotaWorkerEntry *)hash_search(disk_quota_worker_map, (void *)&database_oid, HASH_FIND, &found);
-
-	if (found)
-	{
-		pg_atomic_fetch_add_u32(&(workerentry->epoch), 1);
-	}
-	LWLockRelease(diskquota_locks.worker_map_lock);
-	return found;
-}
-
-uint32
-worker_get_epoch(Oid database_oid)
-{
-	LWLockAcquire(diskquota_locks.worker_map_lock, LW_SHARED);
-
-	bool                  found = false;
-	uint32                epoch = 0;
-	DiskQuotaWorkerEntry *workerentry =
-	        (DiskQuotaWorkerEntry *)hash_search(disk_quota_worker_map, (void *)&database_oid, HASH_FIND, &found);
-
-	if (found)
-	{
-		epoch = pg_atomic_read_u32(&(workerentry->epoch));
-	}
-	LWLockRelease(diskquota_locks.worker_map_lock);
-	if (!found)
-	{
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-		                errmsg("[diskquota] worker not found for database \"%s\"", get_database_name(database_oid))));
-	}
-	return epoch;
-}
-
-// Returns the worker epoch for the current database.
-// An epoch marks a new iteration of refreshing quota usage by a bgworker.
-// An epoch is a 32-bit unsigned integer and there is NO invalid value.
-// Therefore, the UDF must throw an error if something unexpected occurs.
-PG_FUNCTION_INFO_V1(show_worker_epoch);
-Datum
-show_worker_epoch(PG_FUNCTION_ARGS)
-{
-	PG_RETURN_UINT32(worker_get_epoch(MyDatabaseId));
-}
-
 static const char *
 diskquota_status_check_soft_limit()
 {
 	// should run on coordinator only.
 	Assert(IS_QUERY_DISPATCHER());
 
-	bool found, paused;
-	LWLockAcquire(diskquota_locks.worker_map_lock, LW_SHARED);
+	bool           found, paused;
+	MonitorDBEntry entry;
+	LWLockAcquire(diskquota_locks.monitored_dbid_cache_lock, LW_SHARED);
 	{
-		DiskQuotaWorkerEntry *hash_entry;
-
-		hash_entry =
-		        (DiskQuotaWorkerEntry *)hash_search(disk_quota_worker_map, (void *)&MyDatabaseId, HASH_FIND, &found);
-		paused = found ? hash_entry->is_paused : false;
+		entry  = hash_search(monitored_dbid_cache, &MyDatabaseId, HASH_FIND, &found);
+		paused = found ? entry->paused : false;
 	}
-	LWLockRelease(diskquota_locks.worker_map_lock);
+	LWLockRelease(diskquota_locks.monitored_dbid_cache_lock);
 
 	// if worker no booted, aka 'CREATE EXTENSION' not called, diskquota is paused
 	if (!found) return "paused";
@@ -1250,20 +1400,11 @@ diskquota_status_check_hard_limit()
 
 	bool hardlimit = diskquota_hardlimit;
 
-	bool found, paused;
-	LWLockAcquire(diskquota_locks.worker_map_lock, LW_SHARED);
-	{
-		DiskQuotaWorkerEntry *hash_entry;
-
-		hash_entry =
-		        (DiskQuotaWorkerEntry *)hash_search(disk_quota_worker_map, (void *)&MyDatabaseId, HASH_FIND, &found);
-		paused = found ? hash_entry->is_paused : false;
-	}
-	LWLockRelease(diskquota_locks.worker_map_lock);
-
-	// if worker booted and 'worker_map->is_paused == true' and hardlimit is enabled
+	bool paused = false;
+	paused      = diskquota_is_paused();
+	// if worker booted and 'is_paused == true' and hardlimit is enabled
 	// hard limits should also paused
-	if (found && paused && hardlimit) return "paused";
+	if (paused && hardlimit) return "paused";
 
 	return hardlimit ? "on" : "off";
 }
@@ -1376,44 +1517,315 @@ diskquota_status(PG_FUNCTION_ARGS)
 	SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
 }
 
-static bool
-check_for_timeout(TimestampTz start_time)
+static void
+FreeWorker(DiskQuotaWorkerEntry *worker)
 {
-	long diff_secs  = 0;
-	int  diff_usecs = 0;
-	TimestampDifference(start_time, GetCurrentTimestamp(), &diff_secs, &diff_usecs);
-	if (diff_secs >= diskquota_worker_timeout)
+	if (worker != NULL)
 	{
-		ereport(NOTICE, (errmsg("[diskquota] timeout when waiting for worker"),
-		                 errhint("please check if the bgworker is still alive.")));
-		return true;
+		LWLockAcquire(diskquota_locks.dblist_lock, LW_EXCLUSIVE);
+		if (worker->dbEntry != NULL)
+		{
+			bool in_use = worker->dbEntry->in_use;
+			if (in_use && worker->dbEntry->workerId == worker->id)
+			{
+				worker->dbEntry->workerId = INVALID_WORKER_ID;
+				worker->dbEntry->next_run_time =
+				        TimestampTzPlusMilliseconds(GetCurrentTimestamp(), diskquota_naptime * 1000L);
+			}
+		}
+		LWLockRelease(diskquota_locks.dblist_lock);
+		LWLockAcquire(diskquota_locks.workerlist_lock, LW_EXCLUSIVE);
+		dlist_delete(&worker->node);
+		worker->dbEntry = NULL;
+		dlist_push_head(&DiskquotaLauncherShmem->freeWorkers, &worker->node);
+		elog(DEBUG1, "[diskquota] free worker %d", worker->id);
+		LWLockRelease(diskquota_locks.workerlist_lock);
 	}
-	return false;
 }
 
-// Checks if the bgworker for the current database works as expected.
-// 1. If it returns successfully in `diskquota.naptime`, the bgworker works as expected.
-// 2. If it does not terminate, there must be some issues with the bgworker.
-//    In this case, we must ensure this UDF can be interrupted by the user.
-PG_FUNCTION_INFO_V1(wait_for_worker_new_epoch);
-Datum
-wait_for_worker_new_epoch(PG_FUNCTION_ARGS)
+static void
+FreeWorkerOnExit(int code, Datum arg)
 {
-	TimestampTz start_time    = GetCurrentTimestamp();
-	uint32      current_epoch = worker_get_epoch(MyDatabaseId);
+	if (MyWorkerInfo != NULL)
+	{
+		FreeWorker(MyWorkerInfo);
+	}
+}
+
+void
+init_launcher_shmem()
+{
+	bool found;
+	DiskquotaLauncherShmem = (DiskquotaLauncherShmemStruct *)ShmemInitStruct("Diskquota launcher Data",
+	                                                                         diskquota_launcher_shmem_size(), &found);
+	memset(DiskquotaLauncherShmem, 0, diskquota_launcher_shmem_size());
+	if (!found)
+	{
+		dlist_init(&DiskquotaLauncherShmem->freeWorkers);
+		dlist_init(&DiskquotaLauncherShmem->runningWorkers);
+
+		// a pointer to the start address of hidden memory
+		uint8_t *hidden_memory_prt = (uint8_t *)DiskquotaLauncherShmem + MAXALIGN(sizeof(DiskquotaLauncherShmemStruct));
+
+		// get DiskQuotaWorkerEntry from the hidden memory
+		DiskQuotaWorkerEntry *worker = (DiskQuotaWorkerEntry *)hidden_memory_prt;
+		hidden_memory_prt += mul_size(diskquota_max_workers, sizeof(DiskQuotaWorkerEntry));
+
+		// get dbArray from the hidden memory
+		DiskquotaDBEntry *dbArray = (DiskquotaDBEntry *)hidden_memory_prt;
+		hidden_memory_prt += mul_size(MAX_NUM_MONITORED_DB, sizeof(struct DiskquotaDBEntry));
+
+		// get the dbArrayTail from the hidden memory
+		DiskquotaDBEntry *dbArrayTail = (DiskquotaDBEntry *)hidden_memory_prt;
+
+		/* add all worker to the free worker list */
+		for (int i = 0; i < diskquota_max_workers; i++)
+		{
+			memset(&worker[i], 0, sizeof(DiskQuotaWorkerEntry));
+			worker[i].id = i;
+			dlist_push_head(&DiskquotaLauncherShmem->freeWorkers, &worker[i].node);
+		}
+
+		DiskquotaLauncherShmem->dbArray     = dbArray;
+		DiskquotaLauncherShmem->dbArrayTail = dbArrayTail;
+
+		for (int i = 0; i < MAX_NUM_MONITORED_DB; i++)
+		{
+			memset(&DiskquotaLauncherShmem->dbArray[i], 0, sizeof(DiskquotaDBEntry));
+			DiskquotaLauncherShmem->dbArray[i].id       = i;
+			DiskquotaLauncherShmem->dbArray[i].workerId = INVALID_WORKER_ID;
+		}
+	}
+	/* init TableSizeEntry counter */
+	diskquota_table_size_entry_num =
+	        ShmemInitStruct("diskquota TableSizeEntry counter", sizeof(pg_atomic_uint32), &found);
+	if (!found) pg_atomic_init_u32(diskquota_table_size_entry_num, 0);
+}
+
+/*
+ * Look for an unused slot.  If we find one, grab it.
+ *
+ * We always look for the slot from the lower-numbers slots
+ * firstly, so that we can recycle the slots instead of using
+ * the unused slots in order to recycle the shared memory
+ * allocated before.
+ */
+static DiskquotaDBEntry *
+add_db_entry(Oid dbid)
+{
+	DiskquotaDBEntry *result = NULL;
+
+	LWLockAcquire(diskquota_locks.dblist_lock, LW_EXCLUSIVE);
+	/* if there is already dbEntry's dbid equals dbid, returning the existing one */
+	for (int i = 0; i < MAX_NUM_MONITORED_DB; i++)
+	{
+		DiskquotaDBEntry *dbEntry = &DiskquotaLauncherShmem->dbArray[i];
+		if (!dbEntry->in_use && result == NULL)
+		{
+			dbEntry->dbid          = dbid;
+			dbEntry->in_use        = true;
+			dbEntry->next_run_time = GetCurrentTimestamp();
+			result                 = dbEntry;
+		}
+		else if (dbEntry->in_use && dbEntry->dbid == dbid)
+		{
+			result = dbEntry;
+			break;
+		}
+	}
+	if (result == NULL)
+		ereport(WARNING, (errmsg("[diskquota launcher] diskquota monitored database limit is reached, database(oid:%u) "
+		                         "will not enable diskquota",
+		                         dbid)));
+	if (result != NULL) elog(DEBUG1, "[diskquota] add db entry: id: %d, %u", result->id, dbid);
+
+	LWLockRelease(diskquota_locks.dblist_lock);
+	return result;
+}
+
+static void
+release_db_entry(Oid dbid)
+{
+	DiskquotaDBEntry *db = NULL;
+	for (int i = 0; i < MAX_NUM_MONITORED_DB; i++)
+	{
+		DiskquotaDBEntry *dbEntry = &DiskquotaLauncherShmem->dbArray[i];
+		if (dbEntry->in_use && dbEntry->dbid == dbid)
+		{
+			db = dbEntry;
+			break;
+		}
+	}
+	if (db == NULL)
+	{
+		return;
+	}
+
+	LWLockAcquire(diskquota_locks.dblist_lock, LW_EXCLUSIVE);
+	if (db->workerId != INVALID_WORKER_ID)
+	{
+		BackgroundWorkerHandle *handle = get_bgworker_handle(db->workerId);
+		TerminateBackgroundWorker(handle);
+	}
+	vacuum_disk_quota_model(db->id);
+	/* should be called at last to set in_use to false */
+	vacuum_db_entry(db);
+	LWLockRelease(diskquota_locks.dblist_lock);
+}
+
+/*
+ * Pick next db to run.
+ * If the curDB is NULL, pick the head db to run.
+ * If the dbList empty, return NULL.
+ * If the picked db is in running status, skip it, pick the next one to run.
+ */
+static DiskquotaDBEntry *
+next_db(DiskquotaDBEntry *curDB)
+{
+	DiskquotaDBEntry *result   = NULL;
+	int               nextSlot = 0;
+	if (curDB != NULL)
+	{
+		nextSlot = curDB->id + 1;
+	}
+
+	/*
+	 * SearchSysCache should be run in a transaction
+	 */
+	StartTransactionCommand();
+	LWLockAcquire(diskquota_locks.dblist_lock, LW_SHARED);
+	for (int i = 0; i < MAX_NUM_MONITORED_DB; i++)
+	{
+		if (nextSlot >= MAX_NUM_MONITORED_DB) nextSlot = 0;
+		DiskquotaDBEntry *dbEntry = &DiskquotaLauncherShmem->dbArray[nextSlot];
+		nextSlot++;
+		if (!dbEntry->in_use || dbEntry->workerId != INVALID_WORKER_ID || dbEntry->dbid == InvalidOid) continue;
+		/* TODO: should release the invalid db related things */
+		if (!is_valid_dbid(dbEntry->dbid)) continue;
+		result = dbEntry;
+		break;
+	}
+	LWLockRelease(diskquota_locks.dblist_lock);
+	CommitTransactionCommand();
+	return result;
+}
+
+static DiskQuotaWorkerEntry *
+next_worker(void)
+{
+	DiskQuotaWorkerEntry *dq_worker = NULL;
+	dlist_node           *wnode;
+
+	/* acquire worker from worker list */
+	LWLockAcquire(diskquota_locks.workerlist_lock, LW_EXCLUSIVE);
+	if (dlist_is_empty(&DiskquotaLauncherShmem->freeWorkers)) goto out;
+	wnode     = dlist_pop_head_node(&DiskquotaLauncherShmem->freeWorkers);
+	dq_worker = dlist_container(DiskQuotaWorkerEntry, node, wnode);
+	reset_worker(dq_worker);
+	dlist_push_head(&DiskquotaLauncherShmem->runningWorkers, &dq_worker->node);
+	elog(DEBUG1, "[diskquota] gets a worker %d", dq_worker->id);
+out:
+	LWLockRelease(diskquota_locks.workerlist_lock);
+	return dq_worker;
+}
+
+static char *
+get_db_name(Oid dbid)
+{
+	char	     *dbname = NULL;
+	MemoryContext old_ctx;
+	if (dbid == InvalidOid)
+	{
+		elog(WARNING, "database oid  is invalid");
+		return NULL;
+	}
+
+	StartTransactionCommand();
+	(void)GetTransactionSnapshot();
+	old_ctx = MemoryContextSwitchTo(TopMemoryContext);
+	dbname  = get_database_name(dbid);
+	MemoryContextSwitchTo(old_ctx);
+	CommitTransactionCommand();
+	return dbname;
+}
+
+static void
+reset_worker(DiskQuotaWorkerEntry *dq_worker)
+{
+	if (dq_worker == NULL) return;
+	dq_worker->dbEntry = NULL;
+}
+
+/*
+ * id can not be changed
+ */
+static void
+vacuum_db_entry(DiskquotaDBEntry *db)
+{
+	if (db == NULL) return;
+	db->dbid     = InvalidOid;
+	db->inited   = false;
+	db->workerId = INVALID_WORKER_ID;
+	db->in_use   = false;
+}
+
+static void
+init_bgworker_handles(void)
+{
+	bgworker_handles = (BackgroundWorkerHandle **)(palloc(sizeof(BackgroundWorkerHandle *) * diskquota_max_workers));
+	for (int i = 0; i < diskquota_max_workers; i++)
+	{
+		bgworker_handles[i] = NULL;
+	}
+	return;
+}
+
+static BackgroundWorkerHandle *
+get_bgworker_handle(uint32 worker_id)
+{
+	if (worker_id >= 0)
+		return bgworker_handles[worker_id];
+	else
+		return NULL;
+}
+
+static void
+free_bgworker_handle(uint32 worker_id)
+{
+	BackgroundWorkerHandle **handle = &bgworker_handles[worker_id];
+	if (*handle != NULL)
+	{
+		WaitForBackgroundWorkerShutdown(*handle);
+		pfree(*handle);
+		*handle = NULL;
+	}
+}
+
+static BgwHandleStatus
+WaitForBackgroundWorkerShutdown(BackgroundWorkerHandle *handle)
+{
+	BgwHandleStatus status;
+	int             rc;
+
 	for (;;)
 	{
+		pid_t pid;
+
 		CHECK_FOR_INTERRUPTS();
-		if (check_for_timeout(start_time)) start_time = GetCurrentTimestamp();
-		uint32 new_epoch = worker_get_epoch(MyDatabaseId);
-		/* Unsigned integer underflow is OK */
-		if (new_epoch - current_epoch >= 2u)
+
+		status = GetBackgroundWorkerPid(handle, &pid);
+		if (status == BGWH_STOPPED) break;
+
+		rc = WaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_POSTMASTER_DEATH, 0);
+
+		if (rc & WL_POSTMASTER_DEATH)
 		{
-			PG_RETURN_BOOL(true);
+			status = BGWH_POSTMASTER_DIED;
+			break;
 		}
-		/* Sleep for naptime to reduce CPU usage */
-		(void)WaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_TIMEOUT, diskquota_naptime ? diskquota_naptime : 1);
+
 		ResetLatch(&MyProc->procLatch);
 	}
-	PG_RETURN_BOOL(false);
+
+	return status;
 }

@@ -5,6 +5,8 @@ CREATE DATABASE diskquota;
 \! gpconfig -c diskquota.naptime -v 0 --skipvalidation
 \! gpconfig -c max_worker_processes -v 20 --skipvalidation
 \! gpconfig -c diskquota.hard_limit -v "off" --skipvalidation
+\! gpconfig -c diskquota.max_workers -v 1 --skipvalidation
+\! gpconfig -c log_min_messages -v debug1
 
 \! gpstop -raf
 --end_ignore

@@ -72,7 +72,8 @@ list(
   enforcement.c
   gp_activetable.c
   quotamodel.c
-  relation_cache.c)
+  relation_cache.c
+  monitored_db.c)
 
 list(
   APPEND
@@ -82,7 +83,10 @@ list(
   diskquota--1.0--2.0.sql
   diskquota--1.0.3--2.0.sql
   diskquota--2.0.sql
-  diskquota--2.0--1.0.sql)
+  diskquota--2.0--1.0.sql
+  diskquota--2.1.sql
+  diskquota--2.0--2.1.sql
+  diskquota--2.1--2.0.sql)
 
 add_library(diskquota MODULE ${diskquota_SRC})
 

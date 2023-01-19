@@ -98,9 +98,7 @@ PG_FUNCTION_INFO_V1(pull_all_table_size);
 		                ddl_hint_ ? errhint("%s", ddl_hint_) : 0));                          \
 	} while (0)
 
-static object_access_hook_type next_object_access_hook;
-static bool                    is_database_empty(void);
-static void  dq_object_access_hook(ObjectAccessType access, Oid classId, Oid objectId, int subId, void *arg);
+static bool  is_database_empty(void);
 static void  ddl_err_code_to_err_message(MessageResult code, const char **err_msg, const char **hint_msg);
 static int64 get_size_in_mb(char *str);
 static void set_quota_config_internal(Oid targetoid, int64 quota_limit_mb, QuotaType type, float4 segratio, Oid spcoid);
@@ -353,7 +351,7 @@ diskquota_start_worker(PG_FUNCTION_ARGS)
 	extension_ddl_message->dbid    = MyDatabaseId;
 	launcher_pid                   = extension_ddl_message->launcher_pid;
 	/* setup sig handler to diskquota launcher process */
-	rc = kill(launcher_pid, SIGUSR1);
+	rc = kill(launcher_pid, SIGUSR2);
 	LWLockRelease(diskquota_locks.extension_ddl_message_lock);
 	if (rc == 0)
 	{
@@ -401,43 +399,6 @@ diskquota_start_worker(PG_FUNCTION_ARGS)
 }
 
 /*
- * Dispatch pausing/resuming command to segments.
- */
-static void
-dispatch_pause_or_resume_command(Oid dbid, bool pause_extension)
-{
-	CdbPgResults   cdb_pgresults = {NULL, 0};
-	int            i;
-	StringInfoData sql;
-
-	initStringInfo(&sql);
-	appendStringInfo(&sql, "SELECT diskquota.%s", pause_extension ? "pause" : "resume");
-	if (dbid == InvalidOid)
-	{
-		appendStringInfo(&sql, "()");
-	}
-	else
-	{
-		appendStringInfo(&sql, "(%d)", dbid);
-	}
-	CdbDispatchCommand(sql.data, DF_NONE, &cdb_pgresults);
-
-	for (i = 0; i < cdb_pgresults.numResults; ++i)
-	{
-		PGresult *pgresult = cdb_pgresults.pg_results[i];
-		if (PQresultStatus(pgresult) != PGRES_TUPLES_OK)
-		{
-			cdbdisp_clearCdbPgResults(&cdb_pgresults);
-			ereport(ERROR, (errmsg("[diskquota] %s extension on segments, encounter unexpected result from segment: %d",
-			                       pause_extension ? "pausing" : "resuming", PQresultStatus(pgresult))));
-		}
-	}
-
-	pfree(sql.data);
-	cdbdisp_clearCdbPgResults(&cdb_pgresults);
-}
-
-/*
  * this function is called by user.
  * pause diskquota in current or specific database.
  * After this function being called, diskquota doesn't emit an error when the disk usage limit is exceeded.
@@ -455,26 +416,17 @@ diskquota_pause(PG_FUNCTION_ARGS)
 	{
 		dbid = PG_GETARG_OID(0);
 	}
-
-	// pause current worker
-	LWLockAcquire(diskquota_locks.worker_map_lock, LW_EXCLUSIVE);
-	{
-		bool                  found;
-		DiskQuotaWorkerEntry *hentry;
-
-		hentry = (DiskQuotaWorkerEntry *)hash_search(disk_quota_worker_map, (void *)&dbid,
-		                                             // segment dose not boot the worker
-		                                             // this will add new element on segment
-		                                             // delete this element in diskquota_resume()
-		                                             HASH_ENTER, &found);
-
-		hentry->is_paused = true;
-	}
-	LWLockRelease(diskquota_locks.worker_map_lock);
-
 	if (IS_QUERY_DISPATCHER())
-		dispatch_pause_or_resume_command(PG_NARGS() == 0 ? InvalidOid : dbid, true /* pause_extension */);
-
+	{
+		// pause current worker
+		if (SPI_OK_CONNECT != SPI_connect())
+		{
+			ereport(ERROR,
+			        (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] unable to connect to execute SPI query")));
+		}
+		update_monitor_db_mpp(dbid, PAUSE_DB_TO_MONITOR, EXTENSION_SCHEMA);
+		SPI_finish();
+	}
 	PG_RETURN_VOID();
 }
 
@@ -497,28 +449,16 @@ diskquota_resume(PG_FUNCTION_ARGS)
 	}
 
 	// active current worker
-	LWLockAcquire(diskquota_locks.worker_map_lock, LW_EXCLUSIVE);
-	{
-		bool                  found;
-		DiskQuotaWorkerEntry *hentry;
-
-		hentry = (DiskQuotaWorkerEntry *)hash_search(disk_quota_worker_map, (void *)&dbid, HASH_FIND, &found);
-		if (found)
-		{
-			hentry->is_paused = false;
-		}
-
-		// remove the element since we do not need any more
-		// ref diskquota_pause()
-		if (found && hentry->handle == NULL)
-		{
-			hash_search(disk_quota_worker_map, (void *)&dbid, HASH_REMOVE, &found);
-		}
-	}
-	LWLockRelease(diskquota_locks.worker_map_lock);
-
 	if (IS_QUERY_DISPATCHER())
-		dispatch_pause_or_resume_command(PG_NARGS() == 0 ? InvalidOid : dbid, false /* pause_extension */);
+	{
+		if (SPI_OK_CONNECT != SPI_connect())
+		{
+			ereport(ERROR,
+			        (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] unable to connect to execute SPI query")));
+		}
+		update_monitor_db_mpp(dbid, RESUME_DB_TO_MONITOR, EXTENSION_SCHEMA);
+		SPI_finish();
+	}
 
 	PG_RETURN_VOID();
 }
@@ -544,7 +484,8 @@ is_database_empty(void)
 	        "FROM "
 	        "  pg_class AS c, "
 	        "  pg_namespace AS n "
-	        "WHERE c.oid > 16384 and relnamespace = n.oid and nspname != 'diskquota'",
+	        "WHERE c.oid > 16384 and relnamespace = n.oid and nspname != 'diskquota'"
+	        " and relkind not in ('v', 'c', 'f')",
 	        true, 0);
 	if (ret != SPI_OK_SELECT)
 		elog(ERROR, "cannot select pg_class and pg_namespace table, reason: %s.", strerror(errno));
@@ -572,26 +513,10 @@ is_database_empty(void)
 	return is_empty;
 }
 
-/*
- * Add dq_object_access_hook to handle drop extension event.
- */
 void
-register_diskquota_object_access_hook(void)
-{
-	next_object_access_hook = object_access_hook;
-	object_access_hook      = dq_object_access_hook;
-}
-
-static void
-dq_object_access_hook_on_drop(void)
+diskquota_stop_worker(void)
 {
 	int rc, launcher_pid;
-
-	/*
-	 * Remove the current database from monitored db cache
-	 * on all segments and on coordinator.
-	 */
-	update_diskquota_db_list(MyDatabaseId, HASH_REMOVE);
 
 	if (!IS_QUERY_DISPATCHER())
 	{
@@ -609,7 +534,7 @@ dq_object_access_hook_on_drop(void)
 	extension_ddl_message->result  = ERR_PENDING;
 	extension_ddl_message->dbid    = MyDatabaseId;
 	launcher_pid                   = extension_ddl_message->launcher_pid;
-	rc                             = kill(launcher_pid, SIGUSR1);
+	rc                             = kill(launcher_pid, SIGUSR2);
 	LWLockRelease(diskquota_locks.extension_ddl_message_lock);
 	if (rc == 0)
 	{
@@ -646,33 +571,6 @@ dq_object_access_hook_on_drop(void)
 	}
 	LWLockRelease(diskquota_locks.extension_ddl_message_lock);
 	LWLockRelease(diskquota_locks.extension_ddl_lock);
-}
-
-/*
- * listening on any modify on pg_extension table when:
- * 		DROP:       will send CMD_DROP_EXTENSION to diskquota laucher
- */
-static void
-dq_object_access_hook(ObjectAccessType access, Oid classId, Oid objectId, int subId, void *arg)
-{
-	if (classId != ExtensionRelationId) goto out;
-
-	if (get_extension_oid("diskquota", true) != objectId) goto out;
-
-	switch (access)
-	{
-		case OAT_DROP:
-			dq_object_access_hook_on_drop();
-			break;
-		case OAT_POST_ALTER:
-		case OAT_FUNCTION_EXECUTE:
-		case OAT_POST_CREATE:
-		case OAT_NAMESPACE_SEARCH:
-			break;
-	}
-
-out:
-	if (next_object_access_hook) (*next_object_access_hook)(access, classId, objectId, subId, arg);
 }
 
 /*
@@ -1228,40 +1126,6 @@ get_size_in_mb(char *str)
 	result = DatumGetInt64(DirectFunctionCall1(numeric_int8, NumericGetDatum(num)));
 
 	return result;
-}
-
-/*
- * Function to update the db list on each segment
- * Will print a WARNING to log if out of memory
- */
-void
-update_diskquota_db_list(Oid dbid, HASHACTION action)
-{
-	bool found = false;
-
-	/* add/remove the dbid to monitoring database cache to filter out table not under
-	 * monitoring in hook functions
-	 */
-
-	LWLockAcquire(diskquota_locks.monitoring_dbid_cache_lock, LW_EXCLUSIVE);
-	if (action == HASH_ENTER)
-	{
-		Oid *entry = NULL;
-		entry      = hash_search(monitoring_dbid_cache, &dbid, HASH_ENTER_NULL, &found);
-		if (entry == NULL)
-		{
-			ereport(WARNING, (errmsg("can't alloc memory on dbid cache, there ary too many databases to monitor")));
-		}
-	}
-	else if (action == HASH_REMOVE)
-	{
-		hash_search(monitoring_dbid_cache, &dbid, HASH_REMOVE, &found);
-		if (!found)
-		{
-			ereport(WARNING, (errmsg("cannot remove the database from db list, dbid not found")));
-		}
-	}
-	LWLockRelease(diskquota_locks.monitoring_dbid_cache_lock);
 }
 
 /*
