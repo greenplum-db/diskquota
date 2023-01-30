@@ -185,7 +185,7 @@ params:
 in_parallel:
 #@   for image in images:
 #@     test_os = image.split("-")[0]
-  - task: #@ "test_" + conf["os"]
+  - task: #@ "test_" + test_os
     timeout: 2h
     file: diskquota_src/concourse/tasks/test_diskquota.yml
     image: #@ image
