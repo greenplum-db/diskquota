@@ -170,7 +170,12 @@ BuildInfo_Create(${build_info_PATH}
 
 # Add installcheck targets
 add_subdirectory(tests)
-# add_subdirectory(upgrade_test)
+if(NOT DEFINED ENABLE_UPGRADE_TEST)
+  set(ENABLE_UPGRADE_TEST ON)
+endif()
+if(ENABLE_UPGRADE_TEST)
+  add_subdirectory(upgrade_test)
+endif()
 
 # NOTE: keep install part at the end of file, to overwrite previous binary
 install(PROGRAMS "cmake/install_gpdb_component" DESTINATION ".")
