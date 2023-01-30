@@ -508,7 +508,8 @@ is_database_empty(void)
 	        true, 0);
 	if (ret != SPI_OK_SELECT)
 	{
-		elog(ERROR, "cannot select pg_class and pg_namespace table, reason: %m.");
+		int saved_errno = errno;
+		elog(ERROR, "cannot select pg_class and pg_namespace table, reason: %s.", strerror(saved_errno));
 	}
 
 	tupdesc = SPI_tuptable->tupdesc;
@@ -1361,7 +1362,10 @@ relation_file_stat(int segno, void *ctx)
 	if (stat(file_path, &fst) < 0)
 	{
 		if (errno != ENOENT)
-			ereport(WARNING, (errcode_for_file_access(), errmsg("[diskquota] could not stat file %s: %m", file_path)));
+		{
+			int saved_errno = errno;
+			ereport(WARNING, (errcode_for_file_access(), errmsg("[diskquota] could not stat file %s: %s", file_path, strerror(saved_errno))));
+		}
 		return false;
 	}
 	stat_ctx->size += fst.st_size;
