@@ -812,7 +812,7 @@ get_active_tables_oid(void)
 		}
 		else if (relOid != InvalidOid)
 		{
-			prelid             = get_primary_table_oid(relOid, true);
+			prelid = get_primary_table_oid(relOid, true);
 			if (prelid < FirstNormalObjectId) continue;
 			active_table_entry = hash_search(local_active_table_stats_map, &prelid, HASH_ENTER, &found);
 			if (active_table_entry && !found)
