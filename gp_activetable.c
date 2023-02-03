@@ -813,7 +813,12 @@ get_active_tables_oid(void)
 		else if (relOid != InvalidOid)
 		{
 			prelid = get_primary_table_oid(relOid, true);
-			if (prelid < FirstNormalObjectId) continue;
+			/* if relation is catalog relation, remove it, diskquota doesn't care about it */
+			if (prelid < FirstNormalObjectId)
+			{
+				hash_search(local_active_table_file_map, active_table_file_entry, HASH_REMOVE, NULL);
+				continue;
+			}
 			active_table_entry = hash_search(local_active_table_stats_map, &prelid, HASH_ENTER, &found);
 			if (active_table_entry && !found)
 			{
