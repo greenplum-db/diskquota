@@ -268,12 +268,17 @@ report_relation_cache_helper(Oid relid)
 #if GP_VERSION_NUM < 70000
 	rel = diskquota_relation_open(relid, NoLock);
 #else
-	rel                             = diskquota_relation_open(relid, AccessShareLock);
+	rel = diskquota_relation_open(relid, AccessShareLock);
 #endif /* GP_VERSION_NUM */
-	if (rel->rd_rel->relkind != RELKIND_FOREIGN_TABLE || rel->rd_rel->relkind != RELKIND_COMPOSITE_TYPE ||
+	if (rel->rd_rel->relkind != RELKIND_FOREIGN_TABLE && rel->rd_rel->relkind != RELKIND_COMPOSITE_TYPE &&
 	    rel->rd_rel->relkind != RELKIND_VIEW)
 		update_relation_cache(relid);
+
+#if GP_VERSION_NUM < 70000
 	relation_close(rel, NoLock);
+#else
+	relation_close(rel, AccessShareLock);
+#endif /* GP_VERSION_NUM */
 }
 
 /*
