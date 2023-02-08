@@ -233,12 +233,19 @@ parse_primary_table_oid(Oid relid, bool on_bgworker)
 #else
 		rel = diskquota_relation_open(relid, AccessShareLock);
 #endif /* GP_VERSION_NUM */
+
 		if (rel == NULL)
 		{
+#if GP_VERSION_NUM < 70000
+			relation_close(rel, NoLock);
+#else
+			relation_close(rel, AccessShareLock);
+#endif /* GP_VERSION_NUM */
 			return InvalidOid;
 		}
 		namespace = rel->rd_rel->relnamespace;
 		memcpy(relname, rel->rd_rel->relname.data, NAMEDATALEN);
+
 #if GP_VERSION_NUM < 70000
 		relation_close(rel, NoLock);
 #else
