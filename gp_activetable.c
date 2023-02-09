@@ -266,23 +266,12 @@ report_relation_cache_helper(Oid relid)
 	{
 		return;
 	}
-#if GP_VERSION_NUM < 70000
-	rel = diskquota_relation_open(relid, NoLock);
-#else
-	/* In GPDB7, CheckRelationLockedByMe() is called in relation_open(). But there is no lock on the
-	 * relation before object_access_hook with OTA_POST_CREATE tag, so we should use AccessShareLock
-	 * for relation_open().
-	 */
-	rel = diskquota_relation_open(relid, AccessShareLock);
-#endif /* GP_VERSION_NUM */
+
+	rel = RelationIdGetRelation(relid);
 
 	relkind = rel->rd_rel->relkind;
 
-#if GP_VERSION_NUM < 70000
-	relation_close(rel, NoLock);
-#else
-	relation_close(rel, AccessShareLock);
-#endif /* GP_VERSION_NUM */
+	RelationClose(rel);
 
 	if (relkind != RELKIND_FOREIGN_TABLE && relkind != RELKIND_COMPOSITE_TYPE && relkind != RELKIND_VIEW)
 		update_relation_cache(relid);

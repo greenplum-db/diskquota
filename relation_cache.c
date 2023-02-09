@@ -136,15 +136,7 @@ static void
 update_relation_entry(Oid relid, DiskQuotaRelationCacheEntry *relation_entry, DiskQuotaRelidCacheEntry *relid_entry)
 {
 	Relation rel;
-#if GP_VERSION_NUM < 70000
-	rel = diskquota_relation_open(relid, NoLock);
-#else
-	/* In GPDB7, CheckRelationLockedByMe() is called in relation_open(). But there is no lock on the
-	 * relation before object_access_hook with OTA_POST_CREATE tag, so we should use AccessShareLock
-	 * for relation_open().
-	 */
-	rel = diskquota_relation_open(relid, AccessShareLock);
-#endif /* GP_VERSION_NUM */
+	rel = RelationIdGetRelation(relid);
 
 	if (rel == NULL)
 	{
@@ -170,11 +162,7 @@ update_relation_entry(Oid relid, DiskQuotaRelationCacheEntry *relation_entry, Di
 
 	relation_entry->primary_table_relid = relid;
 
-#if GP_VERSION_NUM < 70000
-	relation_close(rel, NoLock);
-#else
-	relation_close(rel, AccessShareLock);
-#endif /* GP_VERSION_NUM */
+	RelationClose(rel);
 }
 
 void
@@ -232,33 +220,17 @@ parse_primary_table_oid(Oid relid, bool on_bgworker)
 	}
 	else
 	{
-#if GP_VERSION_NUM < 70000
-		rel = diskquota_relation_open(relid, NoLock);
-#else
-		/* In GPDB7, CheckRelationLockedByMe() is called in relation_open(). But there is no lock on the
-		 * relation before object_access_hook with OTA_POST_CREATE tag, so we should use AccessShareLock
-		 * for relation_open().
-		 */
-		rel = diskquota_relation_open(relid, AccessShareLock);
-#endif /* GP_VERSION_NUM */
+		rel = RelationIdGetRelation(relid);
 
 		if (rel == NULL)
 		{
-#if GP_VERSION_NUM < 70000
-			relation_close(rel, NoLock);
-#else
-			relation_close(rel, AccessShareLock);
-#endif /* GP_VERSION_NUM */
+			RelationClose(rel);
 			return InvalidOid;
 		}
 		namespace = rel->rd_rel->relnamespace;
 		memcpy(relname, rel->rd_rel->relname.data, NAMEDATALEN);
 
-#if GP_VERSION_NUM < 70000
-		relation_close(rel, NoLock);
-#else
-		relation_close(rel, AccessShareLock);
-#endif /* GP_VERSION_NUM */
+		RelationClose(rel);
 	}
 
 	parsed_oid = diskquota_parse_primary_table_oid(namespace, relname);
@@ -346,7 +318,8 @@ show_relation_cache(PG_FUNCTION_ARGS)
 	{
 		HASH_SEQ_STATUS iter;
 		HTAB           *relation_cache;
-	} *relation_cache_ctx;
+	};
+	struct RelationCacheCtx *relation_cache_ctx;
 
 	if (SRF_IS_FIRSTCALL())
 	{
