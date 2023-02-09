@@ -1,5 +1,13 @@
 include(${CMAKE_SOURCE_DIR}/cmake/Regress.cmake)
 
+
+set(exclude_fault_injector OFF)
+# GP7 release build doesn't support fault injector.
+if (CMAKE_BUILD_TYPE STREQUAL "Release")
+  message(WARNING "Fault injector test cases will be disabled.")
+  set(exclude_fault_injector ON)
+endif()
+
 RegressTarget_Add(regress
     INIT_FILE
     ${CMAKE_CURRENT_SOURCE_DIR}/init_file
@@ -8,6 +16,7 @@ RegressTarget_Add(regress
     RESULTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/regress/results
     DATA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/data
     SCHEDULE_FILE ${CMAKE_CURRENT_SOURCE_DIR}/regress/diskquota_schedule
+    EXCLUDE_FAULT_INJECT_TEST ${exclude_fault_injector}
     REGRESS_OPTS
     --load-extension=gp_inject_fault
     --dbname=contrib_regression)
@@ -22,6 +31,7 @@ RegressTarget_Add(isolation2
     RESULTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/isolation2/results
     DATA_DIR ${CMAKE_CURRENT_SOURCE_DIR}/data
     SCHEDULE_FILE ${CMAKE_CURRENT_SOURCE_DIR}/isolation2/isolation2_schedule
+    EXCLUDE_FAULT_INJECT_TEST ${exclude_fault_injector}
     REGRESS_OPTS
     --load-extension=gp_inject_fault
     --dbname=isolation2test)
