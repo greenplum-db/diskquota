@@ -6,7 +6,7 @@ endif()
 
 set(exclude_fault_injector OFF)
 # GP7 release build doesn't support fault injector.
-if (CMAKE_BUILD_TYPE STREQUAL "Release" AND ${GP_MAJOR_VERSION} EQUAL 7)
+if (CMAKE_BUILD_TYPE STREQUAL "Release")
   message(WARNING "Fault injector test cases will be disabled.")
   set(exclude_fault_injector ON)
 endif()
