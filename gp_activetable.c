@@ -269,6 +269,10 @@ report_relation_cache_helper(Oid relid)
 #if GP_VERSION_NUM < 70000
 	rel = diskquota_relation_open(relid, NoLock);
 #else
+	/* In GPDB7, CheckRelationLockedByMe() is called in relation_open(). But there is no lock on the
+	 * relation before object_access_hook with OTA_POST_CREATE tag, so we should use AccessShareLock
+	 * for relation_open().
+	 */
 	rel = diskquota_relation_open(relid, AccessShareLock);
 #endif /* GP_VERSION_NUM */
 

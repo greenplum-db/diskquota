@@ -139,6 +139,10 @@ update_relation_entry(Oid relid, DiskQuotaRelationCacheEntry *relation_entry, Di
 #if GP_VERSION_NUM < 70000
 	rel = diskquota_relation_open(relid, NoLock);
 #else
+	/* In GPDB7, CheckRelationLockedByMe() is called in relation_open(). But there is no lock on the
+	 * relation before object_access_hook with OTA_POST_CREATE tag, so we should use AccessShareLock
+	 * for relation_open().
+	 */
 	rel = diskquota_relation_open(relid, AccessShareLock);
 #endif /* GP_VERSION_NUM */
 
@@ -231,6 +235,10 @@ parse_primary_table_oid(Oid relid, bool on_bgworker)
 #if GP_VERSION_NUM < 70000
 		rel = diskquota_relation_open(relid, NoLock);
 #else
+		/* In GPDB7, CheckRelationLockedByMe() is called in relation_open(). But there is no lock on the
+		 * relation before object_access_hook with OTA_POST_CREATE tag, so we should use AccessShareLock
+		 * for relation_open().
+		 */
 		rel = diskquota_relation_open(relid, AccessShareLock);
 #endif /* GP_VERSION_NUM */
 
@@ -338,7 +346,7 @@ show_relation_cache(PG_FUNCTION_ARGS)
 	{
 		HASH_SEQ_STATUS iter;
 		HTAB           *relation_cache;
-	} * relation_cache_ctx;
+	} *relation_cache_ctx;
 
 	if (SRF_IS_FIRSTCALL())
 	{
