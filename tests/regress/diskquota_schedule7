@@ -23,8 +23,7 @@ test: test_truncate
 test: test_delete_quota
 test: test_partition
 test: test_vacuum
-# plpython is not avilable in gpdb7, should change it to plpython3
-# test: test_primary_failure
+test: test_primary_failure
 test: test_extension
 test: test_activetable_limit
 test: test_many_active_tables
