@@ -25,6 +25,9 @@
 #  - regress_show_diff.sh
 #  - regress_loop.sh
 #
+# NOTE: If the input sql file extension is ".in.sql" instead of ".sql", the "@VAR@" in the input
+# file will be replaced by the corresponding cmake VAR before tests are executed.
+#
 # Example:
 # RegressTarget_Add(installcheck_avro_fmt
 #    REGRESS ${avro_regress_TARGETS}
@@ -70,6 +73,21 @@ function(_Find_FaultInjector_Tests sql_DIR)
     endforeach()
 
     set(fault_injector_test_list ${fault_injector_test_list} PARENT_SCOPE)
+endfunction()
+
+# Create symbolic links in the binary dir to input SQL files.
+function(_Link_SQL_Files sql_DIR working_DIR)
+    file(MAKE_DIRECTORY ${working_DIR}/sql)
+    file(GLOB files "${sql_DIR}/*.sql")
+    foreach(f ${files})
+        get_filename_component(file_name ${f} NAME)
+        file(CREATE_LINK ${f} ${working_DIR}/sql/${file_name} SYMBOLIC)
+    endforeach()
+    file(GLOB files "${sql_DIR}/*.in.sql")
+    foreach(f ${files})
+        get_filename_component(file_name ${f} NAME_WE)
+        configure_file(${f} ${working_DIR}/sql/${file_name}.sql)
+    endforeach()
 endfunction()
 
 function(RegressTarget_Add name)
@@ -167,12 +185,12 @@ function(RegressTarget_Add name)
         set(test_command ${regress_command})
     endif()
 
+    _Link_SQL_Files(${sql_DIR} ${working_DIR})
+
     # Create the target
     add_custom_target(
         ${name}
         WORKING_DIRECTORY ${working_DIR}
-        COMMAND rm -f sql
-        COMMAND ln -s ${sql_DIR} sql
         COMMAND rm -f expected
         COMMAND ln -s ${expected_DIR} expected
         COMMAND rm -f results

@@ -2,6 +2,10 @@ include(${CMAKE_SOURCE_DIR}/cmake/Regress.cmake)
 
 if (${GP_MAJOR_VERSION} EQUAL 7)
   set(EXPECTED_DIR_SUFFIX "7")
+  # PLPYTHON_LANG_STR will be replaced by Regress.cmake
+  set(PLPYTHON_LANG_STR "plpython3u")
+else()
+  set(PLPYTHON_LANG_STR "plpython2u")
 endif()
 
 set(exclude_fault_injector OFF)

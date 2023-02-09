@@ -301,7 +301,7 @@ CREATE TYPE cached_relation_entry AS ( reloid        oid, relname       text, re
 CREATE
 
 -- This function dumps given relation_cache entries to the given file.
-CREATE OR REPLACE FUNCTION dump_relation_cache_to_file(filename text) RETURNS void AS $$ rv = plpy.execute(""" SELECT (oid, relname, relowner, relnamespace, reltablespace, relfilenode, gp_segment_id)::cached_relation_entry FROM gp_dist_random('pg_class') """) with open(filename, 'wt') as f: for v in rv: f.write(v['row'][1:-1] + '\n') $$ LANGUAGE plpythonu;
+CREATE OR REPLACE FUNCTION dump_relation_cache_to_file(filename text) RETURNS void AS $$ rv = plpy.execute(""" SELECT (oid, relname, relowner, relnamespace, reltablespace, relfilenode, gp_segment_id)::cached_relation_entry FROM gp_dist_random('pg_class') """) with open(filename, 'wt') as f: for v in rv: row = v['row'] # The composite type results are different between GP6 & GP7 if isinstance(row, dict): r = "{0},{1},{2},{3},{4},{5},{6}".format( row['reloid'], row['relname'], row['relowner'], row['relnamespace'], row['reltablespace'], row['relfilenode'], row['segid']) else: r = row[1:-1] f.write(r + '\n') $$ LANGUAGE plpython2u;
 CREATE
 
 -- This function reads relation_cache entries from the given file.
