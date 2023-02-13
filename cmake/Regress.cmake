@@ -61,8 +61,13 @@ endfunction()
 
 # Find all tests in the given directory which uses fault injector, and add them to
 # fault_injector_test_list.
-function(_Find_FaultInjector_Tests build_sql_DIR)
-    get_filename_component(build_sql_DIR ${build_sql_DIR} ABSOLUTE)
+function(_Find_FaultInjector_Tests sql_DIR)
+    if (NOT fault_injector_test_list)
+        set(fault_injector_test_list "" PARENT_SCOPE)
+    endif()
+    set(test_list ${fault_injector_test_list})
+
+    get_filename_component(sql_DIR ${sql_DIR} ABSOLUTE)
     file(GLOB files "${sql_DIR}/*.sql")
     foreach(f ${files})
         set(ret 1)
@@ -73,11 +78,13 @@ function(_Find_FaultInjector_Tests build_sql_DIR)
             RESULT_VARIABLE ret)
         if(ret EQUAL 0)
             get_filename_component(test_name ${f} NAME_WLE)
-            list(APPEND fault_injector_test_list ${test_name})
+            if (NOT test_name IN_LIST test_list)
+                list(APPEND test_list ${test_name})
+            endif()
         endif()
     endforeach()
 
-    set(fault_injector_test_list ${fault_injector_test_list} PARENT_SCOPE)
+    set(fault_injector_test_list ${test_list} PARENT_SCOPE)
 endfunction()
 
 # Create symbolic links in the binary dir to input SQL files.
@@ -133,17 +140,18 @@ function(RegressTarget_Add name)
     # Link input sql files to the build dir
     foreach(sql_DIR IN LISTS arg_SQL_DIR)
         _Link_Test_Files(${sql_DIR} ${working_DIR}/sql sql)
+        # Find all tests using fault injector
+        if(arg_EXCLUDE_FAULT_INJECT_TEST)
+            _Find_FaultInjector_Tests(${sql_DIR})
+        endif()
     endforeach()
+
+    message(FATAL_ERROR "xxxxx ${fault_injector_test_list}")
 
     # Link output out files to the build dir
     foreach(expected_DIR IN LISTS arg_EXPECTED_DIR)
         _Link_Test_Files(${expected_DIR} ${working_DIR}/expected out)
     endforeach()
-
-    # Find all tests using fault injector
-    if(arg_EXCLUDE_FAULT_INJECT_TEST)
-        _Find_FaultInjector_Tests(${working_DIR}/sql)
-    endif()
 
     # Set REGRESS test cases
     foreach(r IN LISTS arg_REGRESS)
