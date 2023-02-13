@@ -77,7 +77,7 @@ function(_Find_FaultInjector_Tests sql_DIR)
             OUTPUT_QUIET
             RESULT_VARIABLE ret)
         if(ret EQUAL 0)
-            get_filename_component(test_name ${f} NAME_WLE)
+            get_filename_component(test_name ${f} NAME_WE)
             if (NOT test_name IN_LIST test_list)
                 list(APPEND test_list ${test_name})
             endif()
