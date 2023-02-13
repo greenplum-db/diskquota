@@ -146,8 +146,6 @@ function(RegressTarget_Add name)
         endif()
     endforeach()
 
-    message(FATAL_ERROR "xxxxx ${fault_injector_test_list}")
-
     # Link output out files to the build dir
     foreach(expected_DIR IN LISTS arg_EXPECTED_DIR)
         _Link_Test_Files(${expected_DIR} ${working_DIR}/expected out)
