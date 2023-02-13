@@ -285,8 +285,8 @@ CREATE OR REPLACE FUNCTION replace_oid_with_relname(given_name text, filename te
          '^(pg_toast_|pg_aoseg_|pg_aovisimap_|pg_aoblkdir_|pg_aocsseg_)\d+',              /*in func*/
          '\1' ||                                                                          /*in func*/
          (SELECT DISTINCT relname FROM read_relation_cache_from_file(filename)            /*in func*/
-          WHERE  REGEXP_REPLACE(given_name, '\D', '', 'g') <> ''
-          AND reloid=REGEXP_REPLACE(given_name, '\D', '', 'g')::oid), 'g'), given_name);/*in func*/
+          WHERE  REGEXP_REPLACE(given_name, '\D', '', 'g') <> ''                          /*in func*/
+          AND reloid=REGEXP_REPLACE(given_name, '\D', '', 'g')::oid), 'g'), given_name);  /*in func*/
   END;                                                                                    /*in func*/
 $$ LANGUAGE plpgsql;
 
