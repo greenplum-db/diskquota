@@ -267,7 +267,11 @@ report_relation_cache_helper(Oid relid)
 		return;
 	}
 
-	rel = RelationIdGetRelation(relid);
+	rel = diskquota_relation_open(relid);
+	if (rel == NULL)
+	{
+		return;
+	}
 
 	relkind = rel->rd_rel->relkind;
 

@@ -136,7 +136,7 @@ static void
 update_relation_entry(Oid relid, DiskQuotaRelationCacheEntry *relation_entry, DiskQuotaRelidCacheEntry *relid_entry)
 {
 	Relation rel;
-	rel = RelationIdGetRelation(relid);
+	rel = diskquota_relation_open(relid);
 
 	if (rel == NULL)
 	{
@@ -220,11 +220,10 @@ parse_primary_table_oid(Oid relid, bool on_bgworker)
 	}
 	else
 	{
-		rel = RelationIdGetRelation(relid);
+		rel = diskquota_relation_open(relid);
 
 		if (rel == NULL)
 		{
-			RelationClose(rel);
 			return InvalidOid;
 		}
 		namespace = rel->rd_rel->relnamespace;
