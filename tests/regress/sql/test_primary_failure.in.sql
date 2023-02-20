@@ -1,7 +1,7 @@
 CREATE SCHEMA ftsr;
 SELECT diskquota.set_schema_quota('ftsr', '1 MB');
 SET search_path TO ftsr;
-create or replace language plpythonu;
+create or replace language @PLPYTHON_LANG_STR@;
 --
 -- pg_ctl:
 --   datadir: data directory of process to target with `pg_ctl`
@@ -18,14 +18,14 @@ returns text as $$
     cmd = cmd + '-W -m %s %s' % (command_mode, command)
 
     return subprocess.check_output(cmd, stderr=subprocess.STDOUT, shell=True).replace('.', '')
-$$ language plpythonu;
+$$ language @PLPYTHON_LANG_STR@;
 
 create or replace function pg_recoverseg(datadir text, command text)
 returns text as $$
     import subprocess
     cmd = 'gprecoverseg -%s -d %s; exit 0; ' % (command, datadir)
     return subprocess.check_output(cmd, stderr=subprocess.STDOUT, shell=True).replace('.', '')
-$$ language plpythonu;
+$$ language @PLPYTHON_LANG_STR@;
 
 CREATE TABLE a(i int) DISTRIBUTED BY (i);
 INSERT INTO a SELECT generate_series(1,100);
