@@ -65,16 +65,10 @@ add_compile_definitions(
   DISKQUOTA_BINARY_NAME="${DISKQUOTA_BINARY_NAME}")
 
 set(SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
-file(GLOB files "${SRC_DIR}/*.c")
-foreach(f ${files})
-  list(APPEND diskquota_SRC ${f})
-endforeach()
+file(GLOB diskquota_SRC "${SRC_DIR}/*.c")
 
 set(DISKQUOTA_DDL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/control/ddl")
-file(GLOB files "${DISKQUOTA_DDL_DIR}/*")
-foreach(f ${files})
-  list(APPEND diskquota_DDL "${f}")
-endforeach()
+file(GLOB diskquota_DDL "${DISKQUOTA_DDL_DIR}/*")
 
 add_library(diskquota MODULE ${diskquota_SRC})
 
