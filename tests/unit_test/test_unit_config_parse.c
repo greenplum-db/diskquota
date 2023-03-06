@@ -7,6 +7,13 @@
 
 #include <cmocka.h>
 
+#ifdef sprintf
+#undef sprintf
+#endif
+#ifdef printf
+#undef printf
+#endif
+
 char *quota_type     = "\"quota_type\"";
 char *namespace_oid  = "\"namespace_oid\"";
 char *quota_limit_mb = "\"quota_limit_mb\"";
