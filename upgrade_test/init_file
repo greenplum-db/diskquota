@@ -3,12 +3,11 @@
 -- Individual tests can contain additional patterns specific to the test.
 
 -- start_matchignore
+m/^NOTICE:  resource queue required -- using default resource queue "pg_default"/
 -- end_matchignore
 -- start_matchsubs
 m/diskquota.c:\d+\)/
 s/diskquota.c:\d+\)/diskquota.c:xxx/
 m/diskquota_utility.c:\d+\)/
 s/diskquota_utility.c:\d+\)/diskquota_utility.c:xxx/
-m/^NOTICE:  resource queue required -- using default resource queue "pg_default"/
-s/^NOTICE:  resource queue required -- using default resource queue "pg_default"//
 -- end_matchsubs
