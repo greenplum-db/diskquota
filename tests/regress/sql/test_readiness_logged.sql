@@ -8,7 +8,7 @@ CREATE VIEW logmessage_count_view AS WITH logp AS(
     SELECT
         MAX(logpid) as max_logpid
     FROM
-        gp_toolkit.gp_log_system
+        gp_toolkit.__gp_log_master_ext
     WHERE
         position(
             '[diskquota] start disk quota worker process to monitor database' in logmessage
@@ -18,7 +18,7 @@ CREATE VIEW logmessage_count_view AS WITH logp AS(
 SELECT
     count(*)
 FROM
-    gp_toolkit.gp_log_system,
+    gp_toolkit.__gp_log_master_ext,
     logp
 WHERE
     logmessage = '[diskquota] diskquota is not ready'
