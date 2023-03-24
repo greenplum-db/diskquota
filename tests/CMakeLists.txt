@@ -91,26 +91,47 @@ add_dependencies(installcheck isolation2 regress)
 # add_dependencies(regress_truncate_loop regress_config)
 # add_dependencies(installcheck regress_truncate_loop)
 
-add_executable(test_unit_config_parse unit_test/test_unit_config_parse.c)
-add_dependencies(test_unit_config_parse cmocka cjson)
-set_target_properties(
-  test_unit_config_parse
-  PROPERTIES OUTPUT_NAME "test_unit_config_parse"
-             PREFIX ""
-             RUNTIME_OUTPUT_DIRECTORY "unit_test/"
-             C_STANDARD 99
-             LINKER_LANGUAGE "C")
-target_include_directories(
-  test_unit_config_parse PRIVATE
-  ${SRC_DIR}
-  ${PG_INCLUDE_DIR}
-  ${PG_INCLUDE_DIR_SERVER}
-  ${deps_INSTALL_DIR}/include)
+if(DEFINED ENABLE_UNIT_TEST AND ENABLE_UNIT_TEST)
+  add_executable(test_unit_config_parse unit_test/test_unit_config_parse.c unit_test/gp_mock.c ${SRC_DIR}/config_parse.c)
+  add_dependencies(test_unit_config_parse cmocka cjson)
+  set_target_properties(
+    test_unit_config_parse
+    PROPERTIES OUTPUT_NAME "test_unit_config_parse"
+              PREFIX ""
+              RUNTIME_OUTPUT_DIRECTORY "unit_test/"
+              C_STANDARD 99
+              LINKER_LANGUAGE "C")
+  
+  target_compile_definitions(
+    test_unit_config_parse
+    PRIVATE DISKQUOTA_UNIT_TEST
+  )
 
-target_link_libraries(
-  test_unit_config_parse
-  ${deps_INSTALL_DIR}/lib/libcjson.a
-  ${deps_INSTALL_DIR}/lib/libcmocka.so)
+  target_compile_options(
+    test_unit_config_parse PRIVATE
+    "-Wl,--wrap=palloc,--wrap=pfree,--wrap=hash_create,--wrap=hash_search,--wrap=hash_seq_init,--wrap=hash_seq_search"
+  )
 
-add_custom_target(ut 
-  COMMAND test_unit_config_parse)
+  target_link_options(
+    test_unit_config_parse PRIVATE
+    "-Wl,--wrap=palloc,--wrap=pfree,--wrap=hash_create,--wrap=hash_search,--wrap=hash_seq_init,--wrap=hash_seq_search"
+  )
+              
+  target_include_directories(
+    test_unit_config_parse PRIVATE
+    ${SRC_DIR}
+    ${PG_INCLUDE_DIR}
+    ${PG_INCLUDE_DIR_SERVER}
+    ${deps_INSTALL_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/unit_test
+  )
+
+  target_link_libraries(
+    test_unit_config_parse
+    ${deps_INSTALL_DIR}/lib/libcjson.a
+    ${deps_INSTALL_DIR}/lib/libcmocka.so)
+
+    add_custom_target(ut 
+      COMMAND test_unit_config_parse
+    )
+endif()

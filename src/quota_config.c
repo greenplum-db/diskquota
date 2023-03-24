@@ -31,10 +31,6 @@ static void  update_quota_config_table(QuotaConfig *config, bool need_del_quota)
 static void  dump_to_quota_config_table(const char *config_json_str, bool need_update);
 static bool  to_delete_quota(QuotaType type, int64 quota_limit_mb, float4 segratio);
 
-/* JSON function */
-static void  JSON_parse_quota_config(const char *config_str, HTAB *quota_config_map);
-static char *JSON_construct_quota_config(HTAB *quota_config_map);
-
 PG_FUNCTION_INFO_V1(set_schema_quota);
 PG_FUNCTION_INFO_V1(set_role_quota);
 PG_FUNCTION_INFO_V1(set_schema_tablespace_quota);
@@ -354,83 +350,4 @@ dump_to_quota_config_table(const char *config_json_str, bool need_update)
 			ereport(ERROR,
 			        (errmsg("cannot insert into quota setting table, reason: %s.", SPI_result_code_string(ret))));
 	}
-}
-
-/*--------------------JSON--------------------*/
-/* construct quota config hashmap by config_str */
-static void
-JSON_parse_quota_config(const char *config_str, HTAB *quota_config_map)
-{
-	cJSON	      *head;
-	cJSON	      *quota_list;
-	cJSON	      *quota_item;
-	int             quota_list_size;
-	QuotaConfigKey *key;
-	QuotaConfig     config;
-	QuotaConfig    *entry;
-	char           *version;
-	int             i;
-
-	if (config_str == NULL) return;
-
-	init_cjson_hook(palloc, pfree);
-	head            = cJSON_Parse(config_str);
-	version         = JSON_get_version(head);
-	quota_list      = JSON_get_quota_list(head);
-	quota_list_size = cJSON_GetArraySize(quota_list);
-
-	for (i = 0; i < quota_list_size; i++)
-	{
-		quota_item = cJSON_GetArrayItem(quota_list, i);
-		if (strcmp(version, "diskquota-3.0") == 0)
-		{
-			if (do_parse_quota_config(quota_item, &config))
-			{
-				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-				                errmsg("[diskquota] quota type is incorrect for: %d", config.quota_type)));
-			}
-		}
-		key   = (QuotaConfigKey *)(&config);
-		entry = hash_search(quota_config_map, key, HASH_ENTER_NULL, NULL);
-		if (entry)
-		{
-			entry->quota_limit_mb = config.quota_limit_mb;
-			entry->segratio       = config.segratio;
-		}
-	}
-	cJSON_Delete(head);
-}
-
-static char *
-JSON_construct_quota_config(HTAB *quota_config_map)
-{
-	cJSON	      *head;
-	cJSON	      *quota_list;
-	cJSON	      *quota_item;
-	HASH_SEQ_STATUS iter;
-	QuotaConfig    *entry;
-	char           *ret_str;
-
-	if (quota_config_map == NULL) return NULL;
-
-	init_cjson_hook(palloc, pfree);
-	head = cJSON_CreateObject();
-	cJSON_AddStringToObject(head, "version", "diskquota-3.0");
-	quota_list = cJSON_AddArrayToObject(head, "quota_list");
-
-	hash_seq_init(&iter, quota_config_map);
-	while ((entry = (QuotaConfig *)hash_seq_search(&iter)) != NULL)
-	{
-		quota_item = do_construct_quota_config(entry);
-		if (quota_item == NULL)
-		{
-			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-			                errmsg("[diskquota] quota type is incorrect for: %d", entry->quota_type)));
-		}
-		cJSON_AddItemToArray(quota_list, quota_item);
-	}
-
-	ret_str = cJSON_Print(head);
-	cJSON_Delete(head);
-	return ret_str;
 }
