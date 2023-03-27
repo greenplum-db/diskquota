@@ -14,6 +14,30 @@ test_parse(void **state)
 	printf("%s\n", expect_str);
 }
 
+int
+read_input_string(char *file_name, char **str)
+{
+	FILE *fp;
+	int   file_size;
+	int   len;
+
+	fp = fopen(file_name, "r");
+	printf("%p %s\n", fp, file_name);
+	assert_non_null(fp);
+
+	fseek(fp, 0, SEEK_END);
+	file_size = ftell(fp);
+
+	*str = palloc(file_size + 5);
+	memset(*str, 0, file_size + 5);
+
+	fseek(fp, 0, SEEK_SET);
+	len = fread(*str, sizeof(char), file_size, fp);
+
+	fclose(fp);
+	return len;
+}
+
 static void
 test_JSON_parse_quota_config_same_version(void **state)
 {
@@ -23,7 +47,10 @@ test_JSON_parse_quota_config_same_version(void **state)
 	ctl.entrysize          = sizeof(QuotaConfig);
 	HTAB *quota_config_map = hash_create("quota_config_map", 1024, &ctl, 0);
 
-	char *json_str = "{\"version\":\"diskquota-3.0\",\"quota_list\":[]}";
+	char *json_str;
+	char  file_name[100];
+	sprintf(file_name, "%s/JSON_parse_quota_config_same_version.json", UT_INPUT_FILE_DIR);
+	int len = read_input_string(file_name, &json_str);
 
 	cJSON *expected_json     = cJSON_Parse(json_str);
 	char  *expected_json_str = cJSON_Print(expected_json);
@@ -38,14 +65,20 @@ test_JSON_parse_quota_config_same_version(void **state)
 
 	assert_true(cJSON_Compare(expected_json, parsed_json, true));
 	assert_memory_equal(parsed_json_str, expected_json_str, strlen(expected_json_str));
+
+	pfree(json_str);
+	pfree(expected_json_str);
+	pfree(parsed_json_str);
+	cJSON_Delete(expected_json);
+	cJSON_Delete(parsed_json);
 }
 
 int
-main(void)
+main(int argc, char *argv[])
 {
 	const struct CMUnitTest tests[] = {
 	        cmocka_unit_test(test_parse),
-	        cmocka_unit_test(test_pull_quota_config),
+	        cmocka_unit_test(test_JSON_parse_quota_config_same_version),
 	};
 
 	return cmocka_run_group_tests(tests, NULL, NULL);

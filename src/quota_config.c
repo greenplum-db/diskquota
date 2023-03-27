@@ -29,7 +29,7 @@
 extern HTAB *pull_quota_config(bool *found);
 static void  update_quota_config_table(QuotaConfig *config, bool need_del_quota);
 static void  dump_to_quota_config_table(const char *config_json_str, bool need_update);
-static bool  to_delete_quota(QuotaType type, int64 quota_limit_mb, float4 segratio);
+static bool  to_delete_quota(QuotaType type, int64 quota_limit_mb, float8 segratio);
 
 PG_FUNCTION_INFO_V1(set_schema_quota);
 PG_FUNCTION_INFO_V1(set_role_quota);
@@ -237,7 +237,7 @@ set_tablespace_quota(PG_FUNCTION_ARGS)
 /*--------------------Quota Function--------------------*/
 /* check whether quota_config should be deleted */
 static bool
-to_delete_quota(QuotaType type, int64 quota_limit_mb, float4 segratio)
+to_delete_quota(QuotaType type, int64 quota_limit_mb, float8 segratio)
 {
 	if (quota_limit_mb < 0)
 		return true;

@@ -14,6 +14,7 @@
 #ifdef DISKQUOTA_UNIT_TEST
 #include "gp_mock.h"
 #else
+#include "postgres.h"
 #include "c.h"
 #include "utils/elog.h"
 #include "utils/palloc.h"
@@ -55,7 +56,7 @@ JSON_get_quota_type(cJSON *head, const char *key)
 {
 	cJSON *item = cJSON_GetObjectItem(head, key);
 	Assert(cJSON_IsNumber(item));
-	return roundl(cJSON_GetNumberValue(item));
+	return round(cJSON_GetNumberValue(item));
 }
 
 static Oid
@@ -74,12 +75,12 @@ JSON_get_int64(cJSON *head, const char *key)
 	return (int64)round(cJSON_GetNumberValue(item));
 }
 
-static float4
+static float8
 JSON_get_float4(cJSON *head, const char *key)
 {
 	cJSON *item = cJSON_GetObjectItem(head, key);
 	Assert(cJSON_IsNumber(item));
-	return (float4)cJSON_GetNumberValue(item);
+	return (float8)cJSON_GetNumberValue(item);
 }
 
 /*

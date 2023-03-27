@@ -1,4 +1,5 @@
 include(${CMAKE_SOURCE_DIR}/cmake/Regress.cmake)
+include(${CMAKE_SOURCE_DIR}/cmake/unit_test.cmake)
 
 list(APPEND isolation2_expected_DIR ${CMAKE_CURRENT_SOURCE_DIR}/isolation2/expected)
 list(APPEND regress_expected_DIR ${CMAKE_CURRENT_SOURCE_DIR}/regress/expected)
@@ -92,6 +93,8 @@ add_dependencies(installcheck isolation2 regress)
 # add_dependencies(installcheck regress_truncate_loop)
 
 if(DEFINED ENABLE_UNIT_TEST AND ENABLE_UNIT_TEST)
+  copy_unit_test_input_dir(${CMAKE_CURRENT_SOURCE_DIR}/unit_test)
+
   add_executable(test_unit_config_parse unit_test/test_unit_config_parse.c unit_test/gp_mock.c ${SRC_DIR}/config_parse.c)
   add_dependencies(test_unit_config_parse cmocka cjson)
   set_target_properties(
@@ -105,6 +108,7 @@ if(DEFINED ENABLE_UNIT_TEST AND ENABLE_UNIT_TEST)
   target_compile_definitions(
     test_unit_config_parse
     PRIVATE DISKQUOTA_UNIT_TEST
+    UT_INPUT_FILE_DIR="unit_test/input"
   )
 
   target_compile_options(
@@ -129,9 +133,10 @@ if(DEFINED ENABLE_UNIT_TEST AND ENABLE_UNIT_TEST)
   target_link_libraries(
     test_unit_config_parse
     ${deps_INSTALL_DIR}/lib/libcjson.a
-    ${deps_INSTALL_DIR}/lib/libcmocka.so)
+    ${deps_INSTALL_DIR}/lib/libcmocka.so
+    m)
 
-    add_custom_target(ut 
-      COMMAND test_unit_config_parse
-    )
+  add_custom_target(ut 
+    COMMAND test_unit_config_parse
+  )
 endif()

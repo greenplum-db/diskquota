@@ -27,6 +27,11 @@
 /*-----------------------------------------------error report------------------------------------------------------*/
 #include "utils/elog.h"
 
+#ifdef Assert
+#undef Assert
+#define Assert assert_true
+#endif
+
 #ifdef ereport
 #undef ereport
 #endif
@@ -101,7 +106,7 @@ typedef struct HASHCTL
 typedef enum
 {
 	HASH_FIND,
-	HASH_ENTER,
+	HASH_ENTER, /* monitor shared memory htab */
 	HASH_REMOVE,
 	HASH_ENTER_NULL
 } HASHACTION;

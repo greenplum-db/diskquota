@@ -61,7 +61,7 @@ typedef struct QuotaConfig
 	QuotaType quota_type;
 	Oid       keys[MAX_QUOTA_KEY_NUM];
 	int64     quota_limit_mb;
-	float4    segratio;
+	float8    segratio; // use float8 instead of float4 to avoid loss of accuracy
 } QuotaConfig;
 
 typedef struct QuotaConfigKey
