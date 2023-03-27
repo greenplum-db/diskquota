@@ -1,6 +1,5 @@
 test: config
 test: test_create_extension
-# This test seems to depend on MyProcPort, let's skip this test firstly.
 test: test_readiness_logged
 test: test_init_table_size_table
 test: test_relation_size
