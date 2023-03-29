@@ -15,7 +15,6 @@
  * -------------------------------------------------------------------------
  */
 #include "diskquota.h"
-#include "quota_config.h"
 #include "gp_activetable.h"
 #include "relation_cache.h"
 
@@ -1437,12 +1436,12 @@ do_load_quotas(void)
 	{
 		if (entry->quota_type == TABLESPACE_QUOTA) continue;
 
-		Oid   db_oid         = entry->keys[0];
-		Oid   target_oid     = entry->keys[1];
-		Oid   tablespace_oid = entry->keys[2];
-		int   quota_type     = entry->quota_type;
-		int64 quota_limit_mb = entry->quota_limit_mb;
-		float segratio       = INVALID_SEGRATIO;
+		Oid    db_oid         = entry->keys[0];
+		Oid    target_oid     = entry->keys[1];
+		Oid    tablespace_oid = entry->keys[2];
+		int    quota_type     = entry->quota_type;
+		int64  quota_limit_mb = entry->quota_limit_mb;
+		float4 segratio       = INVALID_SEGRATIO;
 
 		if (quota_type == NAMESPACE_TABLESPACE_QUOTA || quota_type == ROLE_TABLESPACE_QUOTA)
 		{
