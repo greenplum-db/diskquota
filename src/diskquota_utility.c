@@ -468,6 +468,7 @@ is_database_empty(void)
 	 */
 	SPI_connect();
 
+	/* diskquota.quota_config has two aux tables whose namespace != 'diskquota' */
 	ret = SPI_execute(
 	        "SELECT (count(relname) < 3) "
 	        "FROM "
