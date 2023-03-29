@@ -17,14 +17,7 @@
 #include "quota_config.h"
 #include "config_parse.h"
 
-#include <setjmp.h>
-#include <stdarg.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <stdio.h>
-#include <stdlib.h>
-
-#include <cmocka.h>
+#include <math.h>
 
 void
 init_cjson_hook(malloc_fn mfn, free_fn ffn)
@@ -55,7 +48,7 @@ QuotaType
 JSON_get_quota_type(cJSON *head, const char *key)
 {
 	cJSON *item = cJSON_GetObjectItem(head, key);
-	if (cJSON_IsNumber(item)) return (QuotaType)cJSON_GetNumberValue(item);
+	if (cJSON_IsNumber(item)) return (QuotaType)round(cJSON_GetNumberValue(item));
 	return NUM_QUOTA_TYPES;
 }
 
@@ -63,7 +56,7 @@ static Oid
 JSON_get_oid(cJSON *head, const char *key)
 {
 	cJSON *item = cJSON_GetObjectItem(head, key);
-	if (cJSON_IsNumber(item)) return (Oid)cJSON_GetNumberValue(item);
+	if (cJSON_IsNumber(item)) return (Oid)round(cJSON_GetNumberValue(item));
 	return InvalidOid;
 }
 
@@ -71,7 +64,7 @@ static int64
 JSON_get_int64(cJSON *head, const char *key)
 {
 	cJSON *item = cJSON_GetObjectItem(head, key);
-	if (cJSON_IsNumber(item)) return (int64)cJSON_GetNumberValue(item);
+	if (cJSON_IsNumber(item)) return (int64)round(cJSON_GetNumberValue(item));
 	return INVALID_QUOTA;
 }
 
@@ -169,6 +162,7 @@ do_construct_quota_config(QuotaConfig *config)
 			cJSON_AddNumberToObject(head, "segratio", config->segratio);
 			break;
 		default:
+			cJSON_Delete(head);
 			return NULL;
 	}
 	return head;
