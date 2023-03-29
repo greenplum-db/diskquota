@@ -345,7 +345,6 @@ static void
 dump_to_quota_config_table(const char *config_json_str, bool need_update)
 {
 	int ret;
-	// elog(WARNING, "config_json_str: %s", config_json_str);
 
 	if (need_update)
 	{
@@ -357,7 +356,8 @@ dump_to_quota_config_table(const char *config_json_str, bool need_update)
 		                                    CStringGetDatum(config_json_str),
 		                            },
 		                            NULL, false, 0);
-		if (ret != SPI_OK_UPDATE) elog(ERROR, "cannot update quota setting table, error code %d", ret);
+		if (ret != SPI_OK_UPDATE)
+			ereport(ERROR, (errmsg("cannot update quota setting table, reason: %s.", SPI_result_code_string(ret))));
 	}
 	else
 	{
@@ -369,7 +369,9 @@ dump_to_quota_config_table(const char *config_json_str, bool need_update)
 		                                    CStringGetDatum(config_json_str),
 		                            },
 		                            NULL, false, 0);
-		if (ret != SPI_OK_INSERT) elog(ERROR, "cannot insert into quota setting table, error code %d", ret);
+		if (ret != SPI_OK_INSERT)
+			ereport(ERROR,
+			        (errmsg("cannot insert into quota setting table, reason: %s.", SPI_result_code_string(ret))));
 	}
 }
 
@@ -416,6 +418,7 @@ JSON_parse_quota_config(const char *config_str, HTAB *quota_config_map)
 			entry->segratio       = config.segratio;
 		}
 	}
+	cJSON_Delete(head);
 }
 
 static char *
@@ -426,6 +429,7 @@ JSON_construct_quota_config(HTAB *quota_config_map)
 	cJSON	      *quota_item;
 	HASH_SEQ_STATUS iter;
 	QuotaConfig    *entry;
+	char           *ret_str;
 
 	if (quota_config_map == NULL) return NULL;
 
@@ -446,5 +450,7 @@ JSON_construct_quota_config(HTAB *quota_config_map)
 		cJSON_AddItemToArray(quota_list, quota_item);
 	}
 
-	return cJSON_Print(head);
+	ret_str = cJSON_Print(head);
+	cJSON_Delete(head);
+	return ret_str;
 }
