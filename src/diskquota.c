@@ -485,6 +485,11 @@ disk_quota_worker_main(Datum main_arg)
 	bool        is_gang_destroyed   = false;
 	TimestampTz log_start_timestamp = GetCurrentTimestamp();
 	TimestampTz log_end_timestamp;
+	TimestampTz loop_start_timestamp = 0;
+	TimestampTz loop_end_timestamp;
+	long        sleep_time = 0;
+	long        secs;
+	int         usecs;
 	ereport(LOG, (errmsg("[diskquota] disk quota worker process is monitoring database:%s", dbname)));
 
 	while (!got_sigterm)
@@ -504,27 +509,41 @@ disk_quota_worker_main(Datum main_arg)
 			log_start_timestamp = log_end_timestamp;
 		}
 
-		SIMPLE_FAULT_INJECTOR("diskquota_worker_main");
-		if (!diskquota_is_paused())
+		/*
+		 * diskquota model is refreshed every naptime. If the latch is set ahead of time,
+		 * refresh_disk_quota_model() should be skipped.
+		 */
+		loop_end_timestamp = GetCurrentTimestamp();
+		TimestampDifference(loop_start_timestamp, loop_end_timestamp, &secs, &usecs);
+		sleep_time -= secs * 1000 + usecs / 1000;
+		if (sleep_time <= 0)
 		{
-			/* Refresh quota model with init mode */
-			refresh_disk_quota_model(!MyWorkerInfo->dbEntry->inited);
-			MyWorkerInfo->dbEntry->inited = true;
-			is_gang_destroyed             = false;
-		}
-		else if (!is_gang_destroyed)
-		{
-			DisconnectAndDestroyAllGangs(false);
-			is_gang_destroyed = true;
-		}
-		worker_increase_epoch(MyWorkerInfo->dbEntry->dbid);
+			SIMPLE_FAULT_INJECTOR("diskquota_worker_main");
+			if (!diskquota_is_paused())
+			{
+				/* Refresh quota model with init mode */
+				refresh_disk_quota_model(!MyWorkerInfo->dbEntry->inited);
+				MyWorkerInfo->dbEntry->inited = true;
+				is_gang_destroyed             = false;
+			}
+			else if (!is_gang_destroyed)
+			{
+				DisconnectAndDestroyAllGangs(false);
+				is_gang_destroyed = true;
+			}
+			worker_increase_epoch(MyWorkerInfo->dbEntry->dbid);
 
-		// GPDB6 opend a MemoryAccount for us without asking us.
-		// and GPDB6 did not release the MemoryAccount after SPI finish.
-		// Reset the MemoryAccount although we never create it.
+			// GPDB6 opend a MemoryAccount for us without asking us.
+			// and GPDB6 did not release the MemoryAccount after SPI finish.
+			// Reset the MemoryAccount although we never create it.
 #if GP_VERSION_NUM < 70000
-		MemoryAccounting_Reset();
+			MemoryAccounting_Reset();
 #endif /* GP_VERSION_NUM */
+
+			loop_start_timestamp = GetCurrentTimestamp();
+			sleep_time           = diskquota_naptime * 1000;
+		}
+
 		if (DiskquotaLauncherShmem->isDynamicWorker)
 		{
 			break;
@@ -537,8 +556,7 @@ disk_quota_worker_main(Datum main_arg)
 		 * necessary, but is awakened if postmaster dies.  That way the
 		 * background process goes away immediately in an emergency.
 		 */
-		rc = DiskquotaWaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
-		                        diskquota_naptime * 1000L);
+		rc = DiskquotaWaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH, sleep_time);
 		ResetLatch(&MyProc->procLatch);
 
 		// be nice to scheduler when naptime == 0 and diskquota_is_paused() == true
@@ -563,8 +581,6 @@ disk_quota_worker_main(Datum main_arg)
 		ereport(LOG, (errmsg("[diskquota] stop disk quota worker process to monitor database:%s", dbname)));
 	ereport(DEBUG1, (errmsg("[diskquota] stop disk quota worker process to monitor database:%s", dbname)));
 #if DISKQUOTA_DEBUG
-	long secs;
-	int  usecs;
 	TimestampDifference(MyWorkerInfo->dbEntry->last_run_time, GetCurrentTimestamp(), &secs, &usecs);
 	MyWorkerInfo->dbEntry->cost = secs * 1000L + usecs / 1000L;
 #endif
