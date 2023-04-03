@@ -540,9 +540,9 @@ disk_quota_worker_main(Datum main_arg)
 			MemoryAccounting_Reset();
 #endif /* GP_VERSION_NUM */
 
-			loop_start_timestamp = GetCurrentTimestamp();
-			sleep_time           = diskquota_naptime * 1000;
+			sleep_time = diskquota_naptime * 1000;
 		}
+		loop_start_timestamp = GetCurrentTimestamp();
 
 		if (DiskquotaLauncherShmem->isDynamicWorker)
 		{
