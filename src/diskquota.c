@@ -1384,9 +1384,8 @@ start_worker(DiskquotaDBEntry *dbEntry)
 		result = INVALID_DB;
 		goto Failed;
 	}
-	LWLockAcquire(diskquota_locks.workerlist_lock, LW_EXCLUSIVE);
+	/* We do not need to get lock here, since this entry is not used by other process. */
 	namestrcpy(&(dq_worker->dbname), dbname);
-	LWLockRelease(diskquota_locks.workerlist_lock);
 
 	snprintf(worker.bgw_name, sizeof(worker.bgw_name), "diskquota bgworker %d", dbEntry->dbid);
 	pfree(dbname);
