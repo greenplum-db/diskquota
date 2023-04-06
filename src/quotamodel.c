@@ -53,7 +53,7 @@
 #define MAX_NUM_KEYS_QUOTA_MAP 8
 /* Number of attributes in quota configuration records. */
 #define NUM_QUOTA_CONFIG_ATTRS 6
-/*  */
+/* Number of entries for diskquota.table_size update SQL */
 #define SQL_MAX_VALUES_NUMBER 1000000
 
 /* TableSizeEntry macro function */
@@ -1139,7 +1139,7 @@ delete_from_table_size_map(char *str)
 	ret = SPI_execute(delete_statement.data, false, 0);
 	if (ret != SPI_OK_DELETE)
 		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-		                errmsg("[diskquota] flush_to_table_size SPI_execute failed: error code %d", ret)));
+		                errmsg("[diskquota] delete_from_table_size_map SPI_execute failed: error code %d", ret)));
 	pfree(delete_statement.data);
 }
 
@@ -1154,7 +1154,7 @@ insert_into_table_size_map(char *str)
 	ret = SPI_execute(insert_statement.data, false, 0);
 	if (ret != SPI_OK_INSERT)
 		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-		                errmsg("[diskquota] flush_to_table_size SPI_execute failed: error code %d", ret)));
+		                errmsg("[diskquota] insert_into_table_size_map SPI_execute failed: error code %d", ret)));
 	pfree(insert_statement.data);
 }
 
