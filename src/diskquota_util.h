@@ -16,5 +16,5 @@
 
 extern Datum get_oid_auto_case_convert(Oid (*f)(const char *name, bool missing_ok), const char *name);
 extern int64 get_size_in_mb(char *str);
-
+extern void  check_superuser(void);
 #endif

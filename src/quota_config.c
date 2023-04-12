@@ -13,17 +13,12 @@
 
 #include "postgres.h"
 
-#include <sys/stat.h>
-
 #include "catalog/pg_authid.h"
 #include "catalog/namespace.h"
-#include "catalog/pg_collation.h"
 #include "commands/tablespace.h"
 #include "executor/spi.h"
 #include "utils/builtins.h"
-#include "utils/formatting.h"
 #include "utils/acl.h"
-#include "utils/syscache.h"
 
 #include "quota_config.h"
 #include "config_parse.h"
@@ -59,10 +54,7 @@ set_schema_quota(PG_FUNCTION_ARGS)
 	Oid         db_oid;
 	Oid         namespace_oid;
 
-	if (!superuser())
-	{
-		ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE), errmsg("must be superuser to set disk quota limit")));
-	}
+	check_superuser();
 
 	db_oid                = MyDatabaseId;
 	nspname               = text_to_cstring(PG_GETARG_TEXT_PP(0));
@@ -97,10 +89,7 @@ set_role_quota(PG_FUNCTION_ARGS)
 	Oid         db_oid;
 	Oid         role_oid;
 
-	if (!superuser())
-	{
-		ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE), errmsg("must be superuser to set disk quota limit")));
-	}
+	check_superuser();
 
 	db_oid                = MyDatabaseId;
 	rolname               = text_to_cstring(PG_GETARG_TEXT_PP(0));
@@ -142,10 +131,7 @@ set_schema_tablespace_quota(PG_FUNCTION_ARGS)
 	Oid         namespace_oid;
 	Oid         tablespace_oid;
 
-	if (!superuser())
-	{
-		ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE), errmsg("must be superuser to set disk quota limit")));
-	}
+	check_superuser();
 
 	db_oid                = MyDatabaseId;
 	nspname               = text_to_cstring(PG_GETARG_TEXT_PP(0));
@@ -185,10 +171,7 @@ set_role_tablespace_quota(PG_FUNCTION_ARGS)
 	Oid         role_oid;
 	Oid         tablespace_oid;
 
-	if (!superuser())
-	{
-		ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE), errmsg("must be superuser to set disk quota limit")));
-	}
+	check_superuser();
 
 	db_oid                = MyDatabaseId;
 	rolname               = text_to_cstring(PG_GETARG_TEXT_PP(0));
@@ -231,10 +214,7 @@ set_tablespace_quota(PG_FUNCTION_ARGS)
 	Oid         db_oid;
 	Oid         tablespace_oid;
 
-	if (!superuser())
-	{
-		ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE), errmsg("must be superuser to set disk quota limit")));
-	}
+	check_superuser();
 
 	db_oid            = MyDatabaseId;
 	spcname           = text_to_cstring(PG_GETARG_TEXT_PP(0));
@@ -324,7 +304,8 @@ update_quota_config_table(QuotaConfig *config, bool need_del_quota)
 	/* If a row exists, an update is needed. */
 	quota_config_map = pull_quota_config(&need_update);
 
-	memcpy(&key, config, sizeof(QuotaConfigKey));
+	key.quota_type = config->quota_type;
+	memcpy(key.keys, config->keys, sizeof(Oid) * MAX_QUOTA_KEY_NUM);
 	/* remove quota config */
 	if (need_del_quota) hash_search(quota_config_map, &key, HASH_REMOVE, NULL);
 	/* update/insert quota config */
@@ -337,6 +318,7 @@ update_quota_config_table(QuotaConfig *config, bool need_del_quota)
 	new_quota_config_json_str = JSON_construct_quota_config(quota_config_map);
 	/* dump quota config to diskquota.quota_config */
 	dump_to_quota_config_table(new_quota_config_json_str, need_update);
+	pfree(new_quota_config_json_str);
 	hash_destroy(quota_config_map);
 }
 
