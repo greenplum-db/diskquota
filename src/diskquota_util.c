@@ -171,46 +171,11 @@ get_size_in_mb(char *str)
 	return result;
 }
 
-static float4
-get_per_segment_ratio(Oid spcoid)
+void
+check_superuser(void)
 {
-	int    ret;
-	float4 segratio = INVALID_SEGRATIO;
-
-	if (!OidIsValid(spcoid)) return segratio;
-
-	/*
-	 * using row share lock to lock TABLESPACE_QUTAO
-	 * row to avoid concurrently updating the segratio
-	 */
-	ret = SPI_execute_with_args(
-	        "select segratio from diskquota.quota_config where targetoid = $1 and quotatype = $2 for share", 2,
-	        (Oid[]){
-	                OIDOID,
-	                INT4OID,
-	        },
-	        (Datum[]){
-	                ObjectIdGetDatum(spcoid),
-	                Int32GetDatum(TABLESPACE_QUOTA),
-	        },
-	        NULL, false, 0);
-	if (ret != SPI_OK_SELECT)
+	if (!superuser())
 	{
-		elog(ERROR, "cannot get per segment ratio for the tablepace: error code %d", ret);
+		ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE), errmsg("must be superuser to set disk quota limit")));
 	}
-
-	if (SPI_processed == 1)
-	{
-		TupleDesc tupdesc = SPI_tuptable->tupdesc;
-		HeapTuple tup     = SPI_tuptable->vals[0];
-		Datum     dat;
-		bool      isnull;
-
-		dat = SPI_getbinval(tup, tupdesc, 1, &isnull);
-		if (!isnull)
-		{
-			segratio = DatumGetFloat4(dat);
-		}
-	}
-	return segratio;
 }

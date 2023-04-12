@@ -32,48 +32,48 @@ char *
 JSON_get_version(cJSON *head)
 {
 	cJSON *item = cJSON_GetObjectItem(head, "version");
-	if (cJSON_IsString(item)) return cJSON_GetStringValue(item);
-	return NULL;
+	Assert(cJSON_IsString(item));
+	return cJSON_GetStringValue(item);
 }
 
 cJSON *
 JSON_get_quota_list(cJSON *head)
 {
 	cJSON *item = cJSON_GetObjectItem(head, "quota_list");
-	if (cJSON_IsArray(item)) return item;
-	return NULL;
+	Assert(cJSON_IsArray(item));
+	return item;
 }
 
 QuotaType
 JSON_get_quota_type(cJSON *head, const char *key)
 {
 	cJSON *item = cJSON_GetObjectItem(head, key);
-	if (cJSON_IsNumber(item)) return (QuotaType)round(cJSON_GetNumberValue(item));
-	return NUM_QUOTA_TYPES;
+	Assert(cJSON_IsNumber(item));
+	return roundl(cJSON_GetNumberValue(item));
 }
 
 static Oid
 JSON_get_oid(cJSON *head, const char *key)
 {
 	cJSON *item = cJSON_GetObjectItem(head, key);
-	if (cJSON_IsNumber(item)) return (Oid)round(cJSON_GetNumberValue(item));
-	return InvalidOid;
+	Assert(cJSON_IsNumber(item));
+	return round(cJSON_GetNumberValue(item));
 }
 
 static int64
 JSON_get_int64(cJSON *head, const char *key)
 {
 	cJSON *item = cJSON_GetObjectItem(head, key);
-	if (cJSON_IsNumber(item)) return (int64)round(cJSON_GetNumberValue(item));
-	return INVALID_QUOTA;
+	Assert(cJSON_IsNumber(item));
+	return (int64)round(cJSON_GetNumberValue(item));
 }
 
 static float4
 JSON_get_float4(cJSON *head, const char *key)
 {
 	cJSON *item = cJSON_GetObjectItem(head, key);
-	if (cJSON_IsNumber(item)) return (float4)cJSON_GetNumberValue(item);
-	return INVALID_SEGRATIO;
+	Assert(cJSON_IsNumber(item));
+	return (float4)cJSON_GetNumberValue(item);
 }
 
 /*
