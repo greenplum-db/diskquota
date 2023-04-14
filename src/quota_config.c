@@ -295,23 +295,22 @@ pull_quota_config(bool *found)
 static void
 update_quota_config_table(QuotaConfig *config, bool need_del_quota)
 {
-	QuotaConfigKey key = {0};
-	QuotaConfig   *entry;
-	HTAB          *quota_config_map;
-	char          *new_quota_config_json_str;
-	bool           need_update;
+	QuotaConfigKey *key;
+	QuotaConfig    *entry;
+	HTAB           *quota_config_map;
+	char           *new_quota_config_json_str;
+	bool            need_update;
 
 	/* If a row exists, an update is needed. */
 	quota_config_map = pull_quota_config(&need_update);
 
-	key.quota_type = config->quota_type;
-	memcpy(key.keys, config->keys, sizeof(Oid) * MAX_QUOTA_KEY_NUM);
+	key = (QuotaConfigKey *)config;
 	/* remove quota config */
-	if (need_del_quota) hash_search(quota_config_map, &key, HASH_REMOVE, NULL);
+	if (need_del_quota) hash_search(quota_config_map, key, HASH_REMOVE, NULL);
 	/* update/insert quota config */
 	else
 	{
-		entry = hash_search(quota_config_map, &key, HASH_ENTER_NULL, NULL);
+		entry = hash_search(quota_config_map, key, HASH_ENTER_NULL, NULL);
 		memcpy(entry, config, sizeof(QuotaConfig));
 	}
 	/* construct new quota config json string */
@@ -362,15 +361,15 @@ dump_to_quota_config_table(const char *config_json_str, bool need_update)
 static void
 JSON_parse_quota_config(const char *config_str, HTAB *quota_config_map)
 {
-	cJSON         *head;
-	cJSON         *quota_list;
-	cJSON         *quota_item;
-	int            quota_list_size;
-	QuotaConfigKey key = {0};
-	QuotaConfig    config;
-	QuotaConfig   *entry;
-	char          *version;
-	int            i;
+	cJSON	      *head;
+	cJSON	      *quota_list;
+	cJSON	      *quota_item;
+	int             quota_list_size;
+	QuotaConfigKey *key;
+	QuotaConfig     config;
+	QuotaConfig    *entry;
+	char           *version;
+	int             i;
 
 	if (config_str == NULL) return;
 
@@ -391,9 +390,8 @@ JSON_parse_quota_config(const char *config_str, HTAB *quota_config_map)
 				                errmsg("[diskquota] quota type is incorrect for: %d", config.quota_type)));
 			}
 		}
-		key.quota_type = config.quota_type;
-		memcpy(key.keys, config.keys, sizeof(Oid) * MAX_QUOTA_KEY_NUM);
-		entry = hash_search(quota_config_map, &key, HASH_ENTER_NULL, NULL);
+		key   = (QuotaConfigKey *)(&config);
+		entry = hash_search(quota_config_map, key, HASH_ENTER_NULL, NULL);
 		if (entry)
 		{
 			entry->quota_limit_mb = config.quota_limit_mb;
