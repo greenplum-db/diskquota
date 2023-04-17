@@ -510,7 +510,10 @@ disk_quota_worker_main(Datum main_arg)
 		}
 
 		/*
-		 * diskquota model is refreshed every naptime. If the latch is set ahead of time,
+		 * If the bgworker receives a signal, the latch will be set ahead of the diskquota.naptime.
+		 * To avoid too frequent diskquota refresh caused by receiving the signal, we use
+		 * loop_start_timestamp and loop_end_timestamp to maintain the elapsed time since the last
+		 * diskquota refresh. If the latch is set ahead of diskquota.naptime,
 		 * refresh_disk_quota_model() should be skipped.
 		 */
 		loop_end_timestamp = GetCurrentTimestamp();
