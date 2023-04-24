@@ -10,7 +10,7 @@ function pkg() {
     export CC="$(which gcc)"
     export CXX="$(which g++)"
 
-    pushd /home/gpadmin/bin_diskquota
+    pushd /home/gpadmin/diskquota_artifacts
     if [[ $OS_NAME == "rhel9" ]]
     then
         cmake /home/gpadmin/diskquota_src \

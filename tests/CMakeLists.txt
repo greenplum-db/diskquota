@@ -31,7 +31,6 @@ RegressTarget_Add(regress
     EXCLUDE_FAULT_INJECT_TEST ${exclude_fault_injector}
     REGRESS_OPTS
     --load-extension=gp_inject_fault
-    --load-extension=diskquota_test
     --dbname=contrib_regression)
 
 RegressTarget_Add(isolation2

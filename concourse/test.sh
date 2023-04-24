@@ -4,7 +4,7 @@ set -exo pipefail
 
 function activate_standby() {
     gpstop -may -M immediate
-    export MASTER_DATA_DIRECTORY=$(readlink /home/gpadmin/gpdb_src)/gpAux/gpdemo/datadirs/standby
+    export MASTER_DATA_DIRECTORY=/home/gpadmin/gpdb_src/gpAux/gpdemo/datadirs/standby
     if [[ $PGPORT -eq 6000 ]]
     then
         export PGPORT=6001
@@ -17,7 +17,7 @@ function activate_standby() {
 
 function _main() {
     local tmp_dir="$(mktemp -d)"
-    tar -xzf /home/gpadmin/bin_diskquota/diskquota-*-*.tar.gz -C "$tmp_dir"
+    tar -xzf /home/gpadmin/diskquota_artifacts/diskquota-*-*.tar.gz -C "$tmp_dir"
     pushd "$tmp_dir"
         ./install_gpdb_component
     popd
@@ -28,7 +28,7 @@ function _main() {
         make -C src/test/isolation2 install
     popd
 
-    pushd /home/gpadmin/bin_diskquota
+    pushd /home/gpadmin/diskquota_artifacts
     # Show regress diff if test fails
     export SHOW_REGRESS_DIFF=1
     time cmake --build . --target installcheck
