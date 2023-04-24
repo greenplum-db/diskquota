@@ -15,7 +15,6 @@ RegressTarget_Add(regress
     SCHEDULE_FILE ${CMAKE_CURRENT_SOURCE_DIR}/regress/diskquota_schedule${EXPECTED_DIR_SUFFIX}
     REGRESS_OPTS
     --load-extension=gp_inject_fault
-    --load-extension=diskquota_test
     --dbname=contrib_regression)
 
 RegressTarget_Add(isolation2
