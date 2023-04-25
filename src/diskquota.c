@@ -487,7 +487,7 @@ disk_quota_worker_main(Datum main_arg)
 	TimestampTz log_end_timestamp;
 	TimestampTz loop_start_timestamp = 0;
 	TimestampTz loop_end_timestamp;
-	long        sleep_time = 0;
+	long        sleep_time = diskquota_naptime * 1000;
 	long        secs;
 	int         usecs;
 	ereport(LOG, (errmsg("[diskquota] disk quota worker process is monitoring database:%s", dbname)));
@@ -518,8 +518,8 @@ disk_quota_worker_main(Datum main_arg)
 		 */
 		loop_end_timestamp = GetCurrentTimestamp();
 		TimestampDifference(loop_start_timestamp, loop_end_timestamp, &secs, &usecs);
-		sleep_time -= secs * 1000 + usecs / 1000;
-		if (sleep_time <= 0)
+		sleep_time += secs * 1000 + usecs / 1000;
+		if (sleep_time >= diskquota_naptime * 1000)
 		{
 			SIMPLE_FAULT_INJECTOR("diskquota_worker_main");
 			if (!diskquota_is_paused())
@@ -543,7 +543,7 @@ disk_quota_worker_main(Datum main_arg)
 			MemoryAccounting_Reset();
 #endif /* GP_VERSION_NUM */
 
-			sleep_time = diskquota_naptime * 1000;
+			sleep_time = 0;
 		}
 		loop_start_timestamp = GetCurrentTimestamp();
 
@@ -559,7 +559,8 @@ disk_quota_worker_main(Datum main_arg)
 		 * necessary, but is awakened if postmaster dies.  That way the
 		 * background process goes away immediately in an emergency.
 		 */
-		rc = DiskquotaWaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH, sleep_time);
+		rc = DiskquotaWaitLatch(&MyProc->procLatch, WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
+		                        diskquota_naptime * 1000 - sleep_time);
 		ResetLatch(&MyProc->procLatch);
 
 		// be nice to scheduler when naptime == 0 and diskquota_is_paused() == true
