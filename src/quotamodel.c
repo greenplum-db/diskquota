@@ -56,7 +56,7 @@
 /* Number of entries for diskquota.table_size update SQL */
 #define SQL_MAX_VALUES_NUMBER 1000000
 /* Number of entries for hash table in quota_info */
-#define MAX_QUOTA_MAP_ENTRIES (32 * 1024L)
+#define MAX_QUOTA_MAP_ENTRIES (128 * 1024L)
 
 /* TableSizeEntry macro function */
 /* Use the top bit of totalsize as a flush flag. If this bit is set, the size should be flushed into
