@@ -191,7 +191,8 @@ in_parallel:
     image: #@ image
     input_mapping:
       bin_gpdb: #@ conf["res_gpdb_bin"]
-      bin_diskquota: diskquota_artifacts
+      #! bin_diskquota: diskquota_artifacts
+      bin_diskquota: #@ conf["res_intermediates_bin"]
     params:
       DISKQUOTA_OS: #@ conf["os"]
 #@   end
@@ -230,9 +231,12 @@ plan:
   - get: #@ conf["res_gpdb_bin"]
   - get: last_released_diskquota_bin
     resource: #@ conf["res_diskquota_bin"]
+  - get: #@ conf["res_intermediates_bin"]
+    params:
+      unpack: true
 - #@ _build_task(conf)
 - #@ _test_task(conf)
-- put: #@ conf["res_intermediates_bin"]
-  params:
-    file: diskquota_artifacts/diskquota.tar.gz
+#! - put: #@ conf["res_intermediates_bin"]
+#!   params:
+#!     file: diskquota_artifacts/diskquota.tar.gz
 #@ end

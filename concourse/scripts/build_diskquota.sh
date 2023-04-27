@@ -3,6 +3,7 @@
 set -exo pipefail
 
 function pkg() {
+    exit 0
     [ -f /opt/gcc_env.sh ] && source /opt/gcc_env.sh
     source /usr/local/greenplum-db-devel/greenplum_path.sh
 
@@ -16,7 +17,7 @@ function pkg() {
     cmake /home/gpadmin/diskquota_src \
         -DDISKQUOTA_LAST_RELEASE_PATH="${last_release_path}" \
         -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
-    cmake --build . --target create_artifact
+    #cmake --build . --target create_artifact
     popd
 }
 

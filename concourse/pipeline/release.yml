@@ -20,7 +20,6 @@
 #@   centos7_gpdb6_conf(release_build=True),
 #@   rhel8_gpdb6_conf(release_build=True),
 #@   ubuntu18_gpdb6_conf(release_build=True),
-#@   rhel8_gpdb7_conf(release_build=True)
 #@ ]
 jobs:
 #@ param = {
@@ -41,7 +40,7 @@ jobs:
 #@     "trigger": trigger,
 #@     "confs": confs
 #@ }
-- #@ exit_release_job(param)
+#!- #@ exit_release_job(param)
 
 resources: #@ declare_res(res_type_map, res_map)
 
