@@ -27,21 +27,29 @@ SET
 
 -- expect fail
 1: CREATE TABLE t1 AS SELECT generate_series(1,10000000);
-ERROR:  schema's disk space quota exceeded with name: 157893  (seg0 127.0.0.1:6002 pid=1025673)
+ERROR:  schema's disk space quota exceeded with name: 33502  (seg2 127.0.0.1:7004 pid=675047)
 1q: ... <quitting>
 
 -- launcher should exist
 -- [p]ostgres is to filter out the pgrep itself
 !\retcode pgrep -f "[p]ostgres.*launcher";
 -- start_ignore
-2774491
+673843
+673846
+673855
+673857
+673872
+673875
+673925
+673943
+673944
 
 -- end_ignore
 (exited with code 0)
 -- bgworker should exist
 !\retcode pgrep -f "[p]ostgres.*diskquota.*isolation2test";
 -- start_ignore
-2774659
+674189
 
 -- end_ignore
 (exited with code 0)
@@ -51,15 +59,22 @@ ERROR:  schema's disk space quota exceeded with name: 157893  (seg0 127.0.0.1:60
 -- start_ignore
 waiting for server to shut down.... done
 server stopped
+
 -- end_ignore
 (exited with code 0)
 
 -- launcher should be terminated
 !\retcode pgrep -f "[p]ostgres.*launcher";
 -- start_ignore
+673843
+673846
+673855
+673857
+673872
+673875
 
 -- end_ignore
-(exited with code 1)
+(exited with code 0)
 -- bgworker should be terminated
 !\retcode pgrep -f "[p]ostgres.*diskquota.*isolation2test";
 -- start_ignore
@@ -70,13 +85,13 @@ server stopped
 -- start postmaster
 -- -E needs to be changed to "-c gp_role=dispatch" for GPDB7
 -- See https://github.com/greenplum-db/gpdb/pull/9396
-!\retcode pg_ctl -D $MASTER_DATA_DIRECTORY -w -o "-E" start;
+!\retcode pg_ctl -D $MASTER_DATA_DIRECTORY -w -o "-c gp_role=dispatch" start;
 -- start_ignore
-waiting for server to start....2022-02-14 21:41:39.147869 CST,,,p1017570,th1516906368,,,,0,,,seg-1,,,,,"LOG","00000","registering background worker ""ftsprobe process""",,,,,,,,"RegisterBackgroundWorker","bgworker.c",773,
-2022-02-14 21:41:39.147899 CST,,,p1017570,th1516906368,,,,0,,,seg-1,,,,,"LOG","00000","registering background worker ""dtx recovery process""",,,,,,,,"RegisterBackgroundWorker","bgworker.c",773,
-2022-02-14 21:41:39.147934 CST,,,p1017570,th1516906368,,,,0,,,seg-1,,,,,"LOG","00000","registering background worker ""sweeper process""",,,,,,,,"RegisterBackgroundWorker","bgworker.c",773,
-2022-02-14 21:41:39.148550 CST,,,p1017570,th1516906368,,,,0,,,seg-1,,,,,"LOG","00000","registering background worker ""[diskquota] - launcher""",,,,,,,,"RegisterBackgroundWorker","bgworker.c",773,
-2022-02-14 21:41:39.272714 CST,,,p1017570,th1516906368,,,,0,,,seg-1,,,,,"LOG","00000","redirecting log output to logging collector process",,"Future log output will appear in directory ""pg_log"".",,,,,,"SysLogger_Start","syslogger.c",986,
+waiting for server to start....2023-03-06 16:13:41.483928 CST,,,p675192,th987391872,,,,0,,,seg-1,,,,,"LOG","00000","starting PostgreSQL 12.12 (Greenplum Database 7.0.0-beta.1+dev.215.gb9adc4ece5 build dev) on x86_64-pc-linux-gnu, compiled by clang version 15.0.7, 64-bit",,,,,,,,"PostmasterMain","postmaster.c",1237,
+2023-03-06 16:13:41.484093 CST,,,p675192,th987391872,,,,0,,,seg-1,,,,,"LOG","00000","listening on IPv4 address ""0.0.0.0"", port 7000",,,,,,,,"StreamServerPort","pqcomm.c",631,
+2023-03-06 16:13:41.484153 CST,,,p675192,th987391872,,,,0,,,seg-1,,,,,"LOG","00000","listening on IPv6 address ""::"", port 7000",,,,,,,,"StreamServerPort","pqcomm.c",631,
+2023-03-06 16:13:41.484241 CST,,,p675192,th987391872,,,,0,,,seg-1,,,,,"LOG","00000","listening on Unix socket ""/tmp/.s.PGSQL.7000""",,,,,,,,"StreamServerPort","pqcomm.c",625,
+2023-03-06 16:13:41.510380 CST,,,p675192,th987391872,,,,0,,,seg-1,,,,,"LOG","00000","redirecting log output to logging collector process",,"Future log output will appear in directory ""log"".",,,,,,"SysLogger_Start","syslogger.c",929,
  done
 server started
 
@@ -92,14 +107,22 @@ server started
 -- launcher should be restarted
 !\retcode pgrep -f "[p]ostgres.*launcher";
 -- start_ignore
-2771049
+673843
+673846
+673855
+673857
+673872
+673875
+675198
+675213
+675217
 
 -- end_ignore
 (exited with code 0)
 -- bgworker should be restarted
 !\retcode pgrep -f "[p]ostgres.*diskquota.*isolation2test";
 -- start_ignore
-2771074
+675239
 
 -- end_ignore
 (exited with code 0)
@@ -113,7 +136,7 @@ SET
 (1 row)
 -- expect fail
 1: CREATE TABLE t2 AS SELECT generate_series(1,10000000);
-ERROR:  schema's disk space quota exceeded with name: 158089  (seg0 127.0.0.1:6002 pid=1027799)
+ERROR:  schema's disk space quota exceeded with name: 33502  (seg2 127.0.0.1:7004 pid=679604)
 -- enlarge the quota limits
 1: SELECT diskquota.set_schema_quota('postmaster_restart_s', '100 MB');
  set_schema_quota 

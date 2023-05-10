@@ -9,6 +9,9 @@ m/WARNING:  \[diskquota\] worker not found for database.*/
 m/WARNING:  \[diskquota\] database .* not found for getting epoch .*/
 m/^NOTICE:  CREATE TABLE will create partition */
 m/^WARNING:  skipping .* cannot calculate this foreign table size.*/
+m/^NOTICE:  resource queue required -- using default resource queue "pg_default"/
+m/NOTICE:  One or more columns in the following table\(s\) do not have statistics: /
+m/HINT:  For non-partitioned tables, run analyze .+\. For partitioned tables, run analyze rootpartition .+\. See log for columns missing statistics\./
 -- end_matchignore
 
 -- start_matchsubs
@@ -18,6 +21,8 @@ m/diskquota_utility.c:\d+\)/
 s/diskquota_utility.c:\d+\)/diskquota_utility.c:xxx/
 m/^CONTEXT:*/
 s/^CONTEXT:/DETAIL:/
+m/plpython\du/
+s/plpython\du/plpythonu/
 
 # Remove segment identifiers from error message.
 # E.g., (slice1 XXX.XXX.XXX.XXX:XXXX pid=XXXX)

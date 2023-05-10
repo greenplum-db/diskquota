@@ -1,5 +1,5 @@
-cmake_minimum_required(VERSION 3.18)
-# file(ARCHIVE_EXTRACT foo) need 3.18
+cmake_minimum_required(VERSION 3.20)
+# cmake_path requires 3.20
 
 project(diskquota)
 
@@ -64,32 +64,11 @@ add_compile_definitions(
   DISKQUOTA_PATCH_VERSION=${DISKQUOTA_PATCH_VERSION}
   DISKQUOTA_BINARY_NAME="${DISKQUOTA_BINARY_NAME}")
 
-list(
-  APPEND
-  diskquota_SRC
-  diskquota.c
-  diskquota_utility.c
-  enforcement.c
-  gp_activetable.c
-  quotamodel.c
-  relation_cache.c
-  monitored_db.c)
+set(SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
+file(GLOB diskquota_SRC "${SRC_DIR}/*.c")
 
-list(
-  APPEND
-  diskquota_DDL
-  diskquota.control
-  diskquota--1.0.sql
-  diskquota--1.0--2.0.sql
-  diskquota--1.0.3--2.0.sql
-  diskquota--2.0.sql
-  diskquota--2.0--1.0.sql
-  diskquota--2.1.sql
-  diskquota--2.0--2.1.sql
-  diskquota--2.1--2.0.sql
-  diskquota--2.2.sql
-  diskquota--2.1--2.2.sql
-  diskquota--2.2--2.1.sql)
+set(DISKQUOTA_DDL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/control/ddl")
+file(GLOB diskquota_DDL "${DISKQUOTA_DDL_DIR}/*")
 
 add_library(diskquota MODULE ${diskquota_SRC})
 
@@ -171,12 +150,6 @@ BuildInfo_Create(${build_info_PATH}
 
 # Add installcheck targets
 add_subdirectory(tests)
-if(NOT DEFINED ENABLE_UPGRADE_TEST)
-  set(ENABLE_UPGRADE_TEST ON)
-endif()
-if(ENABLE_UPGRADE_TEST)
-  add_subdirectory(upgrade_test)
-endif()
 
 # NOTE: keep install part at the end of file, to overwrite previous binary
 install(PROGRAMS "cmake/install_gpdb_component" DESTINATION ".")
@@ -184,7 +157,7 @@ install(FILES ${diskquota_DDL} DESTINATION "share/postgresql/extension/")
 install(TARGETS diskquota DESTINATION "lib/postgresql/")
 install(FILES ${build_info_PATH} DESTINATION ".")
 
-file(GLOB sql_files RELATIVE ${CMAKE_SOURCE_DIR} diskquota--2.*.sql)
+file(GLOB sql_files RELATIVE ${DISKQUOTA_DDL_DIR} "${DISKQUOTA_DDL_DIR}/diskquota--2.*.sql")
 list(FILTER sql_files EXCLUDE REGEX ".*--.*--.*")
 list(FILTER sql_files EXCLUDE REGEX ".*diskquota--${DISKQUOTA_MAJOR_VERSION}.${DISKQUOTA_MINOR_VERSION}.*")
 foreach(so IN LISTS sql_files)

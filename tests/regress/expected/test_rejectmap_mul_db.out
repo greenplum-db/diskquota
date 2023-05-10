@@ -22,8 +22,8 @@ SELECT diskquota.wait_for_worker_new_epoch();
 
 -- Trigger hard limit to dispatch rejectmap for tjmu1
 INSERT INTO b SELECT generate_series(1, 100000000); -- fail
-ERROR:  schema's disk space quota exceeded with name: 2200  (seg1 127.0.0.1:6003 pid=3985762)
--- NOTE: Pause to avoid tjmu1's worker clear the active table. Since the naptime is 0 on CI, this might be flaky.
+ERROR:  schema's disk space quota exceeded with name: 2200  (seg0 127.0.0.1:6002 pid=87165)
+-- FIXME: Pause to avoid tjmu1's worker clear the active table. Since there are bugs, this might be flaky.
 SELECT diskquota.pause();
  pause 
 -------

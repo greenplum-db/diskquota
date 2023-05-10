@@ -15,7 +15,12 @@ function activate_standby() {
 }
 
 function _main() {
-    tar -xzf /home/gpadmin/bin_diskquota/diskquota-*-*.tar.gz -C /usr/local/greenplum-db-devel
+    local tmp_dir="$(mktemp -d)"
+    tar -xzf /home/gpadmin/bin_diskquota/diskquota-*-*.tar.gz -C "$tmp_dir"
+    pushd "$tmp_dir"
+    ./install_gpdb_component
+    popd
+
     source /home/gpadmin/gpdb_src/gpAux/gpdemo/gpdemo-env.sh
 
     pushd /home/gpadmin/gpdb_src
@@ -27,10 +32,12 @@ function _main() {
     export SHOW_REGRESS_DIFF=1
     time cmake --build . --target installcheck
     # Run test again with standby master
-    # activate_standby
-    # time cmake --build . --target installcheck
-    # Run upgrade test (with standby master)
-    # time cmake --build . --target upgradecheck
+    # FIXME: enable test for GPDB7
+    if [[ $PGPORT -eq 6000 ]]
+    then
+        activate_standby
+        time cmake --build . --target installcheck
+    fi
     popd
 }
 
