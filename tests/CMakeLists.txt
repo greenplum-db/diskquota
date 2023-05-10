@@ -102,7 +102,7 @@ set_target_properties(
              LINKER_LANGUAGE "C")
 target_include_directories(
   test_unit_config_parse PRIVATE
-  ${CMAKE_SOURCE_DIR}
+  ${SRC_DIR}
   ${PG_INCLUDE_DIR}
   ${PG_INCLUDE_DIR_SERVER}
   ${deps_INSTALL_DIR}/include)

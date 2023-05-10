@@ -85,29 +85,27 @@ SELECT schema_name, tablespace_name, quota_in_mb, nspsize_tablespace_in_bytes FR
 
 -- test config per segment quota
 SELECT diskquota.set_per_segment_quota('"Schemaspc_perseg2"','1');
-SELECT distinct(segratio) from diskquota.quota_config, pg_tablespace where targetoid = oid and spcname = 'Schemaspc_perseg2';
+SELECT distinct(segratio) FROM diskquota.show_quota_config_view, pg_tablespace WHERE tablespace_oid = oid AND spcname = 'Schemaspc_perseg2' AND quota_type = 4;
 
 SELECT diskquota.set_schema_tablespace_quota('spcs2_perseg', '"Schemaspc_perseg2"','1 MB');
 
-SELECT distinct(segratio) FROM diskquota.quota_config, pg_namespace, diskquota.target
- WHERE diskquota.quota_config.targetoid = diskquota.target.rowId AND
-       diskquota.target.primaryOid = pg_namespace.oid AND nspname = 'spcs2_perseg';
+SELECT distinct(segratio) FROM diskquota.show_quota_config_view WHERE quota_type = 4 AND tablespace_oid IN
+(SELECT tablespace_oid FROM diskquota.show_quota_config_view, pg_namespace WHERE namespace_oid = oid AND nspname = 'spcs2_perseg');
 
 SELECT diskquota.set_per_segment_quota('"Schemaspc_perseg2"','-2');
 
-SELECT distinct(segratio) from diskquota.quota_config, pg_tablespace where targetoid = oid and spcname = 'Schemaspc_perseg2';
+SELECT distinct(segratio) FROM diskquota.show_quota_config_view, pg_tablespace where tablespace_oid = oid AND spcname = 'Schemaspc_perseg2' AND quota_type = 4;
 
-SELECT distinct(segratio) FROM diskquota.quota_config, pg_namespace, diskquota.target
- WHERE diskquota.quota_config.targetoid = diskquota.target.rowId AND
-       diskquota.target.primaryOid = pg_namespace.oid AND nspname = 'spcs2_perseg';
+SELECT distinct(segratio) FROM diskquota.show_quota_config_view WHERE quota_type = 4 AND tablespace_oid IN
+(SELECT tablespace_oid FROM diskquota.show_quota_config_view, pg_namespace WHERE namespace_oid = oid AND nspname = 'spcs2_perseg');
 
 SELECT diskquota.set_per_segment_quota('"Schemaspc_perseg2"','3');
 
-SELECT distinct(segratio) from diskquota.quota_config, pg_tablespace where targetoid = oid and spcname = 'Schemaspc_perseg2';
+SELECT distinct(segratio) FROM diskquota.show_quota_config_view, pg_tablespace where tablespace_oid = oid AND spcname = 'Schemaspc_perseg2' AND quota_type = 4;
 
-SELECT distinct(segratio) FROM diskquota.quota_config, pg_namespace, diskquota.target
- WHERE diskquota.quota_config.targetoid = diskquota.target.rowId AND
-       diskquota.target.primaryOid = pg_namespace.oid AND nspname = 'spcs2_perseg';
+SELECT distinct(segratio) FROM diskquota.show_quota_config_view WHERE quota_type = 4 AND tablespace_oid IN
+(SELECT tablespace_oid FROM diskquota.show_quota_config_view, pg_namespace WHERE namespace_oid = oid AND nspname = 'spcs2_perseg');
+
 SELECT tablespace_name, per_seg_quota_ratio FROM diskquota.show_segment_ratio_quota_view where tablespace_name in ('Schemaspc_perseg2', 'schemaspc_perseg');
 
 RESET search_path;
