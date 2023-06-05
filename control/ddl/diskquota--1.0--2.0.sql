@@ -9,7 +9,7 @@ CREATE TABLE diskquota.target (
 	primaryOid oid,
 	tablespaceOid oid, -- REFERENCES pg_tablespace.oid,
 	PRIMARY KEY (primaryOid, tablespaceOid, quotatype)
-);
+) WITH (appendonly=false);
 -- TODO ALTER TABLE diskquota.target SET DEPENDS ON EXTENSION diskquota;
 
 ALTER TABLE diskquota.table_size ADD COLUMN segid smallint DEFAULT -1; -- segid = coordinator means table size in cluster level
