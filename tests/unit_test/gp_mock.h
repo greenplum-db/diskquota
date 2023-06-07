@@ -42,7 +42,7 @@
 #undef printf
 #endif
 
-#define errcode(sqlerrcode) sqlerrcode
+#define errcode(sqlerrcode) printf("%d", sqlerrcode)
 #define errmsg(fmt, ...) printf(fmt, __VA_ARGS__)
 
 #define ereport(elevel, ...)         \

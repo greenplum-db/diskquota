@@ -14,7 +14,7 @@ test_parse(void **state)
 	printf("%s\n", expect_str);
 }
 
-int
+static int
 read_input_string(char *file_name, char **str)
 {
 	FILE *fp;

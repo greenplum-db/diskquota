@@ -13,6 +13,14 @@
 
 #include "gp_mock.h"
 
+void *__wrap_palloc(Size size);
+void  __wrap_pfree(void *p);
+void  __wrap_pfree(void *p);
+HTAB *__wrap_hash_create(const char *tabname, long nelem, HASHCTL *info, int flags);
+void *__wrap_hash_search(HTAB *hashp, const void *keyPtr, HASHACTION action, bool *foundPtr);
+void  __wrap_hash_seq_init(HASH_SEQ_STATUS *status, HTAB *hashp);
+void *__wrap_hash_seq_search(HASH_SEQ_STATUS *status);
+
 /*----------------------memory management-------------------------*/
 void *
 __wrap_palloc(Size size)
