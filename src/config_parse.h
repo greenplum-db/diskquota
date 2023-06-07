@@ -26,4 +26,7 @@ extern cJSON    *JSON_get_quota_list(cJSON *head);
 extern QuotaType JSON_get_quota_type(cJSON *head, const char *key);
 extern cJSON    *do_construct_quota_config(QuotaConfig *config);
 extern int       do_parse_quota_config(cJSON *head, QuotaConfig *config);
+extern void      JSON_parse_quota_config(const char *config_str, HTAB *quota_config_map);
+extern char     *JSON_construct_quota_config(HTAB *quota_config_map);
+
 #endif

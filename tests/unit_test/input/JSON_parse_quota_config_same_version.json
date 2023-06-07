@@ -1,0 +1,37 @@
+{
+    "version": "diskquota-3.0",
+    "quota_list": [
+        {
+            "quota_type": 0,
+            "db_oid": 123,
+            "namespace_oid": 1,
+            "quota_limit_mb": 100
+        },
+        {
+            "quota_type": 1,
+            "db_oid": 123,
+            "owner_oid": 2,
+            "quota_limit_mb": 100
+        },
+        {
+            "quota_type": 2,
+            "db_oid": 123,
+            "namespace_oid": 2,
+            "tablespace_oid": 2,
+            "quota_limit_mb": 100
+        },
+        {
+            "quota_type": 3,
+            "db_oid": 123,
+            "owner_oid": 2,
+            "tablespace_oid": 2,
+            "quota_limit_mb": 100
+        },
+        {
+            "quota_type": 4,
+            "db_oid": 123,
+            "tablespace_oid": 2,
+            "segratio": 0.45
+        }
+    ]
+}

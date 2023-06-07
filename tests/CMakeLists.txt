@@ -1,4 +1,5 @@
 include(${CMAKE_SOURCE_DIR}/cmake/Regress.cmake)
+include(${CMAKE_SOURCE_DIR}/cmake/unit_test.cmake)
 
 list(APPEND isolation2_expected_DIR ${CMAKE_CURRENT_SOURCE_DIR}/isolation2/expected)
 list(APPEND regress_expected_DIR ${CMAKE_CURRENT_SOURCE_DIR}/regress/expected)
@@ -91,26 +92,51 @@ add_dependencies(installcheck isolation2 regress)
 # add_dependencies(regress_truncate_loop regress_config)
 # add_dependencies(installcheck regress_truncate_loop)
 
-add_executable(test_unit_config_parse unit_test/test_unit_config_parse.c)
-add_dependencies(test_unit_config_parse cmocka cjson)
-set_target_properties(
-  test_unit_config_parse
-  PROPERTIES OUTPUT_NAME "test_unit_config_parse"
-             PREFIX ""
-             RUNTIME_OUTPUT_DIRECTORY "unit_test/"
-             C_STANDARD 99
-             LINKER_LANGUAGE "C")
-target_include_directories(
-  test_unit_config_parse PRIVATE
-  ${SRC_DIR}
-  ${PG_INCLUDE_DIR}
-  ${PG_INCLUDE_DIR_SERVER}
-  ${deps_INSTALL_DIR}/include)
+if(DEFINED ENABLE_UNIT_TEST AND ENABLE_UNIT_TEST)
+  copy_unit_test_input_dir(${CMAKE_CURRENT_SOURCE_DIR}/unit_test)
 
-target_link_libraries(
-  test_unit_config_parse
-  ${deps_INSTALL_DIR}/lib/libcjson.a
-  ${deps_INSTALL_DIR}/lib/libcmocka.so)
+  add_executable(test_unit_config_parse unit_test/test_unit_config_parse.c unit_test/gp_mock.c ${SRC_DIR}/config_parse.c)
+  add_dependencies(test_unit_config_parse cmocka cjson)
+  set_target_properties(
+    test_unit_config_parse
+    PROPERTIES OUTPUT_NAME "test_unit_config_parse"
+              PREFIX ""
+              RUNTIME_OUTPUT_DIRECTORY "unit_test/"
+              C_STANDARD 99
+              LINKER_LANGUAGE "C")
+  
+  target_compile_definitions(
+    test_unit_config_parse
+    PRIVATE DISKQUOTA_UNIT_TEST
+    UT_INPUT_FILE_DIR="unit_test/input"
+  )
 
-add_custom_target(ut 
-  COMMAND test_unit_config_parse)
+  target_compile_options(
+    test_unit_config_parse PRIVATE
+    "-Wl,--wrap=palloc,--wrap=pfree,--wrap=hash_create,--wrap=hash_search,--wrap=hash_seq_init,--wrap=hash_seq_search"
+  )
+
+  target_link_options(
+    test_unit_config_parse PRIVATE
+    "-Wl,--wrap=palloc,--wrap=pfree,--wrap=hash_create,--wrap=hash_search,--wrap=hash_seq_init,--wrap=hash_seq_search"
+  )
+              
+  target_include_directories(
+    test_unit_config_parse PRIVATE
+    ${SRC_DIR}
+    ${PG_INCLUDE_DIR}
+    ${PG_INCLUDE_DIR_SERVER}
+    ${deps_INSTALL_DIR}/include
+    ${CMAKE_CURRENT_SOURCE_DIR}/unit_test
+  )
+
+  target_link_libraries(
+    test_unit_config_parse
+    ${deps_INSTALL_DIR}/lib/libcjson.a
+    ${deps_INSTALL_DIR}/lib/libcmocka.so
+    m)
+
+  add_custom_target(ut 
+    COMMAND test_unit_config_parse
+  )
+endif()

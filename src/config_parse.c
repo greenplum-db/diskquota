@@ -11,9 +11,16 @@
  *-------------------------------------------------------------------------
  */
 
+#ifdef DISKQUOTA_UNIT_TEST
+#include "gp_mock.h"
+#else
 #include "postgres.h"
+#include "c.h"
+#include "utils/elog.h"
+#include "utils/palloc.h"
+#include "utils/hsearch.h"
+#endif
 
-#include "diskquota.h"
 #include "quota_config.h"
 #include "config_parse.h"
 
@@ -49,7 +56,7 @@ JSON_get_quota_type(cJSON *head, const char *key)
 {
 	cJSON *item = cJSON_GetObjectItem(head, key);
 	Assert(cJSON_IsNumber(item));
-	return roundl(cJSON_GetNumberValue(item));
+	return round(cJSON_GetNumberValue(item));
 }
 
 static Oid
@@ -68,12 +75,12 @@ JSON_get_int64(cJSON *head, const char *key)
 	return (int64)round(cJSON_GetNumberValue(item));
 }
 
-static float4
+static float8
 JSON_get_float4(cJSON *head, const char *key)
 {
 	cJSON *item = cJSON_GetObjectItem(head, key);
 	Assert(cJSON_IsNumber(item));
-	return (float4)cJSON_GetNumberValue(item);
+	return (float8)cJSON_GetNumberValue(item);
 }
 
 /*
@@ -166,4 +173,80 @@ do_construct_quota_config(QuotaConfig *config)
 			return NULL;
 	}
 	return head;
+}
+
+/* construct quota config hashmap by config_str */
+void
+JSON_parse_quota_config(const char *config_str, HTAB *quota_config_map)
+{
+	cJSON         *head;
+	cJSON         *quota_list;
+	cJSON         *quota_item;
+	int            quota_list_size;
+	QuotaConfigKey key = {0};
+	QuotaConfig    config;
+	QuotaConfig   *entry;
+	char          *version;
+	int            i;
+
+	if (config_str == NULL) return;
+
+	init_cjson_hook(palloc, pfree);
+	head            = cJSON_Parse(config_str);
+	version         = JSON_get_version(head);
+	quota_list      = JSON_get_quota_list(head);
+	quota_list_size = cJSON_GetArraySize(quota_list);
+
+	for (i = 0; i < quota_list_size; i++)
+	{
+		quota_item = cJSON_GetArrayItem(quota_list, i);
+		if (strcmp(version, "diskquota-3.0") == 0)
+		{
+			if (do_parse_quota_config(quota_item, &config))
+			{
+				ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+				                errmsg("[diskquota] quota type is incorrect for: %d", config.quota_type)));
+			}
+		}
+		key.quota_type = config.quota_type;
+		memcpy(key.keys, config.keys, sizeof(Oid) * MAX_QUOTA_KEY_NUM);
+		entry = hash_search(quota_config_map, &key, HASH_ENTER_NULL, NULL);
+		if (entry)
+		{
+			entry->quota_limit_mb = config.quota_limit_mb;
+			entry->segratio       = config.segratio;
+		}
+	}
+	cJSON_Delete(head);
+}
+
+char *
+JSON_construct_quota_config(HTAB *quota_config_map)
+{
+	cJSON	      *head;
+	cJSON	      *quota_list;
+	cJSON	      *quota_item;
+	HASH_SEQ_STATUS iter;
+	QuotaConfig    *entry;
+
+	if (quota_config_map == NULL) return NULL;
+
+	init_cjson_hook(palloc, pfree);
+	head = cJSON_CreateObject();
+	cJSON_AddStringToObject(head, "version", "diskquota-3.0");
+	quota_list = cJSON_AddArrayToObject(head, "quota_list");
+
+	hash_seq_init(&iter, quota_config_map);
+	while ((entry = (QuotaConfig *)hash_seq_search(&iter)) != NULL)
+	{
+		quota_item = do_construct_quota_config(entry);
+		if (quota_item == NULL)
+		{
+			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+			                errmsg("[diskquota] quota type is incorrect for: %d", entry->quota_type)));
+		}
+		cJSON_AddItemToArray(quota_list, quota_item);
+	}
+
+	return cJSON_Print(head);
 }
