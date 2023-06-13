@@ -215,8 +215,9 @@ struct DiskquotaDBEntry
 	TimestampTz last_run_time;
 	int16       cost; // ms
 
-	bool inited; // this entry is inited, will set to true after the worker finish the frist run.
-	bool in_use; // this slot is in using. AKA dbid != 0
+	bool inited;    // this entry is inited, will set to true after the worker finish the frist run.
+	bool in_use;    // this slot is in using. AKA dbid != 0
+	bool corrupted; // consider this entry as invalid to start the worker on
 
 	TimestampTz last_log_time; // the last time log current database info.
 };
@@ -251,7 +252,7 @@ extern void invalidate_database_rejectmap(Oid dbid);
 /* quota model interface*/
 extern void init_disk_quota_shmem(void);
 extern void init_disk_quota_model(uint32 id);
-extern void refresh_disk_quota_model(bool force);
+extern void refresh_disk_quota_model(DiskquotaDBEntry *dbEntry);
 extern bool check_diskquota_state_is_ready(void);
 extern bool quota_check_common(Oid reloid, RelFileNode *relfilenode);
 

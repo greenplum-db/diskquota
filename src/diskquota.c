@@ -144,6 +144,7 @@ static void                    vacuum_db_entry(DiskquotaDBEntry *db);
 static void                    init_bgworker_handles(void);
 static BackgroundWorkerHandle *get_bgworker_handle(uint32 worker_id);
 static void                    free_bgworker_handle(uint32 worker_id);
+static void                    resetBackgroundWorkerCorruption(void);
 #if GP_VERSION_NUM < 70000
 /* WaitForBackgroundWorkerShutdown is copied from gpdb7 */
 static BgwHandleStatus WaitForBackgroundWorkerShutdown(BackgroundWorkerHandle *handle);
@@ -575,7 +576,7 @@ disk_quota_worker_main(Datum main_arg)
 			if (!diskquota_is_paused())
 			{
 				/* Refresh quota model with init mode */
-				refresh_disk_quota_model(!MyWorkerInfo->dbEntry->inited);
+				refresh_disk_quota_model(MyWorkerInfo->dbEntry);
 				MyWorkerInfo->dbEntry->inited = true;
 				is_gang_destroyed             = false;
 			}
@@ -812,6 +813,7 @@ disk_quota_launcher_main(Datum main_arg)
 		{
 			elog(DEBUG1, "[diskquota] got sighup");
 			got_sighup = false;
+			resetBackgroundWorkerCorruption();
 			ProcessConfigFile(PGC_SIGHUP);
 		}
 
@@ -837,11 +839,12 @@ disk_quota_launcher_main(Datum main_arg)
 		 * When curDB->in_use is false means dbEtnry has been romoved
 		 * When curDB->dbid doesn't equtal curDBId, it means the slot has
 		 * been used by another db
-		 *
+		 * When curDB->corrupted is true means worker couldn't initialize
+		 * the extension in the first run.
 		 * For the above conditions, we just skip this loop and try to fetch
 		 * next db to run.
 		 */
-		if (curDB == NULL || !curDB->in_use || curDB->dbid != curDBId)
+		if (curDB == NULL || !curDB->in_use || curDB->dbid != curDBId || curDB->corrupted)
 		{
 			advance_one_db = true;
 			continue;
@@ -1847,7 +1850,9 @@ next_db(DiskquotaDBEntry *curDB)
 		if (nextSlot >= MAX_NUM_MONITORED_DB) nextSlot = 0;
 		DiskquotaDBEntry *dbEntry = &DiskquotaLauncherShmem->dbArray[nextSlot];
 		nextSlot++;
-		if (!dbEntry->in_use || dbEntry->workerId != INVALID_WORKER_ID || dbEntry->dbid == InvalidOid) continue;
+		if (!dbEntry->in_use || dbEntry->workerId != INVALID_WORKER_ID || dbEntry->dbid == InvalidOid ||
+		    dbEntry->corrupted)
+			continue;
 		/* TODO: should release the invalid db related things */
 		if (!is_valid_dbid(dbEntry->dbid)) continue;
 		result = dbEntry;
@@ -1911,10 +1916,11 @@ static void
 vacuum_db_entry(DiskquotaDBEntry *db)
 {
 	if (db == NULL) return;
-	db->dbid     = InvalidOid;
-	db->inited   = false;
-	db->workerId = INVALID_WORKER_ID;
-	db->in_use   = false;
+	db->dbid      = InvalidOid;
+	db->inited    = false;
+	db->workerId  = INVALID_WORKER_ID;
+	db->in_use    = false;
+	db->corrupted = false;
 }
 
 static void
@@ -1947,6 +1953,18 @@ free_bgworker_handle(uint32 worker_id)
 		pfree(*handle);
 		*handle = NULL;
 	}
+}
+
+static void
+resetBackgroundWorkerCorruption(void)
+{
+	LWLockAcquire(diskquota_locks.dblist_lock, LW_EXCLUSIVE);
+	for (int i = 0; i < MAX_NUM_MONITORED_DB; i++)
+	{
+		DiskquotaDBEntry *dbEntry = &DiskquotaLauncherShmem->dbArray[i];
+		if (dbEntry->corrupted) dbEntry->corrupted = false;
+	}
+	LWLockRelease(diskquota_locks.dblist_lock);
 }
 
 #if GP_VERSION_NUM < 70000
