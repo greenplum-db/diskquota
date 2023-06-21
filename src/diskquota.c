@@ -1514,6 +1514,9 @@ diskquota_status_binary_version()
 static const char *
 diskquota_status_schema_version()
 {
+	static char version[NAMEDATALEN] = {0};
+	memset(version, 0, sizeof(version));
+
 	int ret = SPI_connect();
 	Assert(ret = SPI_OK_CONNECT);
 
@@ -1523,31 +1526,31 @@ diskquota_status_schema_version()
 	{
 		ereport(WARNING,
 		        (errmsg("[diskquota] when reading installed version lines %ld code = %d", SPI_processed, ret)));
-		goto fail;
+		goto out;
 	}
 
 	if (SPI_processed == 0)
 	{
-		goto fail;
+		goto out;
 	}
 
-	bool  is_null       = false;
-	Datum version_datum = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &is_null);
+	bool  is_null = false;
+	Datum v       = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &is_null);
 	Assert(is_null == false);
 
-	char *version = TextDatumGetCString(version_datum);
-	if (version == NULL || *version == '\0')
+	char *vv = TextDatumGetCString(v);
+	if (vv == NULL)
 	{
 		ereport(WARNING, (errmsg("[diskquota] 'extversion' is empty in pg_class.pg_extension. may catalog corrupted")));
-		goto fail;
+		goto out;
 	}
 
+	strncpy(version, vv, NAMEDATALEN);
+	version[NAMEDATALEN-1] = '\0';
+
+out:
 	SPI_finish();
 	return version;
-
-fail:
-	SPI_finish();
-	return "";
 }
 
 PG_FUNCTION_INFO_V1(diskquota_status);
