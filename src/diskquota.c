@@ -1835,7 +1835,7 @@ out:
 static char *
 get_db_name(Oid dbid)
 {
-	char         *dbname = NULL;
+	char	     *dbname = NULL;
 	MemoryContext old_ctx;
 	if (dbid == InvalidOid)
 	{
