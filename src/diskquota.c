@@ -184,9 +184,20 @@ _PG_init(void)
 		 * - The backend is not a QD. We only need to check the library on QD.
 		 * - The current command is `ALTER EXTENSION`.
 		 */
-		if (IsNormalProcessingMode() &&
-		    (Gp_role != GP_ROLE_DISPATCH || (ActivePortal && ActivePortal->sourceTag == T_AlterExtensionStmt)))
-			return;
+		if (IsNormalProcessingMode())
+		{
+			if (Gp_role != GP_ROLE_DISPATCH)
+			{
+				ereport(WARNING, (errmsg("[diskquota] booting " DISKQUOTA_VERSION ", but " DISKQUOTA_BINARY_NAME
+				                         " not in shared_preload_libraries.")));
+				return;
+			}
+			if (ActivePortal && ActivePortal->sourceTag == T_AlterExtensionStmt)
+			{
+				ereport(LOG, (errmsg("[diskquota] altering diskquota version to " DISKQUOTA_VERSION ".")));
+				return;
+			}
+		}
 		ereport(ERROR, (errmsg("[diskquota] booting " DISKQUOTA_VERSION ", but " DISKQUOTA_BINARY_NAME
 		                       " not in shared_preload_libraries. abort.")));
 	}
