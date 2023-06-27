@@ -178,14 +178,14 @@ _PG_init(void)
 	{
 		/*
 		 * To support the continuous upgrade/downgrade, we should skip the library
-		 * check in _PG_init() during upgrade/downgrade. If the POSTGRES backend 
+		 * check in _PG_init() during upgrade/downgrade. If the POSTGRES backend
 		 * process is in normal mode and meets one of the following conditions, we
 		 * skip the library check:
 		 * - The backend is not a QD. We only need to check the library on QD.
 		 * - The current command is `ALTER EXTENSION`.
 		 */
 		if (IsNormalProcessingMode() &&
-		    (Gp_role != GP_ROLE_DISPATCH || (ActivePortal && strcmp(ActivePortal->commandTag, "ALTER EXTENSION") == 0)))
+		    (Gp_role != GP_ROLE_DISPATCH || (ActivePortal && ActivePortal->sourceTag == T_AlterExtensionStmt)))
 			return;
 		ereport(ERROR, (errmsg("[diskquota] booting " DISKQUOTA_VERSION ", but " DISKQUOTA_BINARY_NAME
 		                       " not in shared_preload_libraries. abort.")));
