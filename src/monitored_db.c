@@ -351,13 +351,16 @@ refresh_monitored_dbid_cache(void)
 	MonitorDBEntry entry = hash_search(monitored_dbid_cache, &dbid, HASH_ENTER_NULL, &found);
 	if (entry == NULL)
 	{
-		ereport(WARNING, (errmsg("can't alloc memory on dbid cache, there ary too many databases to monitor")));
+		ereport(WARNING, (errmsg("can't alloc memory on dbid cache, there are too many databases to monitor")));
 	}
-	if (!found)
+	else if (!found)
 	{
 		entry->paused = false;
 		pg_atomic_init_u32(&(entry->epoch), 0);
 		pg_atomic_init_u32(&(entry->status), DB_RUNNING);
+		ereport(LOG, (errmsg("the entry in monitored_dbid_cache is lost due to mirror switching and is added back now, "
+		                     "dbid: %d",
+		                     dbid)));
 	}
 
 	LWLockRelease(diskquota_locks.monitored_dbid_cache_lock);
