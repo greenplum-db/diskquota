@@ -342,7 +342,7 @@ disk_quota_worker_main(Datum main_arg)
 		MyWorkerInfo->dbEntry->last_log_time = GetCurrentTimestamp();
 		ereport(LOG, (errmsg("[diskquota] start disk quota worker process to monitor database:%s", dbname)));
 	}
-	/* To avoid last_log_time being not initialized */
+	/* To avoid last_log_time from being uninitialized. */
 	if (MyWorkerInfo->dbEntry->last_log_time > GetCurrentTimestamp())
 		MyWorkerInfo->dbEntry->last_log_time = GetCurrentTimestamp();
 	/*
