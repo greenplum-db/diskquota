@@ -9,7 +9,7 @@ SRC_DIR="$(cd "$(dirname "${SCRIPT_PATH}")"/.. >/dev/null 2>&1 && pwd)"
 
 # Versions like major.minor
 CUR_VERSION=$(cut --delimiter="." --fields=1-2 "${SRC_DIR}/VERSION")
-ALL_VERSIONS=$(git tag | cut --delimiter="." --fields=1-2 | sort -V -u)
+ALL_VERSIONS=$(cd "${SRC_DIR}" && git tag | cut --delimiter="." --fields=1-2 | sort -V -u)
 VERSIONS_TO_TEST=()
 
 test_alter_from() {
