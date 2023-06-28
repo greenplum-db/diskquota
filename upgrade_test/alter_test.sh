@@ -22,18 +22,25 @@ test_alter_from() {
     dropdb diskquota_alter_test --if-exists
     createdb diskquota
 
-    local so_name="diskquota"
+    local from_so_name="diskquota"
     if [ "${from_ver}" != "1.0" ];then
-        so_name="diskquota-${from_ver}"
+        from_so_name="diskquota-${from_ver}"
     fi
+    local to_so_name="diskquota-${to_ver}"
 
-    gpconfig -c shared_preload_libraries -v "${so_name}"
+    # Preload the old diskquota so
+    gpconfig -c shared_preload_libraries -v "${from_so_name}"
     gpstop -rai
 
     createdb diskquota_alter_test
 
     # Test if the extension and be upgraded directly
     psql -d diskquota_alter_test -c "CREATE EXTENSION diskquota version '${from_ver}'"
+
+    # Preload the new diskquota so
+    gpconfig -c shared_preload_libraries -v "${to_so_name}"
+    gpstop -rai
+
     psql -d diskquota_alter_test -c "ALTER EXTENSION diskquota update to '${to_ver}'"
     psql -d diskquota_alter_test -c "DROP EXTENSION diskquota"
 }
