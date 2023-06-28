@@ -96,6 +96,7 @@ if(DEFINED DISKQUOTA_LAST_RELEASE_PATH)
 
   foreach(so_path IN LISTS so_files_list)
     get_filename_component(so_name ${so_path} NAME_WLE)
+    # Replace 'diskquota-x.y' with 'x.y'. 'diskquota' won't be replaced, which belongs to 1.x release.
     string(REPLACE "diskquota-" "" so_ver ${so_name})
     # Install the previous so files. Those so files have versions less than current version.
     # diskqutoa.so doesn't have version string in the file name. It belongs to 1.x release.
