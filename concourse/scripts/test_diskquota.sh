@@ -13,6 +13,10 @@ function _main() {
     tar -xzf /home/gpadmin/bin_diskquota/diskquota-*-*.tar.gz -C /usr/local/greenplum-db-devel
     source /home/gpadmin/gpdb_src/gpAux/gpdemo/gpdemo-env.sh
 
+    pushd /home/gpadmin/gpdb_src
+        make -C src/test/isolation2 install
+    popd
+
     pushd /home/gpadmin/diskquota_artifacts
     # Show regress diff if test fails
     export SHOW_REGRESS_DIFF=1
