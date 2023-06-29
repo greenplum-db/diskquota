@@ -41,6 +41,7 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/timestamp.h"
+#include "utils/formatting.h"
 #include "tcop/pquery.h"
 
 PG_MODULE_MAGIC;
@@ -142,6 +143,7 @@ static void                    init_bgworker_handles(void);
 static BackgroundWorkerHandle *get_bgworker_handle(uint32 worker_id);
 static void                    free_bgworker_handle(uint32 worker_id);
 static BgwHandleStatus         WaitForBackgroundWorkerShutdown(BackgroundWorkerHandle *handle);
+static bool is_altering_extension(void);
 
 /*
  * diskquota_launcher_shmem_size
@@ -158,6 +160,40 @@ diskquota_launcher_shmem_size(void)
 	size = add_size(size, mul_size(MAX_NUM_MONITORED_DB, sizeof(struct DiskquotaDBEntry))); // hidden memory for dbArray
 	return size;
 }
+
+static bool
+is_altering_extension(void)
+{
+	if (ActivePortal == NULL) return false;
+	/* QD: When the sourceTag is T_AlterExtensionStmt, then return true */
+	if (ActivePortal->sourceTag == T_AlterExtensionStmt) return true;
+
+	/*
+	 * QE: The sourceTag won't be T_AlterExtensionStmt, we should check the sourceText.
+	 * If the sourceText contains 'alter extension diskquota update', we consider it is
+	 * a alter extension query.
+	 */
+	char *query = asc_tolower(ActivePortal->sourceText, strlen(ActivePortal->sourceText));
+	char *pos;
+	bool  match = true;
+
+	pos = strstr(query, "alter");
+	if (pos)
+		pos = strstr(pos, "extension");
+	else
+		match = false;
+	if (pos)
+		pos = strstr(pos, "diskquota");
+	else
+		match = false;
+	if (pos)
+		pos = strstr(pos, "update");
+	else
+		match = false;
+	pfree(query);
+	return match;
+}
+
 /*
  * Entrypoint of diskquota module.
  *
@@ -173,25 +209,12 @@ _PG_init(void)
 	{
 		/*
 		 * To support the continuous upgrade/downgrade, we should skip the library
-		 * check in _PG_init() during upgrade/downgrade. If the POSTGRES backend
-		 * process is in normal mode and meets one of the following conditions, we
-		 * skip the library check:
-		 * - The backend is not a QD. We only need to check the library on QD.
-		 * - The current command is `ALTER EXTENSION`.
+		 * check in _PG_init() during upgrade/downgrade.
 		 */
-		if (IsNormalProcessingMode())
+		if (IsNormalProcessingMode() && is_altering_extension())
 		{
-			if (Gp_role != GP_ROLE_DISPATCH)
-			{
-				ereport(WARNING, (errmsg("[diskquota] booting " DISKQUOTA_VERSION ", but " DISKQUOTA_BINARY_NAME
-				                         " not in shared_preload_libraries.")));
-				return;
-			}
-			if (ActivePortal && ActivePortal->sourceTag == T_AlterExtensionStmt)
-			{
-				ereport(LOG, (errmsg("[diskquota] altering diskquota version to " DISKQUOTA_VERSION ".")));
-				return;
-			}
+			ereport(LOG, (errmsg("[diskquota] altering diskquota version to " DISKQUOTA_VERSION ".")));
+			return;
 		}
 		ereport(ERROR, (errmsg("[diskquota] booting " DISKQUOTA_VERSION ", but " DISKQUOTA_BINARY_NAME
 		                       " not in shared_preload_libraries. abort.")));
