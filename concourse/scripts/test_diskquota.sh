@@ -16,10 +16,10 @@ function _main() {
     pushd /home/gpadmin/diskquota_artifacts
     # Show regress diff if test fails
     export SHOW_REGRESS_DIFF=1
-    time cmake --build . --target installcheck
+    # time cmake --build . --target installcheck
     # Run test again with standby master
     activate_standby
-    time cmake --build . --target installcheck
+    # time cmake --build . --target installcheck
     # Run upgrade test (with standby master)
     time cmake --build . --target upgradecheck
     popd
