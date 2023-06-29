@@ -378,6 +378,7 @@ gp_fetch_active_tables(bool is_init)
 
 	if (is_init)
 	{
+		SIMPLE_FAULT_INJECTOR("diskquota_worker_initialization");
 		load_table_size(local_table_stats_map);
 	}
 	else

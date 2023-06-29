@@ -11,4 +11,5 @@ test: test_per_segment_config
 test: test_relation_cache
 test: test_ereport_from_seg
 test: test_drop_extension
+test: test_worker_init_failure
 test: reset_config
