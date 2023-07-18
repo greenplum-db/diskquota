@@ -8,7 +8,8 @@ make install
 
 # Setup
 ## on client
-### set the `gp_hosts` for gpssh, for example:
+When the pgbench is run on the master, the step should be executed on the master.
+### set the `gp_hosts`, for example:
 ```
 hz-diskquota-performance-00
 hz-diskquota-performance-01
@@ -28,13 +29,19 @@ done
 # Experiment
 ## Execute bench.sh and generate report
 ```
-./bench.sh master_ip 5 testdb prefix
+./bench.sh master_ip times_of_tests testdb prefix
 ./generate_report.py prefix > report.csv
 ```
 
-# To execute the whole test:
+## Execute bench_on_master.sh and generate report
 ```
-# Clear system disk cache with root permission
+./bench_on_master.sh times_of_tests testdb prefix
+./generate_report.py prefix > report.csv
+```
+
+## To execute the whole test once:
+Execute test:
+```
 dropdb testdb
 createdb testdb
 ./test.sh testdb diskquota_disabled.txt
@@ -52,7 +59,6 @@ psql -c "SELECT diskquota.set_schema_quota('public', '1000 GB')" testdb
 ```
 
 To generate the report:
-
 ```
 ./make_report.py diskquota_disabled.txt diskquota_enabled.txt > report.csv
 ```
