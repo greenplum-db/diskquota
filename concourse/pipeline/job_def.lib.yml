@@ -165,7 +165,7 @@ plan:
             file: #@ conf["res_intermediates_bin"] + "/diskquota-*-*.tar.gz"
 #@   end
 #@   for to_put in trigger["to_put_post"]:
-- #@ to_put
+#! - #@ to_put
 #@   end
 #@ end
 
