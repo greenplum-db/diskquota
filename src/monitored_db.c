@@ -40,7 +40,7 @@ db_status(PG_FUNCTION_ARGS)
 		MonitorDBEntry entries;
 		long           nitems;
 		int            index;
-	} * status_ctx;
+	} *status_ctx;
 
 	if (SRF_IS_FIRSTCALL())
 	{
