@@ -1,7 +1,7 @@
 \!gpconfig -s 'shared_preload_libraries'
 
 create extension diskquota with version '2.3';
-\!sleep 5
+select diskquota.wait_for_worker_new_epoch();
 
 -- schema quota
 create schema s1;
