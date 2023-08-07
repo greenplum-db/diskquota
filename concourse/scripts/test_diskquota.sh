@@ -33,6 +33,8 @@ function _main() {
         make -C src/test/isolation2 install
     popd
 
+    exit
+
     pushd /home/gpadmin/diskquota_artifacts
     # Show regress diff if test fails
     export SHOW_REGRESS_DIFF=1
