@@ -1026,7 +1026,7 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 			active_table_key.reloid = relOid;
 			active_table_key.segid  = cur_segid;
 			active_table_entry      = (DiskQuotaActiveTableEntry *)hash_search(
-                    local_active_table_stat_map, &active_table_key, HASH_FIND, &active_tbl_found);
+			             local_active_table_stat_map, &active_table_key, HASH_FIND, &active_tbl_found);
 
 			/* skip to recalculate the tables which are not in active list */
 			if (active_tbl_found)
@@ -2143,7 +2143,7 @@ show_rejectmap(PG_FUNCTION_ARGS)
 	{
 		HASH_SEQ_STATUS rejectmap_seq;
 		HTAB           *rejectmap;
-	} *rejectmap_ctx;
+	} * rejectmap_ctx;
 
 	if (SRF_IS_FIRSTCALL())
 	{

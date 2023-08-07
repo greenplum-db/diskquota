@@ -296,7 +296,7 @@ pull_all_table_size(PG_FUNCTION_ARGS)
 	{
 		HASH_SEQ_STATUS iter;
 		HTAB           *local_table_size_map;
-	} *table_size_ctx;
+	} * table_size_ctx;
 
 	if (SRF_IS_FIRSTCALL())
 	{
