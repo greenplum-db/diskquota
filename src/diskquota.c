@@ -17,6 +17,7 @@
  */
 #include "diskquota.h"
 #include "gp_activetable.h"
+#include "diskquota_stat.h"
 
 #include "postgres.h"
 
@@ -89,11 +90,8 @@ static DiskQuotaWorkerEntry *volatile MyWorkerInfo = NULL;
 // how many database diskquota are monitoring on
 static int num_db = 0;
 
-/* how many TableSizeEntry are maintained in all the table_size_map in shared memory*/
-pg_atomic_uint32 *diskquota_table_size_entry_num;
-
-/* how many QuotaInfoEntry are maintained in all the quota_info_map in shared memory*/
-pg_atomic_uint32 *diskquota_quota_info_entry_num;
+/* The id of current bgworker */
+uint32 diskquota_current_worker_id;
 
 static DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
 
@@ -170,6 +168,8 @@ diskquota_launcher_shmem_size(void)
 	size = add_size(size, mul_size(diskquota_max_workers, sizeof(struct DiskQuotaWorkerEntry)));
 	// hidden memory for dbArray
 	size = add_size(size, mul_size(diskquota_max_monitored_databases, sizeof(struct DiskquotaDBEntry)));
+	// hidden memory for DiskquotaStatus
+	size = add_size(size, diskquota_status_shmem_size());
 	return size;
 }
 
@@ -431,6 +431,7 @@ disk_quota_worker_main(Datum main_arg)
 	Assert(MyWorkerInfo != NULL);
 
 	memcpy(dbname, MyWorkerInfo->dbname.data, NAMEDATALEN);
+	diskquota_current_worker_id = MyWorkerInfo->dbEntry->id;
 
 	/* Disable ORCA to avoid fallback */
 	optimizer = false;
@@ -1681,6 +1682,8 @@ diskquota_status(PG_FUNCTION_ARGS)
 	        {.name = "hard limits", .status = diskquota_status_check_hard_limit},
 	        {.name = "current binary version", .status = diskquota_status_binary_version},
 	        {.name = "current schema version", .status = diskquota_status_schema_version},
+	        {.name = "TableSize map capacity", .status = diskquota_status_table_size_entry},
+	        {.name = "QuotaInfo map capacity", .status = diskquota_status_quota_info_entry},
 	};
 
 	FuncCallContext *funcctx;
@@ -1802,15 +1805,6 @@ init_launcher_shmem()
 			DiskquotaLauncherShmem->dbArray[i].workerId = INVALID_WORKER_ID;
 		}
 	}
-	/* init TableSizeEntry counter */
-	diskquota_table_size_entry_num =
-	        ShmemInitStruct("diskquota TableSizeEntry counter", sizeof(pg_atomic_uint32), &found);
-	if (!found) pg_atomic_init_u32(diskquota_table_size_entry_num, 0);
-
-	/* init QuotaInfoEntry counter */
-	diskquota_quota_info_entry_num =
-	        ShmemInitStruct("diskquota QuotaInfoEntry counter", sizeof(pg_atomic_uint32), &found);
-	if (!found) pg_atomic_init_u32(diskquota_quota_info_entry_num, 0);
 }
 
 /*
