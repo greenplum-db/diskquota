@@ -215,7 +215,7 @@ check_alter_extension(void)
 	int          i;
 
 	/* Check whether the sql statement is alter extension. */
-	for (i = 0; i < 4; i++)
+	for (i = 0; i < sizeof(regs) / sizeof(char *); i++)
 	{
 		pos = strstr(pos, regs[i]);
 		if (pos == 0)
