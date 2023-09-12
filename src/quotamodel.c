@@ -231,7 +231,7 @@ static void add_quota_to_rejectmap(QuotaType type, Oid targetOid, Oid tablespace
 static void check_quota_map(QuotaType type);
 static void clear_all_quota_maps(void);
 static void transfer_table_for_quota(int64 totalsize, QuotaType type, Oid *old_keys, Oid *new_keys, int16 segid);
-static struct QuotaMapEntry *search_quota_map_entry(HTAB *quota_info_map, struct QuotaMapEntryKey *key, bool *found);
+static struct QuotaMapEntry *put_quota_map_entry(HTAB *quota_info_map, struct QuotaMapEntryKey *key, bool *found);
 
 /* functions to refresh disk quota model*/
 static void refresh_disk_quota_usage(bool is_init);
@@ -254,8 +254,12 @@ static bool get_table_size_entry_flag(TableSizeEntry *entry, TableSizeEntryFlag 
 static void reset_table_size_entry_flag(TableSizeEntry *entry, TableSizeEntryFlag flag);
 static void set_table_size_entry_flag(TableSizeEntry *entry, TableSizeEntryFlag flag);
 
+/*
+ * put QuotaMapEntry into quota_info[type].map and return this entry.
+ * return NULL: no free SHM for quota_info[type].map
+ */
 static struct QuotaMapEntry *
-search_quota_map_entry(HTAB *quota_info_map, struct QuotaMapEntryKey *key, bool *found)
+put_quota_map_entry(HTAB *quota_info_map, struct QuotaMapEntryKey *key, bool *found)
 {
 	struct QuotaMapEntry *entry;
 	uint32                counter = pg_atomic_read_u32(diskquota_quota_info_entry_num);
@@ -264,7 +268,7 @@ search_quota_map_entry(HTAB *quota_info_map, struct QuotaMapEntryKey *key, bool 
 		entry = hash_search(quota_info_map, key, HASH_FIND, found);
 		/*
 		 * Too many quotas have been added to the quota_info_map, to avoid diskquota using
-		 * too much share memory, just return NULL. The diskquota won't work correctly
+		 * too much shared memory, just return NULL. The diskquota won't work correctly
 		 * anymore.
 		 */
 		if (!found) return NULL;
@@ -295,7 +299,7 @@ update_size_for_quota(int64 size, QuotaType type, Oid *keys, int16 segid)
 	struct QuotaMapEntryKey key = {0};
 	memcpy(key.keys, keys, quota_info[type].num_keys * sizeof(Oid));
 	key.segid                   = segid;
-	struct QuotaMapEntry *entry = search_quota_map_entry(quota_info[type].map, &key, &found);
+	struct QuotaMapEntry *entry = put_quota_map_entry(quota_info[type].map, &key, &found);
 	/* If the number of quota exceeds the limit, entry will be NULL */
 	if (entry == NULL) return;
 	if (!found)
@@ -318,7 +322,7 @@ update_limit_for_quota(int64 limit, float segratio, QuotaType type, Oid *keys)
 		struct QuotaMapEntryKey key = {0};
 		memcpy(key.keys, keys, quota_info[type].num_keys * sizeof(Oid));
 		key.segid                   = i;
-		struct QuotaMapEntry *entry = search_quota_map_entry(quota_info[type].map, &key, &found);
+		struct QuotaMapEntry *entry = put_quota_map_entry(quota_info[type].map, &key, &found);
 		/* If the number of quota exceeds the limit, entry will be NULL */
 		if (entry == NULL) continue;
 		if (!found)
