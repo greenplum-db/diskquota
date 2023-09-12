@@ -462,8 +462,9 @@ disk_quota_shmem_startup(void)
 	hash_ctl.keysize   = sizeof(Oid);
 	hash_ctl.entrysize = sizeof(struct MonitorDBEntryStruct);
 
-	monitored_dbid_cache = DiskquotaShmemInitHash("table oid cache which shoud tracking", diskquota_max_monitored_databases,
-	                                              diskquota_max_monitored_databases, &hash_ctl, HASH_ELEM, DISKQUOTA_OID_HASH);
+	monitored_dbid_cache =
+	        DiskquotaShmemInitHash("table oid cache which shoud tracking", diskquota_max_monitored_databases,
+	                               diskquota_max_monitored_databases, &hash_ctl, HASH_ELEM, DISKQUOTA_OID_HASH);
 	init_launcher_shmem();
 	LWLockRelease(AddinShmemInitLock);
 }
@@ -509,7 +510,8 @@ static Size
 diskquota_worker_shmem_size()
 {
 	Size size;
-	size = hash_estimate_size(MAX_NUM_TABLE_SIZE_ENTRIES / diskquota_max_monitored_databases + 100, sizeof(TableSizeEntry));
+	size = hash_estimate_size(MAX_NUM_TABLE_SIZE_ENTRIES / diskquota_max_monitored_databases + 100,
+	                          sizeof(TableSizeEntry));
 	size = add_size(size, hash_estimate_size(MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, sizeof(LocalRejectMapEntry)));
 	size = add_size(size, hash_estimate_size(MAX_QUOTA_MAP_ENTRIES * NUM_QUOTA_TYPES, sizeof(struct QuotaMapEntry)));
 	return size;
