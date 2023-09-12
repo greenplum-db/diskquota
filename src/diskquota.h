@@ -193,12 +193,12 @@ typedef struct
 {
 	dlist_head        freeWorkers;    // a list of DiskQuotaWorkerEntry
 	dlist_head        runningWorkers; // a list of DiskQuotaWorkerEntry
-	DiskquotaDBEntry *dbArray;        // size == diskquota_max_database
+	DiskquotaDBEntry *dbArray;        // size == diskquota_max_monitored_databases
 	DiskquotaDBEntry *dbArrayTail;
 	volatile bool     isDynamicWorker;
 	/*
 	DiskQuotaWorkerEntry worker[diskquota_max_workers]; // the hidden memory to store WorkerEntry
-	DiskquotaDBEntry     dbentry[diskquota_max_database]; // the hidden memory for dbentry
+	DiskquotaDBEntry     dbentry[diskquota_max_monitored_databases]; // the hidden memory for dbentry
 	*/
 } DiskquotaLauncherShmemStruct;
 
