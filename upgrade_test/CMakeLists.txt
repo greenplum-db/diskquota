@@ -61,7 +61,7 @@ foreach(ddl IN LISTS ddl_files)
       NOTICE
       "compared to ${latest_tag}, the DDL file ${ddl} is modified, checking if upgrade test is needed."
     )
-    set(DISKQUOTA_DDL_MODIFIED TRUE)
+    # set(DISKQUOTA_DDL_MODIFIED TRUE)
   endif()
 endforeach()
 

@@ -43,6 +43,7 @@
 #include "cdb/cdbutil.h"
 
 #include <math.h>
+#include <time.h>
 
 /* cluster level max size of rejectmap */
 #define MAX_DISK_QUOTA_REJECT_ENTRIES (1024 * 1024)
@@ -222,6 +223,14 @@ static HTAB *disk_quota_reject_map       = NULL;
 static HTAB *local_disk_quota_reject_map = NULL;
 
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
+
+/* test for latency */
+long *hard_limit_latency_arr;
+int  *hard_limit_count_arr;
+long *soft_limit_latency_arr;
+int  *soft_limit_count_arr;
+long *diskquota_table_size_table_insert_times;
+long *diskquota_table_size_table_delete_times;
 
 /* functions to maintain the quota maps */
 static void update_size_for_quota(int64 size, QuotaType type, Oid *keys, int16 segid);
@@ -486,6 +495,20 @@ disk_quota_shmem_startup(void)
 	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
 
 	init_lwlocks();
+
+	hard_limit_latency_arr                  = ShmemAlloc(sizeof(long) * 20);
+	hard_limit_count_arr                    = ShmemAlloc(sizeof(int) * 20);
+	soft_limit_latency_arr                  = ShmemAlloc(sizeof(long) * 20);
+	soft_limit_count_arr                    = ShmemAlloc(sizeof(int) * 20);
+	diskquota_table_size_table_insert_times = ShmemAlloc(sizeof(long));
+	diskquota_table_size_table_delete_times = ShmemAlloc(sizeof(long));
+
+	memset(hard_limit_latency_arr, 0, sizeof(long) * 20);
+	memset(hard_limit_count_arr, 0, sizeof(int) * 20);
+	memset(soft_limit_latency_arr, 0, sizeof(long) * 20);
+	memset(soft_limit_count_arr, 0, sizeof(int) * 20);
+	*diskquota_table_size_table_insert_times = 0;
+	*diskquota_table_size_table_delete_times = 0;
 
 	/*
 	 * Four shared memory data. extension_ddl_message is used to handle
@@ -1082,7 +1105,7 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 			active_table_key.reloid = relOid;
 			active_table_key.segid  = cur_segid;
 			active_table_entry      = (DiskQuotaActiveTableEntry *)hash_search(
-			             local_active_table_stat_map, &active_table_key, HASH_FIND, &active_tbl_found);
+                    local_active_table_stat_map, &active_table_key, HASH_FIND, &active_tbl_found);
 
 			/* skip to recalculate the tables which are not in active list */
 			if (active_tbl_found)
@@ -1258,6 +1281,7 @@ flush_to_table_size(void)
 				delete_entries_num++;
 				if (delete_entries_num > SQL_MAX_VALUES_NUMBER)
 				{
+					(*diskquota_table_size_table_delete_times) += delete_entries_num;
 					delete_from_table_size_map(delete_statement.data);
 					resetStringInfo(&delete_statement);
 					delete_entries_num = 0;
@@ -1275,12 +1299,14 @@ flush_to_table_size(void)
 
 				if (delete_entries_num > SQL_MAX_VALUES_NUMBER)
 				{
+					(*diskquota_table_size_table_delete_times) += delete_entries_num;
 					delete_from_table_size_map(delete_statement.data);
 					resetStringInfo(&delete_statement);
 					delete_entries_num = 0;
 				}
 				if (insert_entries_num > SQL_MAX_VALUES_NUMBER)
 				{
+					(*diskquota_table_size_table_insert_times) += insert_entries_num;
 					insert_into_table_size_map(insert_statement.data);
 					resetStringInfo(&insert_statement);
 					insert_entries_num = 0;
@@ -1298,6 +1324,8 @@ flush_to_table_size(void)
 
 	if (delete_entries_num) delete_from_table_size_map(delete_statement.data);
 	if (insert_entries_num) insert_into_table_size_map(insert_statement.data);
+	(*diskquota_table_size_table_delete_times) += delete_entries_num;
+	(*diskquota_table_size_table_insert_times) += insert_entries_num;
 
 	optimizer = old_optimizer;
 
@@ -1768,16 +1796,91 @@ quota_check_common(Oid reloid, RelFileNode *relfilenode)
 
 	if (diskquota_is_paused()) return true;
 
-	if (OidIsValid(reloid)) return check_rejectmap_by_reloid(reloid);
+	if (OidIsValid(reloid))
+	{
+		struct timespec begin, end;
+		clock_gettime(CLOCK_REALTIME, &begin);
+		bool ret = check_rejectmap_by_reloid(reloid);
+		clock_gettime(CLOCK_REALTIME, &end);
+		long seconds     = end.tv_sec - begin.tv_sec;
+		long nanoseconds = end.tv_nsec - begin.tv_nsec;
+		soft_limit_latency_arr[GpIdentity.segindex] += seconds * 1000000000 + nanoseconds;
+		soft_limit_count_arr[GpIdentity.segindex]++;
+		return ret;
+	}
 
 	enable_hardlimit = diskquota_hardlimit;
 
 #ifdef FAULT_INJECTOR
 	if (SIMPLE_FAULT_INJECTOR("enable_check_quota_by_relfilenode") == FaultInjectorTypeSkip) enable_hardlimit = true;
 #endif
-	if (relfilenode && enable_hardlimit) return check_rejectmap_by_relfilenode(*relfilenode);
-
+	if (relfilenode && enable_hardlimit)
+	{
+		struct timespec begin, end;
+		clock_gettime(CLOCK_REALTIME, &begin);
+		bool ret = check_rejectmap_by_relfilenode(*relfilenode);
+		clock_gettime(CLOCK_REALTIME, &end);
+		long seconds     = end.tv_sec - begin.tv_sec;
+		long nanoseconds = end.tv_nsec - begin.tv_nsec;
+		hard_limit_latency_arr[GpIdentity.segindex] += seconds * 1000000000 + nanoseconds;
+		hard_limit_count_arr[GpIdentity.segindex]++;
+		return ret;
+	}
 	return true;
+}
+
+PG_FUNCTION_INFO_V1(diskquota_show_latency);
+Datum
+diskquota_show_latency(PG_FUNCTION_ARGS)
+{
+	FuncCallContext *funcctx;
+	int             *count;
+
+	if (SRF_IS_FIRSTCALL())
+	{
+		TupleDesc     tupdesc;
+		MemoryContext oldcontext;
+		funcctx = SRF_FIRSTCALL_INIT();
+
+		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+
+		tupdesc = DiskquotaCreateTemplateTupleDesc(6);
+		TupleDescInitEntry(tupdesc, 1, "hard_limit_latency", INT8OID, -1, 0);
+		TupleDescInitEntry(tupdesc, 2, "hard_limit_count", INT4OID, -1, 0);
+		TupleDescInitEntry(tupdesc, 3, "soft_limit_latency", INT8OID, -1, 0);
+		TupleDescInitEntry(tupdesc, 4, "soft_limit_count", INT4OID, -1, 0);
+		TupleDescInitEntry(tupdesc, 5, "insert_count ", INT8OID, -1, 0);
+		TupleDescInitEntry(tupdesc, 6, "delete_count", INT8OID, -1, 0);
+		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
+		count               = palloc(sizeof(int));
+		*count              = 0;
+		funcctx->user_fctx  = (void *)count;
+
+		MemoryContextSwitchTo(oldcontext);
+	}
+
+	funcctx = SRF_PERCALL_SETUP();
+	count   = (int *)funcctx->user_fctx;
+
+	if (*count > 0) SRF_RETURN_DONE(funcctx);
+
+	Datum     result;
+	bool      nulls[6];
+	Datum     v[6];
+	HeapTuple tuple;
+
+	memset(nulls, false, sizeof(nulls));
+	v[0]   = Int64GetDatum(hard_limit_latency_arr[GpIdentity.segindex]);
+	v[1]   = Int32GetDatum(hard_limit_count_arr[GpIdentity.segindex]);
+	v[2]   = Int64GetDatum(soft_limit_latency_arr[GpIdentity.segindex]);
+	v[3]   = Int32GetDatum(soft_limit_count_arr[GpIdentity.segindex]);
+	v[4]   = Int64GetDatum(*diskquota_table_size_table_insert_times);
+	v[5]   = Int64GetDatum(*diskquota_table_size_table_delete_times);
+	tuple  = heap_form_tuple(funcctx->tuple_desc, v, nulls);
+	result = HeapTupleGetDatum(tuple);
+	(*count)++;
+
+	SRF_RETURN_NEXT(funcctx, result);
 }
 
 /*
@@ -2199,7 +2302,7 @@ show_rejectmap(PG_FUNCTION_ARGS)
 	{
 		HASH_SEQ_STATUS rejectmap_seq;
 		HTAB           *rejectmap;
-	} * rejectmap_ctx;
+	} *rejectmap_ctx;
 
 	if (SRF_IS_FIRSTCALL())
 	{

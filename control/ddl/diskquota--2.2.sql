@@ -97,6 +97,24 @@ CREATE FUNCTION diskquota.status() RETURNS TABLE ("name" text, "status" text) ST
 CREATE FUNCTION diskquota.show_relation_cache() RETURNS setof diskquota.relation_cache_detail AS '$libdir/diskquota-2.2.so', 'show_relation_cache' LANGUAGE C;
 CREATE FUNCTION diskquota.relation_size_local(reltablespace oid, relfilenode oid, relpersistence "char", relstorage "char", relam oid) RETURNS bigint STRICT AS '$libdir/diskquota-2.2.so', 'relation_size_local' LANGUAGE C;
 CREATE FUNCTION diskquota.pull_all_table_size(OUT tableid oid, OUT size bigint, OUT segid smallint) RETURNS SETOF RECORD AS '$libdir/diskquota-2.2.so', 'pull_all_table_size' LANGUAGE C;
+CREATE FUNCTION diskquota.show_latency(OUT hard_limit_latency bigint, OUT hard_limit_count int4, OUT soft_limit_latency bigint, OUT soft_limit_count int4, OUT insert_count bigint, OUT delete_count bigint) RETURNS SETOF RECORD AS '$libdir/diskquota-2.2.so', 'diskquota_show_latency' LANGUAGE C;
+
+CREATE VIEW diskquota.show_diskquota_latency AS
+WITH
+foo AS (
+  SELECT
+    (diskquota.show_latency()).*
+  FROM
+    gp_dist_random('gp_id')
+)
+SELECT
+  sum(hard_limit_latency) / 1000000 as hard_limit_latency_ms,
+  sum(hard_limit_count) as hard_limit_count,
+  sum(soft_limit_latency)  / 1000000 as soft_limit_latency_ms,
+  sum(soft_limit_count) as soft_limit_count
+FROM
+  foo;
+
 
 CREATE FUNCTION diskquota.relation_size(relation regclass) RETURNS bigint STRICT AS $$
        SELECT SUM(size)::bigint FROM (
