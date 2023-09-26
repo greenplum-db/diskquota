@@ -37,6 +37,29 @@ resources_gpdb:
     tag: latest
     username: _json_key
     password: ((data-gpdb-private-images-container-registry-readonly-service-account-key))
+# build using rocky9
+- name: rocky9-gpdb6-image-build
+  type: registry-image
+  source:
+    repository: gcr.io/data-gpdb-public-images/gpdb6-rocky9-build
+    tag: latest
+    username: _json_key
+    password: ((data-gpdb-private-images-container-registry-readonly-service-account-key))
+# test using rocky9 and rhel9
+- name: rocky9-gpdb6-image-test
+  type: registry-image
+  source:
+    repository: gcr.io/data-gpdb-public-images/gpdb6-rocky9-test
+    tag: latest
+    username: _json_key
+    password: ((data-gpdb-private-images-container-registry-readonly-service-account-key))
+- name: rhel9-gpdb6-image-test
+  type: registry-image
+  source:
+    repository: gcr.io/data-gpdb-private-images/gpdb6-rhel9-test
+    tag: latest
+    username: _json_key
+    password: ((data-gpdb-private-images-container-registry-readonly-service-account-key))
 # Ubuntu18
 - name: ubuntu18-gpdb6-image-build
   type: registry-image
@@ -55,16 +78,33 @@ resources_gpdb:
   source:
     repository: gcr.io/data-gpdb-public-images/gpdb7-rocky8-build
     tag: latest
+- name: rocky9-gpdb7-image-build
+  type: registry-image
+  source:
+    repository: gcr.io/data-gpdb-public-images/gpdb7-rocky9-build
+    tag: latest
 # test
 - name: rocky8-gpdb7-image-test
   type: registry-image
   source:
     repository: gcr.io/data-gpdb-public-images/gpdb7-rocky8-test
     tag: latest
+- name: rocky9-gpdb7-image-test
+  type: registry-image
+  source:
+    repository: gcr.io/data-gpdb-public-images/gpdb7-rocky9-test
+    tag: latest
 - name: rhel8-gpdb7-image-test
   type: registry-image
   source:
     repository: gcr.io/data-gpdb-private-images/gpdb7-rhel8-test
+    tag: latest
+    username: _json_key
+    password: ((data-gpdb-private-images-container-registry-readonly-service-account-key))
+- name: rhel9-gpdb7-image-test
+  type: registry-image
+  source:
+    repository: gcr.io/data-gpdb-private-images/gpdb7-rhel9-test
     tag: latest
     username: _json_key
     password: ((data-gpdb-private-images-container-registry-readonly-service-account-key))
@@ -90,6 +130,12 @@ resources_gpdb:
     bucket: pivotal-gpdb-concourse-resources-prod
     json_key: ((concourse-gcs-resources-service-account-key))
     regexp: server/published/gpdb6/server-rc-(.*\+dev\.\d+.*)-rhel8_x86_64.debug.tar.gz
+- name: bin_gpdb6_rhel9_debug
+  type: gcs
+  source:
+    bucket: pivotal-gpdb-concourse-resources-prod
+    json_key: ((concourse-gcs-resources-service-account-key))
+    regexp: server/published/gpdb6/server-rc-(.*\+dev\.\d+.*)-rhel9_x86_64.debug.tar.gz
 - name: bin_gpdb6_ubuntu18_debug
   type: gcs
   source:
@@ -102,6 +148,12 @@ resources_gpdb:
     bucket: pivotal-gpdb-concourse-resources-prod
     json_key: ((concourse-gcs-resources-service-account-key))
     regexp: server/published/main/server-rc-(.*\+dev\.\d+.*)-el8_x86_64.debug.tar.gz
+- name: bin_gpdb7_el9_debug
+  type: gcs
+  source:
+    bucket: pivotal-gpdb-concourse-resources-prod
+    json_key: ((concourse-gcs-resources-service-account-key))
+    regexp: server/published/main/server-rc-(.*\+dev\.\d+.*)-el9_x86_64.debug.tar.gz
 # Latest release candidates, no fault-injector, no assertion:
 # --disable-debug-extensions --disable-tap-tests --enable-ic-proxy
 - name: bin_gpdb6_centos6
@@ -122,6 +174,12 @@ resources_gpdb:
     bucket: pivotal-gpdb-concourse-resources-prod
     json_key: ((concourse-gcs-resources-service-account-key))
     regexp: server/release-candidates/gpdb6/greenplum-db-server-(6\.([0-9]|([1-8][0-9])|(9[0-8]))\..*\+dev\.\d+)-.*-rhel8.tar.gz
+- name: bin_gpdb6_rhel9
+  type: gcs
+  source:
+    bucket: pivotal-gpdb-concourse-resources-prod
+    json_key: ((concourse-gcs-resources-service-account-key))
+    regexp: server/release-candidates/gpdb6/greenplum-db-server-(6\.([0-9]|([1-8][0-9])|(9[0-8]))\..*\+dev\.\d+)-.*-rhel9.tar.gz
 - name: bin_gpdb6_ubuntu18
   type: gcs
   source:
@@ -134,6 +192,12 @@ resources_gpdb:
     bucket: pivotal-gpdb-concourse-resources-prod
     json_key: ((concourse-gcs-resources-service-account-key))
     regexp: server/release-candidates/gpdb7/greenplum-db-server-(7\.([0-9]|([1-8][0-9])|(9[0-8]))\..*\+dev\.\d+)-.*-el8.tar.gz
+- name: bin_gpdb7_el9
+  type: gcs
+  source:
+    bucket: pivotal-gpdb-concourse-resources-prod
+    json_key: ((concourse-gcs-resources-service-account-key))
+    regexp: server/release-candidates/gpdb7/greenplum-db-server-(7\.([0-9]|([1-8][0-9])|(9[0-8]))\..*\+dev\.\d+)-.*-el9.tar.gz
 
 # Greenplum sources
 - name: gpdb6_src

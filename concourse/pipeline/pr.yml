@@ -5,8 +5,11 @@
 #@   "centos6_gpdb6_conf",
 #@   "centos7_gpdb6_conf",
 #@   "rhel8_gpdb6_conf",
+#@   "rhel9_gpdb6_conf",
 #@   "ubuntu18_gpdb6_conf",
-#@   "rhel8_gpdb7_conf"
+#@   "rhel8_gpdb7_conf",
+#@   "rhel9_gpdb7_conf",
+#@   "get_groups",
 #@ )
 #@ load("trigger_def.lib.yml",
 #@   "pr_trigger",
@@ -21,8 +24,10 @@
 #@   centos6_gpdb6_conf(),
 #@   centos7_gpdb6_conf(),
 #@   rhel8_gpdb6_conf(),
+#@   rhel9_gpdb6_conf(),
 #@   ubuntu18_gpdb6_conf(),
 #@   rhel8_gpdb7_conf(),
+#@   rhel9_gpdb7_conf(),
 #@ ]
 jobs:
 #@ param = {
@@ -43,6 +48,8 @@ jobs:
 #@     "confs": confs
 #@ }
 - #@ exit_pr_job(param)
+
+groups: #@ get_groups(confs)
 
 resources: #@ declare_res(res_type_map, res_map)
 

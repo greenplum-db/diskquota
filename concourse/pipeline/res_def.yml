@@ -53,6 +53,13 @@ resources:
     json_key: ((concourse-gcs-resources-service-account-key))
     regexp: diskquota/released/gpdb6/diskquota-(.*)-rhel8_x86_64.tar.gz
 
+- name: bin_diskquota_gpdb6_rhel9
+  type: gcs
+  source:
+    bucket: pivotal-gpdb-concourse-resources-prod
+    json_key: ((concourse-gcs-resources-service-account-key))
+    regexp: diskquota/released/gpdb6/diskquota-(.*)-rhel9_x86_64.tar.gz
+
 - name: bin_diskquota_gpdb6_ubuntu18
   type: gcs
   source:
@@ -66,6 +73,13 @@ resources:
     bucket: pivotal-gpdb-concourse-resources-prod
     json_key: ((concourse-gcs-resources-service-account-key))
     regexp: diskquota/released/gpdb7/diskquota-(.*)-rhel8_x86_64.tar.gz
+
+- name: bin_diskquota_gpdb7_rhel9
+  type: gcs
+  source:
+    bucket: pivotal-gpdb-concourse-resources-prod
+    json_key: ((concourse-gcs-resources-service-account-key))
+    regexp: diskquota/released/gpdb7/diskquota-(.*)-el9_x86_64.tar.gz
 
 # For uploading every build to gcs
 # Dev
@@ -90,6 +104,13 @@ resources:
     json_key: ((extension/extensions-gcs-service-account-key-dev2))
     versioned_file: intermediates/diskquota/diskquota_rhel8_gpdb6.tar.gz
 
+- name: bin_diskquota_gpdb6_rhel9_intermediates
+  type: gcs
+  source:
+    bucket: gp-extensions-ci
+    json_key: ((extension/extensions-gcs-service-account-key-dev2))
+    versioned_file: intermediates/diskquota/diskquota_rhel9_gpdb6.tar.gz
+
 - name: bin_diskquota_gpdb6_ubuntu18_intermediates
   type: gcs
   source:
@@ -103,6 +124,13 @@ resources:
     bucket: gp-extensions-ci
     json_key: ((extension/extensions-gcs-service-account-key-dev2))
     versioned_file: intermediates/diskquota/diskquota_rhel8_gpdb7.tar.gz
+
+- name: bin_diskquota_gpdb7_rhel9_intermediates
+  type: gcs
+  source:
+    bucket: gp-extensions-ci
+    json_key: ((extension/extensions-gcs-service-account-key-dev2))
+    versioned_file: intermediates/diskquota/diskquota_el9_gpdb7.tar.gz
 
 # Rel
 - name: bin_diskquota_gpdb6_rhel6_intermediates_rel
@@ -126,6 +154,13 @@ resources:
     json_key: ((extension/extensions-gcs-service-account-key-dev2))
     versioned_file: intermediates_release/diskquota/diskquota_rhel8_gpdb6.tar.gz
 
+- name: bin_diskquota_gpdb6_rhel9_intermediates_rel
+  type: gcs
+  source:
+    bucket: gp-extensions-ci
+    json_key: ((extension/extensions-gcs-service-account-key-dev2))
+    versioned_file: intermediates_release/diskquota/diskquota_rhel9_gpdb6.tar.gz
+
 - name: bin_diskquota_gpdb6_ubuntu18_intermediates_rel
   type: gcs
   source:
@@ -139,6 +174,13 @@ resources:
     bucket: gp-extensions-ci
     json_key: ((extension/extensions-gcs-service-account-key-dev2))
     versioned_file: intermediates_release/diskquota/diskquota_rhel8_gpdb7.tar.gz
+
+- name: bin_diskquota_gpdb7_rhel9_intermediates_rel
+  type: gcs
+  source:
+    bucket: gp-extensions-ci
+    json_key: ((extension/extensions-gcs-service-account-key-dev2))
+    versioned_file: intermediates_release/diskquota/diskquota_el9_gpdb7.tar.gz
 
 # For uploading to the release bucket
 - name: bin_diskquota_gpdb6_rhel6_release
@@ -162,6 +204,13 @@ resources:
     json_key: ((concourse-gcs-resources-service-account-key))
     regexp: diskquota/released/gpdb6/diskquota-(.*).tar.gz
 
+- name: bin_diskquota_gpdb6_rhel9_release
+  type: gcs
+  source:
+    bucket: pivotal-gpdb-concourse-resources-prod
+    json_key: ((concourse-gcs-resources-service-account-key))
+    regexp: diskquota/released/gpdb6/diskquota-(.*).tar.gz
+
 - name: bin_diskquota_gpdb6_ubuntu18_release
   type: gcs
   source:
@@ -170,6 +219,13 @@ resources:
     regexp: diskquota/released/gpdb6/diskquota-(.*).tar.gz
 
 - name: bin_diskquota_gpdb7_rhel8_release
+  type: gcs
+  source:
+    bucket: pivotal-gpdb-concourse-resources-prod
+    json_key: ((concourse-gcs-resources-service-account-key))
+    regexp: diskquota/released/gpdb7/diskquota-(.*).tar.gz
+
+- name: bin_diskquota_gpdb7_rhel9_release
   type: gcs
   source:
     bucket: pivotal-gpdb-concourse-resources-prod
