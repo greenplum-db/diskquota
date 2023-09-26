@@ -55,8 +55,8 @@ res_build_image: rocky9-gpdb6-image-build
 res_test_images: [rhel9-gpdb6-image-test, rocky9-gpdb6-image-test]
 res_gpdb_bin: #@ "bin_gpdb6_rhel9" + ("" if release_build else "_debug")
 res_diskquota_bin: bin_diskquota_gpdb6_rhel9
-res_intermediates_bin: #@ inter_bin_name("bin_advanced-password-check_gpdb6_rhel9_intermediates", release_build)
-release_bin: bin_advanced-password-check_gpdb6_rhel9_release
+res_intermediates_bin: #@ inter_bin_name("bin_diskquota_gpdb6_rhel9_intermediates", release_build)
+release_bin: bin_diskquota_gpdb6_rhel9_release
 os: rhel9
 gpdb_ver: 6
 build_type: #@ "Release" if release_build else "Debug"
@@ -94,8 +94,8 @@ res_build_image: rocky9-gpdb7-image-build
 res_test_images: [rocky9-gpdb7-image-test, rhel9-gpdb7-image-test]
 res_gpdb_bin: #@ "bin_gpdb7_el9" + ("" if release_build else "_debug")
 res_diskquota_bin: bin_diskquota_gpdb7_rhel9
-res_intermediates_bin: #@ inter_bin_name("bin_advanced-password-check_gpdb7_rhel9_intermediates", release_build)
-release_bin: bin_advanced-password-check_gpdb7_rhel9_release
+res_intermediates_bin: #@ inter_bin_name("bin_diskquota_gpdb7_rhel9_intermediates", release_build)
+release_bin: bin_diskquota_gpdb7_rhel9_release
 os: rhel9
 gpdb_ver: 7
 build_type: #@ "Release" if release_build else "Debug"
