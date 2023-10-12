@@ -16,11 +16,14 @@ function activate_standby() {
 }
 
 function _main() {
-    local tmp_dir="$(mktemp -d)"
-    tar -xzf /home/gpadmin/bin_diskquota/diskquota-*-*.tar.gz -C "$tmp_dir"
-    pushd "$tmp_dir"
-    ./install_gpdb_component
-    popd
+    if [[ $DISKQUOTA_OS != 'rhel9' ]]
+    then
+        local tmp_dir="$(mktemp -d)"
+        tar -xzf /home/gpadmin/bin_diskquota/diskquota-*-*.tar.gz -C "$tmp_dir"
+        pushd "$tmp_dir"
+        ./install_gpdb_component
+        popd
+    fi
 
     source /home/gpadmin/gpdb_src/gpAux/gpdemo/gpdemo-env.sh
 
