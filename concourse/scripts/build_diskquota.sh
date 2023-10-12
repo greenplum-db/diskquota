@@ -10,6 +10,7 @@ function pkg() {
     export CC="$(which gcc)"
     export CXX="$(which g++)"
 
+    pushd /home/gpadmin/diskquota_artifacts
     if [[ $DISKQUOTA_OS == "rhel9" ]]
     then
         cmake /home/gpadmin/diskquota_src \
@@ -17,15 +18,14 @@ function pkg() {
         -DDISKQUOTA_DDL_CHANGE_CHECK=off
         cmake --build . --target create_artifact
     else
-        pushd /home/gpadmin/diskquota_artifacts
         local last_release_path
         last_release_path=$(readlink -eq /home/gpadmin/last_released_diskquota_bin/diskquota-*.tar.gz)
         cmake /home/gpadmin/diskquota_src \
             -DDISKQUOTA_LAST_RELEASE_PATH="${last_release_path}" \
             -DCMAKE_BUILD_TYPE="${BUILD_TYPE}"
         cmake --build . --target create_artifact
-        popd
     fi
+    popd
 }
 
 function _main() {
