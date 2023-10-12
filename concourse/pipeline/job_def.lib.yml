@@ -197,7 +197,7 @@ plan:
 
 #@ def _build_task(conf):
 task: #@ "build_" + conf["os"]
-file: diskquota_src/concourse/tasks/build_diskquota.yml
+file: #@ "diskquota_src/concourse/tasks/build_diskquota" + ("" if conf["os"] != "rhel9" else "_rocky9") + ".yml"
 image: #@ conf["res_build_image"]
 input_mapping:
   bin_gpdb: #@ conf["res_gpdb_bin"]
