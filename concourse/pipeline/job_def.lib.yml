@@ -270,15 +270,14 @@ plan:
 #@     name = "all" if ver == 0 else "gpdb" + str(ver)
 - name: #@ name
   jobs:
-  #@ if ver == 0:
-  - entrance
-  #@ end
-
-  #@ for conf in confs:
-  #@   if ver == 0 or conf["gpdb_ver"] == ver:
+    #@ if ver == 0:
+  - "*"
+    #@ else:
+        #@ for conf in confs:
+        #@   if conf["gpdb_ver"] == ver:
   - #@ build_test_job_name(conf)
-  #@   end
-  #@ end
-
+        #@   end
+        #@ end
+    #@ end
 #@   end
 #@ end
