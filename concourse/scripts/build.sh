@@ -10,7 +10,7 @@ function pkg() {
     export CC="$(which gcc)"
     export CXX="$(which g++)"
 
-    pushd /home/gpadmin/diskquota_artifacts
+    pushd /home/gpadmin/bin_diskquota
     local last_release_path
     last_release_path=$(readlink -eq /home/gpadmin/last_released_diskquota_bin/diskquota-*.tar.gz)
     cmake /home/gpadmin/diskquota_src \

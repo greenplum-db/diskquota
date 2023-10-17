@@ -28,7 +28,7 @@ function _main() {
         make -C src/test/isolation2 install
     popd
 
-    pushd /home/gpadmin/diskquota_artifacts
+    pushd /home/gpadmin/bin_diskquota
     # Show regress diff if test fails
     export SHOW_REGRESS_DIFF=1
     time cmake --build . --target installcheck

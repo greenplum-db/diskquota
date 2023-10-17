@@ -1,7 +1,0 @@
-resources_misc:
-
-# Other dependencies
-- name: slack_notify_extensions
-  type: slack-alert
-  source:
-    url: ((extension/extensions-slack-webhook))
