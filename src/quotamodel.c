@@ -129,6 +129,18 @@ typedef enum
 	TABLE_EXIST = (1 << 0), /* whether table is already dropped */
 } TableSizeEntryFlag;
 
+/*
+ * quota_key_num array contains the number of key for each type of quota.
+ * |----------------------------|---------------|
+ * | Quota Type			 		| Number of Key |
+ * |----------------------------|---------------|
+ * | NAMESPACE_QUOTA			| 		1		|
+ * | ROLE_QUOTA		 			| 		1		|
+ * | NAMESPACE_TABLESPACE_QUOTA | 		2		|
+ * | ROLE_TABLESPACE_QUOTA 		| 		2		|
+ * | TABLESPACE_QUOTA 			| 		1		|
+ * |----------------------------|---------------|
+ */
 uint16 quota_key_num[NUM_QUOTA_TYPES]                            = {1, 1, 2, 2, 1};
 Oid    quota_key_caches[NUM_QUOTA_TYPES][MAX_NUM_KEYS_QUOTA_MAP] = {
         {NAMESPACEOID}, {AUTHOID}, {NAMESPACEOID, TABLESPACEOID}, {AUTHOID, TABLESPACEOID}, {TABLESPACEOID}};
