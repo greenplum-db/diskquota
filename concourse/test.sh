@@ -25,6 +25,10 @@ function _main() {
     source /home/gpadmin/gpdb_src/gpAux/gpdemo/gpdemo-env.sh
 
     pushd /home/gpadmin/gpdb_src
+        ./configure --prefix=/usr/local/greenplum-db-devel \
+        --without-zstd \
+        --disable-orca --disable-gpcloud --enable-debug-extensions
+
         make -C src/test/isolation2 install
     popd
 
