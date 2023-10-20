@@ -250,8 +250,8 @@ put_quota_map_entry(QuotaInfoEntryKey *key, bool *found)
 			counter = pg_atomic_add_fetch_u32(diskquota_quota_info_entry_num, 1);
 			if (counter >= diskquota_max_quota_probes)
 			{
-				ereport(WARNING, (errmsg("[diskquota] the number of quota exceeds the limit, please increase "
-				                         "the GUC value for diskquota.max_quota_probes. Current "
+				ereport(WARNING, (errmsg("[diskquota] the number of quota probe exceeds the limit, please "
+				                         "increase the GUC value for diskquota.max_quota_probes. Current "
 				                         "diskquota.max_quota_probes value: %d",
 				                         diskquota_max_quota_probes)));
 			}
