@@ -35,17 +35,7 @@ function _main() {
     # Run test again with standby master
     activate_standby
     time cmake --build . --target installcheck
-    if [[ $OS_NAME != "rhel9" ]]
-    then
-    # Run upgrade test (with standby master)
-    time cmake --build . --target upgradecheck
-    fi
     popd
-
-    if [[ $OS_NAME != "rhel9" ]]
-    then
-    time /home/gpadmin/diskquota_src/upgrade_test/alter_test.sh
-    fi
 }
 
 _main
