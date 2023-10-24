@@ -108,7 +108,7 @@ target_include_directories(
   ${deps_INSTALL_DIR}/include)
 
 target_link_libraries(
-  test_unit_config_parse
+  test_unit_config_parse PRIVATE
   ${deps_INSTALL_DIR}/lib/libcjson.a
   ${deps_INSTALL_DIR}/lib/libcmocka.so)
 
