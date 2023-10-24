@@ -38,6 +38,14 @@
 #define MAX_NUM_TABLE_SIZE_ENTRIES (diskquota_max_table_segments / SEGMENT_SIZE_ARRAY_LENGTH)
 /* length of segment size array in TableSizeEntry */
 #define SEGMENT_SIZE_ARRAY_LENGTH 100
+/* max number of keys in QuotaInfoEntryKey */
+#define MAX_NUM_KEYS_QUOTA_MAP 8
+/* init number of QuotaInfoEntry in quota_info_map */
+#define INIT_QUOTA_MAP_ENTRIES 128
+#define AVG_QUOTA_MAP_ENTRIES (diskquota_max_quota_probes / diskquota_max_monitored_databases)
+/* max number of QuotaInfoEntry in quota_info_map */
+#define MAX_QUOTA_MAP_ENTRIES (AVG_QUOTA_MAP_ENTRIES < 1024 ? 1024 : AVG_QUOTA_MAP_ENTRIES)
+
 typedef enum
 {
 	DISKQUOTA_TAG_HASH = 0,
@@ -46,7 +54,6 @@ typedef enum
 } DiskquotaHashFunction;
 
 /* max number of monitored database with diskquota enabled */
-#define MAX_NUM_MONITORED_DB 50
 #define LAUNCHER_SCHEMA "diskquota_utility"
 #define EXTENSION_SCHEMA "diskquota"
 extern int diskquota_worker_timeout;
@@ -67,6 +74,44 @@ extern int diskquota_worker_timeout;
 #define DiskquotaWaitLatch(latch, wakeEvents, timeout) WaitLatch(latch, wakeEvents, timeout, WAIT_EVENT_PG_SLEEP)
 #define DiskquotaGetRelstorage(classForm) (0)
 #endif /* GP_VERSION_NUM */
+
+typedef enum
+{
+	NAMESPACE_QUOTA = 0,
+	ROLE_QUOTA,
+	NAMESPACE_TABLESPACE_QUOTA,
+	ROLE_TABLESPACE_QUOTA,
+	/*
+	 * TABLESPACE_QUOTA
+	 * used in `quota_config` table,
+	 * when set_per_segment_quota("xx",1.0) is called
+	 * to set per segment quota to '1.0', the config
+	 * will be:
+	 * quotatype = 4 (TABLESPACE_QUOTA)
+	 * quotalimitMB = 0 (invalid quota confined)
+	 * segratio = 1.0
+	 */
+	TABLESPACE_QUOTA,
+
+	NUM_QUOTA_TYPES,
+} QuotaType;
+
+/*
+ * table disk size and corresponding schema, owner and tablespace
+ */
+typedef struct QuotaInfoEntryKey
+{
+	QuotaType type;
+	Oid       keys[MAX_NUM_KEYS_QUOTA_MAP];
+	int16     segid;
+} QuotaInfoEntryKey;
+
+typedef struct QuotaInfoEntry
+{
+	QuotaInfoEntryKey key;
+	int64             size;
+	int64             limit;
+} QuotaInfoEntry;
 
 typedef enum
 {
@@ -173,12 +218,12 @@ typedef struct
 {
 	dlist_head        freeWorkers;    // a list of DiskQuotaWorkerEntry
 	dlist_head        runningWorkers; // a list of DiskQuotaWorkerEntry
-	DiskquotaDBEntry *dbArray;        // size == MAX_NUM_MONITORED_DB
+	DiskquotaDBEntry *dbArray;        // size == diskquota_max_monitored_databases
 	DiskquotaDBEntry *dbArrayTail;
 	volatile bool     isDynamicWorker;
 	/*
 	DiskQuotaWorkerEntry worker[diskquota_max_workers]; // the hidden memory to store WorkerEntry
-	DiskquotaDBEntry     dbentry[MAX_NUM_MONITORED_DB]; // the hidden memory for dbentry
+	DiskquotaDBEntry     dbentry[diskquota_max_monitored_databases]; // the hidden memory for dbentry
 	*/
 } DiskquotaLauncherShmemStruct;
 
@@ -196,6 +241,8 @@ struct DiskquotaDBEntry
 
 	bool inited; // this entry is inited, will set to true after the worker finish the frist run.
 	bool in_use; // this slot is in using. AKA dbid != 0
+
+	TimestampTz last_log_time; // the last time log current database info.
 };
 
 typedef enum MonitorDBStatus
@@ -268,4 +315,5 @@ extern HTAB        *diskquota_hash_create(const char *tabname, long nelem, HASHC
                                           DiskquotaHashFunction hashFunction);
 extern HTAB *DiskquotaShmemInitHash(const char *name, long init_size, long max_size, HASHCTL *infoP, int hash_flags,
                                     DiskquotaHashFunction hash_function);
+extern void  refresh_monitored_dbid_cache(void);
 #endif

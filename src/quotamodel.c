@@ -53,6 +53,8 @@
 #define MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES 8192
 /* Number of attributes in quota configuration records. */
 #define NUM_QUOTA_CONFIG_ATTRS 6
+/* Number of entries for diskquota.table_size update SQL */
+#define SQL_MAX_VALUES_NUMBER 1000000
 
 /* TableSizeEntry macro function */
 /* Use the top bit of totalsize as a flush flag. If this bit is set, the size should be flushed into
@@ -85,6 +87,9 @@ typedef struct LocalRejectMapEntry  LocalRejectMapEntry;
 int                      SEGCOUNT = 0;
 extern int               diskquota_max_table_segments;
 extern pg_atomic_uint32 *diskquota_table_size_entry_num;
+extern int               diskquota_max_monitored_databases;
+extern int               diskquota_max_quota_probes;
+extern pg_atomic_uint32 *diskquota_quota_info_entry_num;
 
 /*
  * local cache of table disk size and corresponding schema and owner.
@@ -126,46 +131,21 @@ typedef enum
 } TableSizeEntryFlag;
 
 /*
- * table disk size and corresponding schema and owner
+ * quota_key_num array contains the number of key for each type of quota.
+ * |----------------------------|---------------|
+ * | Quota Type			 		| Number of Key |
+ * |----------------------------|---------------|
+ * | NAMESPACE_QUOTA			| 		1		|
+ * | ROLE_QUOTA		 			| 		1		|
+ * | NAMESPACE_TABLESPACE_QUOTA | 		2		|
+ * | ROLE_TABLESPACE_QUOTA 		| 		2		|
+ * | TABLESPACE_QUOTA 			| 		1		|
+ * |----------------------------|---------------|
  */
-struct QuotaMapEntryKey
-{
-	Oid   keys[MAX_QUOTA_KEY_NUM];
-	int16 segid;
-};
-
-struct QuotaMapEntry
-{
-	Oid   keys[MAX_QUOTA_KEY_NUM];
-	int16 segid;
-	int64 size;
-	int64 limit;
-};
-
-struct QuotaInfo
-{
-	char        *map_name;
-	unsigned int num_keys;
-	Oid         *sys_cache;
-	HTAB        *map;
-};
-
-struct QuotaInfo quota_info[NUM_QUOTA_TYPES] = {
-        [NAMESPACE_QUOTA] = {.map_name  = "Namespace map",
-                             .num_keys  = 1,
-                             .sys_cache = (Oid[]){NAMESPACEOID},
-                             .map       = NULL},
-        [ROLE_QUOTA]      = {.map_name = "Role map", .num_keys = 1, .sys_cache = (Oid[]){AUTHOID}, .map = NULL},
-        [NAMESPACE_TABLESPACE_QUOTA] = {.map_name  = "Tablespace-namespace map",
-                                        .num_keys  = 2,
-                                        .sys_cache = (Oid[]){NAMESPACEOID, TABLESPACEOID},
-                                        .map       = NULL},
-        [ROLE_TABLESPACE_QUOTA]      = {.map_name  = "Tablespace-role map",
-                                        .num_keys  = 2,
-                                        .sys_cache = (Oid[]){AUTHOID, TABLESPACEOID},
-                                        .map       = NULL},
-        [TABLESPACE_QUOTA]           = {
-                          .map_name = "Tablespace map", .num_keys = 1, .sys_cache = (Oid[]){TABLESPACEOID}, .map = NULL}};
+uint16 quota_key_num[NUM_QUOTA_TYPES]                            = {1, 1, 2, 2, 1};
+Oid    quota_key_caches[NUM_QUOTA_TYPES][MAX_NUM_KEYS_QUOTA_MAP] = {
+        {NAMESPACEOID}, {AUTHOID}, {NAMESPACEOID, TABLESPACEOID}, {AUTHOID, TABLESPACEOID}, {TABLESPACEOID}};
+HTAB *quota_info_map;
 
 /* global rejectmap for which exceed their quota limit */
 struct RejectMapEntry
@@ -216,11 +196,11 @@ static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 /* functions to maintain the quota maps */
 static void update_size_for_quota(int64 size, QuotaType type, Oid *keys, int16 segid);
 static void update_limit_for_quota(int64 limit, float segratio, QuotaType type, Oid *keys);
-static void remove_quota(QuotaType type, Oid *keys, int16 segid);
 static void add_quota_to_rejectmap(QuotaType type, Oid targetOid, Oid tablespaceoid, bool segexceeded);
-static void check_quota_map(QuotaType type);
-static void clear_all_quota_maps(void);
+static void refresh_quota_info_map(void);
+static void clean_all_quota_limit(void);
 static void transfer_table_for_quota(int64 totalsize, QuotaType type, Oid *old_keys, Oid *new_keys, int16 segid);
+static QuotaInfoEntry *put_quota_map_entry(QuotaInfoEntryKey *key, bool *found);
 
 /* functions to refresh disk quota model*/
 static void refresh_disk_quota_usage(bool is_init);
@@ -245,22 +225,62 @@ static void set_table_size_entry_flag(TableSizeEntry *entry, TableSizeEntryFlag 
 
 /* quota config function */
 extern HTAB *pull_quota_config(bool *found);
+/*
+ * put QuotaInfoEntry into quota_info_map and return this entry.
+ * return NULL: no free SHM for quota_info_map
+ * found cannot be NULL
+ */
+static QuotaInfoEntry *
+put_quota_map_entry(QuotaInfoEntryKey *key, bool *found)
+{
+	QuotaInfoEntry *entry;
+	uint32          counter = pg_atomic_read_u32(diskquota_quota_info_entry_num);
+	if (counter >= diskquota_max_quota_probes)
+	{
+		entry = hash_search(quota_info_map, key, HASH_FIND, found);
+		/*
+		 * Too many quotas have been added to the quota_info_map, to avoid diskquota using
+		 * too much shared memory, just return NULL. The diskquota won't work correctly
+		 * anymore.
+		 */
+		if (!(*found)) return NULL;
+	}
+	else
+	{
+		entry = hash_search(quota_info_map, key, HASH_ENTER, found);
+		if (!(*found))
+		{
+			counter = pg_atomic_add_fetch_u32(diskquota_quota_info_entry_num, 1);
+			if (counter >= diskquota_max_quota_probes)
+			{
+				ereport(WARNING, (errmsg("[diskquota] the number of quota probe exceeds the limit, please "
+				                         "increase the GUC value for diskquota.max_quota_probes. Current "
+				                         "diskquota.max_quota_probes value: %d",
+				                         diskquota_max_quota_probes)));
+			}
+		}
+	}
+	return entry;
+}
 
 /* add a new entry quota or update the old entry quota */
 static void
 update_size_for_quota(int64 size, QuotaType type, Oid *keys, int16 segid)
 {
-	bool                    found;
-	struct QuotaMapEntryKey key = {0};
-	memcpy(key.keys, keys, quota_info[type].num_keys * sizeof(Oid));
-	key.segid                   = segid;
-	struct QuotaMapEntry *entry = hash_search(quota_info[type].map, &key, HASH_ENTER, &found);
+	bool              found;
+	QuotaInfoEntry   *entry;
+	QuotaInfoEntryKey key = {0};
+
+	memcpy(key.keys, keys, quota_key_num[type] * sizeof(Oid));
+	key.type  = type;
+	key.segid = segid;
+	entry     = put_quota_map_entry(&key, &found);
+	/* If the number of quota exceeds the limit, entry will be NULL */
+	if (entry == NULL) return;
 	if (!found)
 	{
 		entry->size  = 0;
 		entry->limit = -1;
-		memcpy(entry->keys, keys, quota_info[type].num_keys * sizeof(Oid));
-		entry->segid = key.segid;
 	}
 	entry->size += size;
 }
@@ -272,35 +292,24 @@ update_limit_for_quota(int64 limit, float segratio, QuotaType type, Oid *keys)
 	bool found;
 	for (int i = -1; i < SEGCOUNT; i++)
 	{
-		struct QuotaMapEntryKey key = {0};
-		memcpy(key.keys, keys, quota_info[type].num_keys * sizeof(Oid));
-		key.segid                   = i;
-		struct QuotaMapEntry *entry = hash_search(quota_info[type].map, &key, HASH_ENTER, &found);
+		QuotaInfoEntry   *entry;
+		QuotaInfoEntryKey key = {0};
+
+		memcpy(key.keys, keys, quota_key_num[type] * sizeof(Oid));
+		key.type  = type;
+		key.segid = i;
+		entry     = put_quota_map_entry(&key, &found);
+		/* If the number of quota exceeds the limit, entry will be NULL */
+		if (entry == NULL) continue;
 		if (!found)
 		{
 			entry->size = 0;
-			memcpy(entry->keys, keys, quota_info[type].num_keys * sizeof(Oid));
-			entry->segid = key.segid;
 		}
 		if (key.segid == -1)
-		{
 			entry->limit = limit;
-		}
 		else
-		{
 			entry->limit = round((limit / SEGCOUNT) * segratio);
-		}
 	}
-}
-
-/* remove a entry quota from the map */
-static void
-remove_quota(QuotaType type, Oid *keys, int16 segid)
-{
-	struct QuotaMapEntryKey key = {0};
-	memcpy(key.keys, keys, quota_info[type].num_keys * sizeof(Oid));
-	key.segid = segid;
-	hash_search(quota_info[type].map, &key, HASH_REMOVE, NULL);
 }
 
 /*
@@ -329,23 +338,24 @@ add_quota_to_rejectmap(QuotaType type, Oid targetOid, Oid tablespaceoid, bool se
  * the quota limit, if it does, add it to the rejectmap.
  */
 static void
-check_quota_map(QuotaType type)
+refresh_quota_info_map(void)
 {
-	HeapTuple             tuple;
-	HASH_SEQ_STATUS       iter;
-	struct QuotaMapEntry *entry;
+	HeapTuple       tuple;
+	HASH_SEQ_STATUS iter;
+	QuotaInfoEntry *entry;
 
-	hash_seq_init(&iter, quota_info[type].map);
-
+	hash_seq_init(&iter, quota_info_map);
 	while ((entry = hash_seq_search(&iter)) != NULL)
 	{
-		bool removed = false;
-		for (int i = 0; i < quota_info[type].num_keys; ++i)
+		bool      removed = false;
+		QuotaType type    = entry->key.type;
+		for (int i = 0; i < quota_key_num[type]; ++i)
 		{
-			tuple = SearchSysCache1(quota_info[type].sys_cache[i], ObjectIdGetDatum(entry->keys[i]));
+			tuple = SearchSysCache1(quota_key_caches[type][i], ObjectIdGetDatum(entry->key.keys[i]));
 			if (!HeapTupleIsValid(tuple))
 			{
-				remove_quota(type, entry->keys, entry->segid);
+				hash_search(quota_info_map, &entry->key, HASH_REMOVE, NULL);
+				pg_atomic_fetch_sub_u32(diskquota_quota_info_entry_num, 1);
 				removed = true;
 				break;
 			}
@@ -355,15 +365,15 @@ check_quota_map(QuotaType type)
 		{
 			if (entry->size >= entry->limit)
 			{
-				Oid targetOid = entry->keys[0];
+				Oid targetOid = entry->key.keys[0];
 				/* when quota type is not NAMESPACE_TABLESPACE_QUOTA or ROLE_TABLESPACE_QUOTA, the tablespaceoid
 				 * is set to be InvalidOid, so when we get it from map, also set it to be InvalidOid
 				 */
 				Oid tablespaceoid = (type == NAMESPACE_TABLESPACE_QUOTA) || (type == ROLE_TABLESPACE_QUOTA)
-				                            ? entry->keys[1]
+				                            ? entry->key.keys[1]
 				                            : InvalidOid;
 
-				bool segmentExceeded = entry->segid == -1 ? false : true;
+				bool segmentExceeded = entry->key.segid == -1 ? false : true;
 				add_quota_to_rejectmap(type, targetOid, tablespaceoid, segmentExceeded);
 			}
 		}
@@ -379,17 +389,14 @@ transfer_table_for_quota(int64 totalsize, QuotaType type, Oid *old_keys, Oid *ne
 }
 
 static void
-clear_all_quota_maps(void)
+clean_all_quota_limit(void)
 {
-	for (QuotaType type = 0; type < NUM_QUOTA_TYPES; ++type)
+	HASH_SEQ_STATUS iter;
+	QuotaInfoEntry *entry;
+	hash_seq_init(&iter, quota_info_map);
+	while ((entry = hash_seq_search(&iter)) != NULL)
 	{
-		HASH_SEQ_STATUS iter = {0};
-		hash_seq_init(&iter, quota_info[type].map);
-		struct QuotaMapEntry *entry = NULL;
-		while ((entry = hash_seq_search(&iter)) != NULL)
-		{
-			entry->limit = -1;
-		}
+		entry->limit = -1;
 	}
 }
 
@@ -460,8 +467,9 @@ disk_quota_shmem_startup(void)
 	hash_ctl.keysize   = sizeof(Oid);
 	hash_ctl.entrysize = sizeof(struct MonitorDBEntryStruct);
 
-	monitored_dbid_cache = DiskquotaShmemInitHash("table oid cache which shoud tracking", MAX_NUM_MONITORED_DB,
-	                                              MAX_NUM_MONITORED_DB, &hash_ctl, HASH_ELEM, DISKQUOTA_OID_HASH);
+	monitored_dbid_cache =
+	        DiskquotaShmemInitHash("table oid cache which shoud tracking", diskquota_max_monitored_databases,
+	                               diskquota_max_monitored_databases, &hash_ctl, HASH_ELEM, DISKQUOTA_OID_HASH);
 	init_launcher_shmem();
 	LWLockRelease(AddinShmemInitLock);
 }
@@ -507,9 +515,9 @@ static Size
 diskquota_worker_shmem_size()
 {
 	Size size;
-	size = hash_estimate_size(MAX_NUM_TABLE_SIZE_ENTRIES / MAX_NUM_MONITORED_DB + 100, sizeof(TableSizeEntry));
+	size = hash_estimate_size(MAX_NUM_TABLE_SIZE_ENTRIES / diskquota_max_monitored_databases + 100,
+	                          sizeof(TableSizeEntry));
 	size = add_size(size, hash_estimate_size(MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, sizeof(LocalRejectMapEntry)));
-	size = add_size(size, hash_estimate_size(1024L, sizeof(struct QuotaMapEntry)) * NUM_QUOTA_TYPES);
 	return size;
 }
 
@@ -527,14 +535,16 @@ DiskQuotaShmemSize(void)
 	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(DiskQuotaRelationCacheEntry)));
 	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(DiskQuotaRelidCacheEntry)));
 	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(Oid)));
-	size = add_size(size, hash_estimate_size(MAX_NUM_MONITORED_DB,
+	size = add_size(size, hash_estimate_size(diskquota_max_monitored_databases,
 	                                         sizeof(struct MonitorDBEntryStruct))); // monitored_dbid_cache
 
 	if (IS_QUERY_DISPATCHER())
 	{
 		size = add_size(size, diskquota_launcher_shmem_size());
 		size = add_size(size, sizeof(pg_atomic_uint32));
-		size = add_size(size, diskquota_worker_shmem_size() * MAX_NUM_MONITORED_DB);
+		size = add_size(size, diskquota_worker_shmem_size() * diskquota_max_monitored_databases);
+		size = add_size(size, hash_estimate_size(MAX_QUOTA_MAP_ENTRIES, sizeof(QuotaInfoEntry)) *
+		                              diskquota_max_monitored_databases);
 	}
 
 	return size;
@@ -568,16 +578,14 @@ init_disk_quota_model(uint32 id)
 	        DiskquotaShmemInitHash(str.data, MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES,
 	                               &hash_ctl, HASH_ELEM, DISKQUOTA_TAG_HASH);
 
-	/* for quota_info */
+	/* for quota_info_map */
+	format_name("QuotaInfoMap", id, &str);
+	memset(&hash_ctl, 0, sizeof(hash_ctl));
+	hash_ctl.entrysize = sizeof(QuotaInfoEntry);
+	hash_ctl.keysize   = sizeof(QuotaInfoEntryKey);
+	quota_info_map     = DiskquotaShmemInitHash(str.data, INIT_QUOTA_MAP_ENTRIES, MAX_QUOTA_MAP_ENTRIES, &hash_ctl,
+	                                            HASH_ELEM, DISKQUOTA_TAG_HASH);
 
-	for (QuotaType type = 0; type < NUM_QUOTA_TYPES; ++type)
-	{
-		format_name(quota_info[type].map_name, id, &str);
-		memset(&hash_ctl, 0, sizeof(hash_ctl));
-		hash_ctl.entrysize   = sizeof(struct QuotaMapEntry);
-		hash_ctl.keysize     = sizeof(struct QuotaMapEntryKey);
-		quota_info[type].map = DiskquotaShmemInitHash(str.data, 1024L, 1024L, &hash_ctl, HASH_ELEM, DISKQUOTA_TAG_HASH);
-	}
 	pfree(str.data);
 }
 
@@ -596,10 +604,10 @@ init_disk_quota_model(uint32 id)
 void
 vacuum_disk_quota_model(uint32 id)
 {
-	HASH_SEQ_STATUS       iter;
-	TableSizeEntry       *tsentry = NULL;
-	LocalRejectMapEntry  *localrejectentry;
-	struct QuotaMapEntry *qentry;
+	HASH_SEQ_STATUS      iter;
+	TableSizeEntry      *tsentry = NULL;
+	LocalRejectMapEntry *localrejectentry;
+	QuotaInfoEntry      *qentry;
 
 	HASHCTL        hash_ctl;
 	StringInfoData str;
@@ -633,21 +641,20 @@ vacuum_disk_quota_model(uint32 id)
 		hash_search(local_disk_quota_reject_map, &localrejectentry->keyitem, HASH_REMOVE, NULL);
 	}
 
-	/* quota_info */
-
-	for (QuotaType type = 0; type < NUM_QUOTA_TYPES; ++type)
+	/* quota_info_map */
+	format_name("QuotaInfoMap", id, &str);
+	memset(&hash_ctl, 0, sizeof(hash_ctl));
+	hash_ctl.entrysize = sizeof(QuotaInfoEntry);
+	hash_ctl.keysize   = sizeof(QuotaInfoEntryKey);
+	quota_info_map     = DiskquotaShmemInitHash(str.data, INIT_QUOTA_MAP_ENTRIES, MAX_QUOTA_MAP_ENTRIES, &hash_ctl,
+	                                            HASH_ELEM, DISKQUOTA_TAG_HASH);
+	hash_seq_init(&iter, quota_info_map);
+	while ((qentry = hash_seq_search(&iter)) != NULL)
 	{
-		format_name(quota_info[type].map_name, id, &str);
-		memset(&hash_ctl, 0, sizeof(hash_ctl));
-		hash_ctl.entrysize   = sizeof(struct QuotaMapEntry);
-		hash_ctl.keysize     = sizeof(struct QuotaMapEntryKey);
-		quota_info[type].map = DiskquotaShmemInitHash(str.data, 1024L, 1024L, &hash_ctl, HASH_ELEM, DISKQUOTA_TAG_HASH);
-		hash_seq_init(&iter, quota_info[type].map);
-		while ((qentry = hash_seq_search(&iter)) != NULL)
-		{
-			hash_search(quota_info[type].map, &qentry->keys, HASH_REMOVE, NULL);
-		}
+		hash_search(quota_info_map, &qentry->key, HASH_REMOVE, NULL);
+		pg_atomic_fetch_sub_u32(diskquota_quota_info_entry_num, 1);
 	}
+
 	pfree(str.data);
 }
 
@@ -818,10 +825,8 @@ refresh_disk_quota_usage(bool is_init)
 		/* TODO: if we can skip the following steps when there is no active table */
 		/* recalculate the disk usage of table, schema and role */
 		calculate_table_disk_usage(is_init, local_active_table_stat_map);
-		for (QuotaType type = 0; type < NUM_QUOTA_TYPES; ++type)
-		{
-			check_quota_map(type);
-		}
+		/* refresh quota_info_map */
+		refresh_quota_info_map();
 		/* flush local table_size_map to user table table_size */
 		flush_to_table_size();
 		/* copy local reject map back to shared reject map */
@@ -1125,6 +1130,40 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 	}
 }
 
+static void
+delete_from_table_size_map(char *str)
+{
+	StringInfoData delete_statement;
+	int            ret;
+
+	initStringInfo(&delete_statement);
+	appendStringInfo(&delete_statement,
+	                 "WITH deleted_table AS ( VALUES %s ) "
+	                 "delete from diskquota.table_size "
+	                 "where (tableid, segid) in ( SELECT * FROM deleted_table );",
+	                 str);
+	ret = SPI_execute(delete_statement.data, false, 0);
+	if (ret != SPI_OK_DELETE)
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+		                errmsg("[diskquota] delete_from_table_size_map SPI_execute failed: error code %d", ret)));
+	pfree(delete_statement.data);
+}
+
+static void
+insert_into_table_size_map(char *str)
+{
+	StringInfoData insert_statement;
+	int            ret;
+
+	initStringInfo(&insert_statement);
+	appendStringInfo(&insert_statement, "insert into diskquota.table_size values %s;", str);
+	ret = SPI_execute(insert_statement.data, false, 0);
+	if (ret != SPI_OK_INSERT)
+		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+		                errmsg("[diskquota] insert_into_table_size_map SPI_execute failed: error code %d", ret)));
+	pfree(insert_statement.data);
+}
+
 /*
  * Flush the table_size_map to user table diskquota.table_size
  * To improve update performance, we first delete all the need_to_flush
@@ -1138,10 +1177,8 @@ flush_to_table_size(void)
 	TableSizeEntry *tsentry = NULL;
 	StringInfoData  delete_statement;
 	StringInfoData  insert_statement;
-	StringInfoData  deleted_table_expr;
-	bool            delete_statement_flag = false;
-	bool            insert_statement_flag = false;
-	int             ret;
+	int             delete_entries_num = 0;
+	int             insert_entries_num = 0;
 
 	/* TODO: Add flush_size_interval to avoid flushing size info in every loop */
 
@@ -1149,12 +1186,7 @@ flush_to_table_size(void)
 	bool old_optimizer = optimizer;
 	optimizer          = false;
 
-	initStringInfo(&deleted_table_expr);
-	appendStringInfo(&deleted_table_expr, "WITH deleted_table AS ( VALUES ");
-
 	initStringInfo(&insert_statement);
-	appendStringInfo(&insert_statement, "insert into diskquota.table_size values ");
-
 	initStringInfo(&delete_statement);
 
 	hash_seq_init(&iter, table_size_map);
@@ -1167,17 +1199,39 @@ flush_to_table_size(void)
 			/* delete dropped table from both table_size_map and table table_size */
 			if (!get_table_size_entry_flag(tsentry, TABLE_EXIST))
 			{
-				appendStringInfo(&deleted_table_expr, "(%u,%d), ", tsentry->key.reloid, i);
-				delete_statement_flag = true;
+				appendStringInfo(&delete_statement, "%s(%u,%d)", (delete_entries_num == 0) ? " " : ", ",
+				                 tsentry->key.reloid, i);
+				delete_entries_num++;
+				if (delete_entries_num > SQL_MAX_VALUES_NUMBER)
+				{
+					delete_from_table_size_map(delete_statement.data);
+					resetStringInfo(&delete_statement);
+					delete_entries_num = 0;
+				}
 			}
 			/* update the table size by delete+insert in table table_size */
 			else if (TableSizeEntryGetFlushFlag(tsentry, i))
 			{
-				appendStringInfo(&deleted_table_expr, "(%u,%d), ", tsentry->key.reloid, i);
-				appendStringInfo(&insert_statement, "(%u,%ld,%d), ", tsentry->key.reloid,
-				                 TableSizeEntryGetSize(tsentry, i), i);
-				delete_statement_flag = true;
-				insert_statement_flag = true;
+				appendStringInfo(&delete_statement, "%s(%u,%d)", (delete_entries_num == 0) ? " " : ", ",
+				                 tsentry->key.reloid, i);
+				appendStringInfo(&insert_statement, "%s(%u,%ld,%d)", (insert_entries_num == 0) ? " " : ", ",
+				                 tsentry->key.reloid, TableSizeEntryGetSize(tsentry, i), i);
+				delete_entries_num++;
+				insert_entries_num++;
+
+				if (delete_entries_num > SQL_MAX_VALUES_NUMBER)
+				{
+					delete_from_table_size_map(delete_statement.data);
+					resetStringInfo(&delete_statement);
+					delete_entries_num = 0;
+				}
+				if (insert_entries_num > SQL_MAX_VALUES_NUMBER)
+				{
+					insert_into_table_size_map(insert_statement.data);
+					resetStringInfo(&insert_statement);
+					insert_entries_num = 0;
+				}
+
 				TableSizeEntryResetFlushFlag(tsentry, i);
 			}
 		}
@@ -1187,36 +1241,14 @@ flush_to_table_size(void)
 			pg_atomic_fetch_sub_u32(diskquota_table_size_entry_num, 1);
 		}
 	}
-	truncateStringInfo(&deleted_table_expr, deleted_table_expr.len - strlen(", "));
-	truncateStringInfo(&insert_statement, insert_statement.len - strlen(", "));
-	appendStringInfo(&deleted_table_expr, ")");
-	appendStringInfo(&insert_statement, ";");
 
-	if (delete_statement_flag)
-	{
-		/* concatenate all the need_to_flush table to SQL string */
-		appendStringInfoString(&delete_statement, (const char *)deleted_table_expr.data);
-		appendStringInfoString(
-		        &delete_statement,
-		        "delete from diskquota.table_size where (tableid, segid) in ( SELECT * FROM deleted_table );");
-		ret = SPI_execute(delete_statement.data, false, 0);
-		if (ret != SPI_OK_DELETE)
-			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-			                errmsg("[diskquota] flush_to_table_size SPI_execute failed: error code %d", ret)));
-	}
-	if (insert_statement_flag)
-	{
-		ret = SPI_execute(insert_statement.data, false, 0);
-		if (ret != SPI_OK_INSERT)
-			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-			                errmsg("[diskquota] flush_to_table_size SPI_execute failed: error code %d", ret)));
-	}
+	if (delete_entries_num) delete_from_table_size_map(delete_statement.data);
+	if (insert_entries_num) insert_into_table_size_map(insert_statement.data);
 
 	optimizer = old_optimizer;
 
 	pfree(delete_statement.data);
 	pfree(insert_statement.data);
-	pfree(deleted_table_expr.data);
 }
 
 /*
@@ -1426,7 +1458,7 @@ do_load_quotas(void)
 	 * quota.config. A flag in shared memory could be used to detect the quota
 	 * config change.
 	 */
-	clear_all_quota_maps();
+	clean_all_quota_limit();
 
 	/* If a row exists, an update is needed. */
 	quota_config_map = pull_quota_config(NULL);
