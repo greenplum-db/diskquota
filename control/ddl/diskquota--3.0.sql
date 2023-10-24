@@ -5,19 +5,19 @@ CREATE SCHEMA diskquota;
 
 CREATE TABLE diskquota.quota_config(
   config jsonb
-);
+) WITH (appendonly=false);
 
 CREATE TABLE diskquota.table_size(
 	tableid oid,
 	size bigint,
 	segid smallint,
 	PRIMARY KEY(tableid, segid)
-) DISTRIBUTED BY (tableid, segid);
+) WITH (appendonly=false) DISTRIBUTED BY (tableid, segid);
 
 CREATE TABLE diskquota.state(
 	state int,
 	PRIMARY KEY(state)
-) DISTRIBUTED BY (state);
+) WITH (appendonly=false) DISTRIBUTED BY (state);
 
 -- diskquota.quota_config AND diskquota.target is dump-able, other table can be generate on fly
 SELECT pg_catalog.pg_extension_config_dump('diskquota.quota_config', '');
@@ -125,21 +125,6 @@ SELECT (
 ) AS dbsize;
 
 CREATE VIEW diskquota.rejectmap AS SELECT * FROM diskquota.show_rejectmap() AS BM;
-
--- view end
-
--- prepare to boot
-INSERT INTO diskquota.state SELECT (count(relname) < 3)::int FROM pg_class AS c, pg_namespace AS n WHERE c.oid > 16384 AND relnamespace = n.oid AND nspname != 'diskquota';
-
--- re-dispatch pause status to false. in case user pause-drop-recreate.
--- refer to see test case 'test_drop_after_pause'
-SELECT FROM diskquota.resume();
-
-
---- Starting the worker has to be the last step.
-CREATE FUNCTION diskquota.diskquota_start_worker() RETURNS void STRICT AS '$libdir/diskquota-3.0.so' LANGUAGE C;
-SELECT diskquota.diskquota_start_worker();
-DROP FUNCTION diskquota.diskquota_start_worker();
 
 -- quota config row type, contains all attributes in quota_config
 CREATE TYPE diskquota.quota_config_row AS (
@@ -321,3 +306,15 @@ FROM
 	JOIN pg_tablespace ON tablespace_oid = pg_tablespace.oid
 WHERE
 	quota_type = 4;  -- TABLESPACE_QUOTA
+
+-- view end
+
+-- re-dispatch pause status to false. in case user pause-drop-recreate.
+-- refer to see test case 'test_drop_after_pause'
+SELECT FROM diskquota.resume();
+
+
+--- Starting the worker has to be the last step.
+CREATE FUNCTION diskquota.diskquota_start_worker() RETURNS void STRICT AS '$libdir/diskquota-3.0.so' LANGUAGE C;
+SELECT diskquota.diskquota_start_worker();
+DROP FUNCTION diskquota.diskquota_start_worker();

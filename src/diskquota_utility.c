@@ -470,7 +470,7 @@ is_database_empty(void)
 
 	/* diskquota.quota_config has two aux tables whose namespace != 'diskquota' */
 	ret = SPI_execute(
-	        "SELECT (count(relname) < 3) "
+	        "INSERT INTO diskquota.state SELECT (count(relname) < 3)::int "
 	        "FROM "
 	        "  pg_class AS c, "
 	        "  pg_namespace AS n "
