@@ -38,8 +38,6 @@
 #define MAX_NUM_TABLE_SIZE_ENTRIES (diskquota_max_table_segments / SEGMENT_SIZE_ARRAY_LENGTH)
 /* length of segment size array in TableSizeEntry */
 #define SEGMENT_SIZE_ARRAY_LENGTH 100
-/* max number of keys in QuotaInfoEntryKey */
-#define MAX_NUM_KEYS_QUOTA_MAP 8
 /* init number of QuotaInfoEntry in quota_info_map */
 #define INIT_QUOTA_MAP_ENTRIES 128
 #define AVG_QUOTA_MAP_ENTRIES (diskquota_max_quota_probes / diskquota_max_monitored_databases)
@@ -74,44 +72,6 @@ extern int diskquota_worker_timeout;
 #define DiskquotaWaitLatch(latch, wakeEvents, timeout) WaitLatch(latch, wakeEvents, timeout, WAIT_EVENT_PG_SLEEP)
 #define DiskquotaGetRelstorage(classForm) (0)
 #endif /* GP_VERSION_NUM */
-
-typedef enum
-{
-	NAMESPACE_QUOTA = 0,
-	ROLE_QUOTA,
-	NAMESPACE_TABLESPACE_QUOTA,
-	ROLE_TABLESPACE_QUOTA,
-	/*
-	 * TABLESPACE_QUOTA
-	 * used in `quota_config` table,
-	 * when set_per_segment_quota("xx",1.0) is called
-	 * to set per segment quota to '1.0', the config
-	 * will be:
-	 * quotatype = 4 (TABLESPACE_QUOTA)
-	 * quotalimitMB = 0 (invalid quota confined)
-	 * segratio = 1.0
-	 */
-	TABLESPACE_QUOTA,
-
-	NUM_QUOTA_TYPES,
-} QuotaType;
-
-/*
- * table disk size and corresponding schema, owner and tablespace
- */
-typedef struct QuotaInfoEntryKey
-{
-	QuotaType type;
-	Oid       keys[MAX_NUM_KEYS_QUOTA_MAP];
-	int16     segid;
-} QuotaInfoEntryKey;
-
-typedef struct QuotaInfoEntry
-{
-	QuotaInfoEntryKey key;
-	int64             size;
-	int64             limit;
-} QuotaInfoEntry;
 
 typedef enum
 {
