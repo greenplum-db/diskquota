@@ -130,7 +130,7 @@ target_link_libraries(
   ${deps_INSTALL_DIR}/lib/libcjson.a)
 
 if (${GP_MAJOR_VERSION} STRGREATER_EQUAL "7")
-  TARGET_LINK_LIBRARIES(diskquota ${PG_LIB_DIR}/libpq.so)
+  TARGET_LINK_LIBRARIES(diskquota PRIVATE ${PG_LIB_DIR}/libpq.so)
 endif()
 
 # packing part, move to a separate file if this part is too large
