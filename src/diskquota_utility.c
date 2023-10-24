@@ -474,13 +474,15 @@ is_database_empty(void)
 	        "FROM "
 	        "  pg_class AS c, "
 	        "  pg_namespace AS n "
-	        "WHERE c.oid > 16384 and relnamespace = n.oid and nspname != 'diskquota'"
-	        " and relkind not in ('v', 'c', 'f')",
-	        true, 0);
-	if (ret != SPI_OK_SELECT)
+	        "WHERE c.oid > 16384 and relnamespace = n.oid and nspname != 'diskquota' "
+	        "and relkind not in ('v', 'c', 'f') "
+	        "returning state",
+	        false, 0);
+	if (ret != SPI_OK_INSERT_RETURNING)
 	{
 		int saved_errno = errno;
-		elog(ERROR, "cannot select pg_class and pg_namespace table, reason: %s.", strerror(saved_errno));
+		elog(ERROR, "cannot select pg_class and pg_namespace table and update diskquota.state, reason: %s.",
+		     strerror(saved_errno));
 	}
 
 	tupdesc = SPI_tuptable->tupdesc;
