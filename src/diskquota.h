@@ -54,7 +54,6 @@ typedef enum
 /* max number of monitored database with diskquota enabled */
 #define LAUNCHER_SCHEMA "diskquota_utility"
 #define EXTENSION_SCHEMA "diskquota"
-extern int diskquota_worker_timeout;
 
 #if GP_VERSION_NUM < 70000
 #define TableIsHeap(relstorage, relam) ((bool)(relstorage == RELSTORAGE_HEAP))
@@ -243,9 +242,6 @@ extern bool quota_check_common(Oid reloid, RelFileNode *relfilenode);
 extern void init_disk_quota_hook(void);
 
 extern Datum diskquota_fetch_table_stat(PG_FUNCTION_ARGS);
-extern int   diskquota_naptime;
-extern int   diskquota_max_active_tables;
-extern bool  diskquota_hardlimit;
 
 extern int      SEGCOUNT;
 extern int      worker_spi_get_extension_version(int *major, int *minor);

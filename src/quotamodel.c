@@ -17,6 +17,7 @@
 #include "diskquota.h"
 #include "gp_activetable.h"
 #include "relation_cache.h"
+#include "diskquota_guc.h"
 
 #include "postgres.h"
 
@@ -85,10 +86,7 @@ typedef struct GlobalRejectMapEntry GlobalRejectMapEntry;
 typedef struct LocalRejectMapEntry  LocalRejectMapEntry;
 
 int                      SEGCOUNT = 0;
-extern int               diskquota_max_table_segments;
 extern pg_atomic_uint32 *diskquota_table_size_entry_num;
-extern int               diskquota_max_monitored_databases;
-extern int               diskquota_max_quota_probes;
 extern pg_atomic_uint32 *diskquota_quota_info_entry_num;
 
 /*

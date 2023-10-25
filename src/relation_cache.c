@@ -28,6 +28,7 @@
 #include "funcapi.h"
 #include "diskquota.h"
 #include "relation_cache.h"
+#include "diskquota_guc.h"
 
 HTAB *relation_cache = NULL;
 HTAB *relid_cache    = NULL;
