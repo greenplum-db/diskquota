@@ -41,6 +41,7 @@
 #include "gp_activetable.h"
 #include "diskquota.h"
 #include "relation_cache.h"
+#include "diskquota_guc.h"
 
 PG_FUNCTION_INFO_V1(diskquota_fetch_table_stat);
 

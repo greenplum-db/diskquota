@@ -8,6 +8,8 @@
 #include "storage/proc.h"
 #include "utils/builtins.h"
 
+#include "diskquota_guc.h"
+
 PG_FUNCTION_INFO_V1(show_worker_epoch);
 PG_FUNCTION_INFO_V1(db_status);
 PG_FUNCTION_INFO_V1(wait_for_worker_new_epoch);
