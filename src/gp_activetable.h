@@ -17,30 +17,32 @@
 #include "utils/hsearch.h"
 
 /* Cache to detect the active table list */
-typedef struct DiskQuotaActiveTableFileEntry
+typedef struct ActiveTableFileEntry
 {
 	Oid dbid;
 	Oid relfilenode;
 	Oid tablespaceoid;
-} DiskQuotaActiveTableFileEntry;
+} ActiveTableFileEntry;
 
-typedef struct TableEntryKey
+typedef struct ActiveTableEntryKey
 {
 	Oid reloid;
 	int segid;
-} TableEntryKey;
+} ActiveTableEntryKey;
 
-typedef struct DiskQuotaActiveTableEntry
+typedef struct ActiveTableEntry
 {
 	Oid  reloid;
 	int  segid;
 	Size tablesize;
-} DiskQuotaActiveTableEntry;
+} ActiveTableEntry;
 
+extern Size  active_table_shmem_size(void);
 extern HTAB *gp_fetch_active_tables(bool force);
 extern void  init_active_table_hook(void);
 extern void  init_shm_worker_active_tables(void);
-extern void  init_lock_active_tables(void);
+extern HTAB *get_active_tables_stats(ArrayType *array);
+extern HTAB *get_active_tables_oid(void);
 
 extern HTAB *active_tables_map;
 extern HTAB *monitored_dbid_cache;

@@ -14,12 +14,6 @@
  *
  * -------------------------------------------------------------------------
  */
-#include "diskquota.h"
-#include "gp_activetable.h"
-#include "relation_cache.h"
-#include "diskquota_guc.h"
-#include "table_size.h"
-
 #include "postgres.h"
 
 #include "access/xact.h"
@@ -38,13 +32,18 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "libpq-fe.h"
-
 #include "cdb/cdbvars.h"
 #include "cdb/cdbdisp_query.h"
 #include "cdb/cdbdispatchresult.h"
 #include "cdb/cdbutil.h"
 
 #include <math.h>
+
+#include "diskquota.h"
+#include "gp_activetable.h"
+#include "relation_cache.h"
+#include "diskquota_guc.h"
+#include "table_size.h"
 #include "quota_config.h"
 
 /* cluster level max size of rejectmap */
@@ -454,11 +453,10 @@ DiskQuotaShmemSize(void)
 {
 	Size size;
 	size = sizeof(ExtensionDDLMessage);
+	size = add_size(size, active_table_shmem_size());
 	size = add_size(size, hash_estimate_size(MAX_DISK_QUOTA_REJECT_ENTRIES, sizeof(GlobalRejectMapEntry)));
-	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(DiskQuotaActiveTableEntry)));
 	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(DiskQuotaRelationCacheEntry)));
 	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(DiskQuotaRelidCacheEntry)));
-	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(Oid)));
 	size = add_size(size, hash_estimate_size(diskquota_max_monitored_databases,
 	                                         sizeof(struct MonitorDBEntryStruct))); // monitored_dbid_cache
 
@@ -810,17 +808,17 @@ merge_uncommitted_table_to_oidlist(List *oidlist)
 static void
 calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 {
-	bool                       table_size_map_found;
-	bool                       active_tbl_found;
-	int64                      updated_total_size;
-	TableSizeEntry            *tsentry = NULL;
-	Oid                        relOid;
-	HASH_SEQ_STATUS            iter;
-	DiskQuotaActiveTableEntry *active_table_entry;
-	TableSizeEntryKey          key;
-	TableEntryKey              active_table_key;
-	List                      *oidlist;
-	ListCell                  *l;
+	bool                table_size_map_found;
+	bool                active_tbl_found;
+	int64               updated_total_size;
+	TableSizeEntry     *tsentry = NULL;
+	Oid                 relOid;
+	HASH_SEQ_STATUS     iter;
+	ActiveTableEntry   *active_table_entry;
+	TableSizeEntryKey   key;
+	ActiveTableEntryKey active_table_key;
+	List               *oidlist;
+	ListCell           *l;
 
 	/*
 	 * unset is_exist flag for tsentry in table_size_map this is used to
@@ -911,8 +909,8 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 			if (tsentry) set_table_size_entry_flag(tsentry, TABLE_EXIST);
 			active_table_key.reloid = relOid;
 			active_table_key.segid  = cur_segid;
-			active_table_entry      = (DiskQuotaActiveTableEntry *)hash_search(
-			             local_active_table_stat_map, &active_table_key, HASH_FIND, &active_tbl_found);
+			active_table_entry      = (ActiveTableEntry *)hash_search(local_active_table_stat_map, &active_table_key,
+			                                                          HASH_FIND, &active_tbl_found);
 
 			/* skip to recalculate the tables which are not in active list */
 			if (active_tbl_found)
@@ -1090,14 +1088,14 @@ flush_local_reject_map(void)
 static void
 dispatch_rejectmap(HTAB *local_active_table_stat_map)
 {
-	HASH_SEQ_STATUS            hash_seq;
-	GlobalRejectMapEntry      *rejectmap_entry;
-	DiskQuotaActiveTableEntry *active_table_entry;
-	int                        num_entries, count = 0;
-	CdbPgResults               cdb_pgresults = {NULL, 0};
-	StringInfoData             rows;
-	StringInfoData             active_oids;
-	StringInfoData             sql;
+	HASH_SEQ_STATUS       hash_seq;
+	GlobalRejectMapEntry *rejectmap_entry;
+	ActiveTableEntry     *active_table_entry;
+	int                   num_entries, count = 0;
+	CdbPgResults          cdb_pgresults = {NULL, 0};
+	StringInfoData        rows;
+	StringInfoData        active_oids;
+	StringInfoData        sql;
 
 	initStringInfo(&rows);
 	initStringInfo(&active_oids);
