@@ -32,12 +32,6 @@
 
 #include <signal.h>
 
-/* init number of TableSizeEntry in table_size_map */
-#define INIT_NUM_TABLE_SIZE_ENTRIES 128
-/* max number of TableSizeEntry in table_size_map */
-#define MAX_NUM_TABLE_SIZE_ENTRIES (diskquota_max_table_segments / SEGMENT_SIZE_ARRAY_LENGTH)
-/* length of segment size array in TableSizeEntry */
-#define SEGMENT_SIZE_ARRAY_LENGTH 100
 /* init number of QuotaInfoEntry in quota_info_map */
 #define INIT_QUOTA_MAP_ENTRIES 128
 #define AVG_QUOTA_MAP_ENTRIES (diskquota_max_quota_probes / diskquota_max_monitored_databases)
