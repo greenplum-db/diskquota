@@ -63,6 +63,7 @@ init_local_reject_map(uint32 id)
 	local_disk_quota_reject_map =
 	        DiskquotaShmemInitHash(str.data, MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES,
 	                               &hash_ctl, HASH_ELEM, DISKQUOTA_TAG_HASH);
+	pfree(str.data);
 }
 
 void
@@ -87,6 +88,7 @@ vacuum_local_reject_map(uint32 id)
 	{
 		hash_search(local_disk_quota_reject_map, &localrejectentry->keyitem, HASH_REMOVE, NULL);
 	}
+	pfree(str.data);
 }
 
 Size
