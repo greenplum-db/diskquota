@@ -44,6 +44,7 @@ init_table_size_map(uint32 id)
 	hash_ctl.entrysize = sizeof(TableSizeEntry);
 	table_size_map     = DiskquotaShmemInitHash(str.data, INIT_NUM_TABLE_SIZE_ENTRIES, MAX_NUM_TABLE_SIZE_ENTRIES,
 	                                            &hash_ctl, HASH_ELEM, DISKQUOTA_TAG_HASH);
+	pfree(str.data);
 }
 
 void
@@ -66,6 +67,7 @@ vacuum_table_size_map(uint32 id)
 	{
 		hash_search(table_size_map, &tsentry->key, HASH_REMOVE, NULL);
 	}
+	pfree(str.data);
 }
 
 bool

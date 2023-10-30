@@ -64,6 +64,7 @@ init_quota_info_map(uint32 id)
 	hash_ctl.keysize   = sizeof(QuotaInfoEntryKey);
 	quota_info_map     = DiskquotaShmemInitHash(str.data, INIT_QUOTA_MAP_ENTRIES, MAX_QUOTA_MAP_ENTRIES, &hash_ctl,
 	                                            HASH_ELEM, DISKQUOTA_TAG_HASH);
+	pfree(str.data);
 }
 
 void
@@ -86,6 +87,7 @@ vacuum_quota_info_map(uint32 id)
 	{
 		hash_search(quota_info_map, &qentry->key, HASH_REMOVE, NULL);
 	}
+	pfree(str.data);
 }
 
 /* add a new entry quota or update the old entry quota */
