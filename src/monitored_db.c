@@ -1,4 +1,3 @@
-#include "diskquota.h"
 #include "postgres.h"
 
 #include "funcapi.h"
@@ -7,7 +6,9 @@
 #include "commands/dbcommands.h"
 #include "storage/proc.h"
 #include "utils/builtins.h"
+#include "executor/spi.h"
 
+#include "diskquota.h"
 #include "diskquota_guc.h"
 
 PG_FUNCTION_INFO_V1(show_worker_epoch);
@@ -281,6 +282,26 @@ update_monitor_db(Oid dbid, FetchTableStatType action)
 		}
 	}
 	LWLockRelease(diskquota_locks.monitored_dbid_cache_lock);
+}
+
+void
+update_monitor_db_mpp(Oid dbid, FetchTableStatType action, const char *schema)
+{
+	StringInfoData sql_command;
+	initStringInfo(&sql_command);
+	appendStringInfo(&sql_command,
+	                 "SELECT %s.diskquota_fetch_table_stat(%d, '{%d}'::oid[]) FROM gp_dist_random('gp_id')", schema,
+	                 action, dbid);
+	/* Add current database to the monitored db cache on all segments */
+	int ret = SPI_execute(sql_command.data, true, 0);
+	pfree(sql_command.data);
+
+	ereportif(ret != SPI_OK_SELECT, ERROR,
+	          (errcode(ERRCODE_INTERNAL_ERROR),
+	           errmsg("[diskquota] check diskquota state SPI_execute failed: error code %d", ret)));
+
+	/* Add current database to the monitored db cache on coordinator */
+	update_monitor_db(dbid, action);
 }
 
 void

@@ -754,23 +754,3 @@ quota_check_common(Oid reloid, RelFileNode *relfilenode)
 
 	return true;
 }
-
-void
-update_monitor_db_mpp(Oid dbid, FetchTableStatType action, const char *schema)
-{
-	StringInfoData sql_command;
-	initStringInfo(&sql_command);
-	appendStringInfo(&sql_command,
-	                 "SELECT %s.diskquota_fetch_table_stat(%d, '{%d}'::oid[]) FROM gp_dist_random('gp_id')", schema,
-	                 action, dbid);
-	/* Add current database to the monitored db cache on all segments */
-	int ret = SPI_execute(sql_command.data, true, 0);
-	pfree(sql_command.data);
-
-	ereportif(ret != SPI_OK_SELECT, ERROR,
-	          (errcode(ERRCODE_INTERNAL_ERROR),
-	           errmsg("[diskquota] check diskquota state SPI_execute failed: error code %d", ret)));
-
-	/* Add current database to the monitored db cache on coordinator */
-	update_monitor_db(dbid, action);
-}
