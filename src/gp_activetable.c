@@ -42,6 +42,7 @@
 #include "diskquota.h"
 #include "relation_cache.h"
 #include "diskquota_guc.h"
+#include "rejectmap.h"
 
 HTAB *active_tables_map = NULL; // Set<ActiveTableFileEntry>
 
