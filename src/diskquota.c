@@ -80,9 +80,6 @@ static DiskQuotaWorkerEntry *volatile MyWorkerInfo = NULL;
 // how many database diskquota are monitoring on
 static int num_db = 0;
 
-/* how many QuotaInfoEntry are maintained in all the quota_info_map in shared memory*/
-pg_atomic_uint32 *diskquota_quota_info_entry_num;
-
 static DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
 
 #define MIN_SLEEPTIME 100         /* milliseconds */
@@ -1754,11 +1751,6 @@ init_launcher_shmem()
 			DiskquotaLauncherShmem->dbArray[i].workerId = INVALID_WORKER_ID;
 		}
 	}
-
-	/* init QuotaInfoEntry counter */
-	diskquota_quota_info_entry_num =
-	        ShmemInitStruct("diskquota QuotaInfoEntry counter", sizeof(pg_atomic_uint32), &found);
-	if (!found) pg_atomic_init_u32(diskquota_quota_info_entry_num, 0);
 }
 
 /*

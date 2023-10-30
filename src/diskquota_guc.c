@@ -16,6 +16,7 @@
 #include "diskquota_guc.h"
 #include "diskquota.h"
 #include "table_size.h"
+#include "quota.h"
 
 #include "utils/guc.h"
 #include "limits.h"

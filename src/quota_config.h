@@ -56,23 +56,6 @@ typedef enum
 	NUM_QUOTA_TYPES,
 } QuotaType;
 
-/*
- * table disk size and corresponding schema, owner and tablespace
- */
-typedef struct QuotaInfoEntryKey
-{
-	QuotaType type;
-	Oid       keys[MAX_QUOTA_KEY_NUM];
-	int16     segid;
-} QuotaInfoEntryKey;
-
-typedef struct QuotaInfoEntry
-{
-	QuotaInfoEntryKey key;
-	int64             size;
-	int64             limit;
-} QuotaInfoEntry;
-
 typedef struct QuotaConfig
 {
 	QuotaType quota_type;
