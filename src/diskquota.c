@@ -15,10 +15,6 @@
  *
  * -------------------------------------------------------------------------
  */
-#include "diskquota.h"
-#include "gp_activetable.h"
-#include "diskquota_guc.h"
-
 #include "postgres.h"
 
 #include "funcapi.h"
@@ -45,6 +41,10 @@
 #include "utils/timestamp.h"
 #include "utils/formatting.h"
 #include "tcop/pquery.h"
+
+#include "diskquota.h"
+#include "gp_activetable.h"
+#include "diskquota_guc.h"
 
 PG_MODULE_MAGIC;
 

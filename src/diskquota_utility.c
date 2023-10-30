@@ -47,6 +47,7 @@
 #include "utils/fmgroids.h"
 #include "utils/formatting.h"
 #include "utils/numeric.h"
+#include "utils/lsyscache.h"
 #include "libpq-fe.h"
 #include "funcapi.h"
 
@@ -65,6 +66,7 @@ PG_FUNCTION_INFO_V1(diskquota_pause);
 PG_FUNCTION_INFO_V1(diskquota_resume);
 PG_FUNCTION_INFO_V1(relation_size_local);
 PG_FUNCTION_INFO_V1(pull_all_table_size);
+PG_FUNCTION_INFO_V1(diskquota_fetch_table_stat);
 
 /* timeout count to wait response from launcher process, in 1/10 sec */
 #define WAIT_TIME_COUNT 1200
@@ -82,6 +84,7 @@ PG_FUNCTION_INFO_V1(pull_all_table_size);
 
 static bool is_database_empty(void);
 static void ddl_err_code_to_err_message(MessageResult code, const char **err_msg, const char **hint_msg);
+static Oid  get_dbid(ArrayType *array);
 
 List *get_rel_oid_list(void);
 
@@ -185,20 +188,20 @@ calculate_all_table_size()
 #else
 	TableScanDesc relScan;
 #endif /* GP_VERSION_NUM */
-	Oid                        relid;
-	Oid                        prelid;
-	Size                       tablesize;
-	RelFileNodeBackend         rnode;
-	TableEntryKey              keyitem;
-	HTAB                      *local_table_size_map;
-	HASHCTL                    hashctl;
-	DiskQuotaActiveTableEntry *entry;
-	bool                       found;
-	char                       relstorage;
+	Oid                 relid;
+	Oid                 prelid;
+	Size                tablesize;
+	RelFileNodeBackend  rnode;
+	ActiveTableEntryKey keyitem;
+	HTAB               *local_table_size_map;
+	HASHCTL             hashctl;
+	ActiveTableEntry   *entry;
+	bool                found;
+	char                relstorage;
 
 	memset(&hashctl, 0, sizeof(hashctl));
-	hashctl.keysize   = sizeof(TableEntryKey);
-	hashctl.entrysize = sizeof(DiskQuotaActiveTableEntry);
+	hashctl.keysize   = sizeof(ActiveTableEntryKey);
+	hashctl.entrysize = sizeof(ActiveTableEntry);
 	hashctl.hcxt      = CurrentMemoryContext;
 
 	local_table_size_map =
@@ -260,8 +263,8 @@ calculate_all_table_size()
 Datum
 pull_all_table_size(PG_FUNCTION_ARGS)
 {
-	DiskQuotaActiveTableEntry *entry;
-	FuncCallContext           *funcctx;
+	ActiveTableEntry *entry;
+	FuncCallContext  *funcctx;
 	struct PullAllTableSizeCtx
 	{
 		HASH_SEQ_STATUS iter;
@@ -979,4 +982,188 @@ DiskquotaShmemInitHash(const char           *name,       /* table string name fo
 #else
 	return ShmemInitHash(name, init_size, max_size, infoP, hash_flags | HASH_BLOBS);
 #endif /* GP_VERSION_NUM */
+}
+
+static Oid
+get_dbid(ArrayType *array)
+{
+	Assert(ARR_ELEMTYPE(array) == OIDOID);
+	char *ptr;
+	bool  typbyval;
+	int16 typlen;
+	char  typalign;
+	Oid   dbid;
+
+	get_typlenbyvalalign(ARR_ELEMTYPE(array), &typlen, &typbyval, &typalign);
+	ptr  = ARR_DATA_PTR(array);
+	dbid = DatumGetObjectId(fetch_att(ptr, typbyval, typlen));
+	return dbid;
+}
+
+/*
+ * Function to get the table size from each segments
+ * There are 4 modes:
+ *
+ * - FETCH_ACTIVE_OID: gather active table oid from all the segments, since
+ * table may only be modified on a subset of the segments, we need to firstly
+ * gather the active table oid list from all the segments.
+ *
+ * - FETCH_ACTIVE_SIZE: calculate the active table size based on the active
+ * table oid list.
+ *
+ * - ADD_DB_TO_MONITOR: add MyDatabaseId to the monitored db cache so that
+ * active tables in the current database will be recorded. This is used each
+ * time a worker starts.
+ *
+ * - REMOVE_DB_FROM_BEING_MONITORED: remove MyDatabaseId from the monitored
+ * db cache so that active tables in the current database will be recorded.
+ * This is used when DROP EXTENSION.
+ */
+Datum
+diskquota_fetch_table_stat(PG_FUNCTION_ARGS)
+{
+	/* The results set cache for SRF call*/
+	typedef struct DiskQuotaSetOFCache
+	{
+		HTAB           *result;
+		HASH_SEQ_STATUS pos;
+	} DiskQuotaSetOFCache;
+
+	FuncCallContext *funcctx;
+	int32            mode = PG_GETARG_INT32(0);
+	AttInMetadata   *attinmeta;
+	bool             isFirstCall = true;
+	Oid              dbid;
+
+	HTAB                *localCacheTable = NULL;
+	DiskQuotaSetOFCache *cache           = NULL;
+	ActiveTableEntry    *results_entry   = NULL;
+
+#ifdef FAULT_INJECTOR
+	if (SIMPLE_FAULT_INJECTOR("ereport_warning_from_segment") == FaultInjectorTypeSkip)
+	{
+		ereport(WARNING, (errmsg("[Fault Injector] This is a warning reported from segment")));
+	}
+#endif
+
+	/* Init the container list in the first call and get the results back */
+	if (SRF_IS_FIRSTCALL())
+	{
+		MemoryContext oldcontext;
+		TupleDesc     tupdesc;
+		int           ret_code = SPI_connect();
+		if (ret_code != SPI_OK_CONNECT)
+		{
+			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
+			                errmsg("unable to connect to execute internal query. return code: %d.", ret_code)));
+		}
+		SPI_finish();
+
+		/* create a function context for cross-call persistence */
+		funcctx = SRF_FIRSTCALL_INIT();
+
+		/* switch to memory context appropriate for multiple function calls */
+		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+
+		if (Gp_role == GP_ROLE_DISPATCH || Gp_role == GP_ROLE_UTILITY)
+		{
+			ereport(ERROR, (errmsg("This function must not be called on master or by user")));
+		}
+
+		switch (mode)
+		{
+			case FETCH_ACTIVE_OID:
+				localCacheTable = get_active_tables_oid();
+				break;
+			case FETCH_ACTIVE_SIZE:
+				localCacheTable = get_active_tables_stats(PG_GETARG_ARRAYTYPE_P(1));
+				break;
+			/*TODO: add another UDF to update the monitored_db_cache */
+			case ADD_DB_TO_MONITOR:
+				dbid = get_dbid(PG_GETARG_ARRAYTYPE_P(1));
+				update_monitor_db(dbid, ADD_DB_TO_MONITOR);
+				PG_RETURN_NULL();
+			case REMOVE_DB_FROM_BEING_MONITORED:
+				dbid = get_dbid(PG_GETARG_ARRAYTYPE_P(1));
+				update_monitor_db(dbid, REMOVE_DB_FROM_BEING_MONITORED);
+				PG_RETURN_NULL();
+			case PAUSE_DB_TO_MONITOR:
+				dbid = get_dbid(PG_GETARG_ARRAYTYPE_P(1));
+				update_monitor_db(dbid, PAUSE_DB_TO_MONITOR);
+				PG_RETURN_NULL();
+			case RESUME_DB_TO_MONITOR:
+				dbid = get_dbid(PG_GETARG_ARRAYTYPE_P(1));
+				update_monitor_db(dbid, RESUME_DB_TO_MONITOR);
+				PG_RETURN_NULL();
+			default:
+				ereport(ERROR, (errmsg("Unused mode number %d, transaction will be aborted", mode)));
+				break;
+		}
+
+		/*
+		 * total number of active tables to be returned, each tuple contains
+		 * one active table stat
+		 */
+		funcctx->max_calls = localCacheTable ? (uint32)hash_get_num_entries(localCacheTable) : 0;
+
+		/*
+		 * prepare attribute metadata for next calls that generate the tuple
+		 */
+		tupdesc = DiskquotaCreateTemplateTupleDesc(3);
+		TupleDescInitEntry(tupdesc, (AttrNumber)1, "TABLE_OID", OIDOID, -1, 0);
+		TupleDescInitEntry(tupdesc, (AttrNumber)2, "TABLE_SIZE", INT8OID, -1, 0);
+		TupleDescInitEntry(tupdesc, (AttrNumber)3, "GP_SEGMENT_ID", INT2OID, -1, 0);
+
+		attinmeta          = TupleDescGetAttInMetadata(tupdesc);
+		funcctx->attinmeta = attinmeta;
+
+		/* Prepare SetOf results HATB */
+		cache         = (DiskQuotaSetOFCache *)palloc(sizeof(DiskQuotaSetOFCache));
+		cache->result = localCacheTable;
+		hash_seq_init(&(cache->pos), localCacheTable);
+
+		MemoryContextSwitchTo(oldcontext);
+	}
+	else
+	{
+		isFirstCall = false;
+	}
+
+	funcctx = SRF_PERCALL_SETUP();
+
+	if (isFirstCall)
+	{
+		funcctx->user_fctx = (void *)cache;
+	}
+	else
+	{
+		cache = (DiskQuotaSetOFCache *)funcctx->user_fctx;
+	}
+
+	/* return the results back to SPI caller */
+	while ((results_entry = (ActiveTableEntry *)hash_seq_search(&(cache->pos))) != NULL)
+	{
+		Datum     result;
+		Datum     values[3];
+		bool      nulls[3];
+		HeapTuple tuple;
+
+		memset(values, 0, sizeof(values));
+		memset(nulls, false, sizeof(nulls));
+
+		values[0] = ObjectIdGetDatum(results_entry->reloid);
+		values[1] = Int64GetDatum(results_entry->tablesize);
+		values[2] = Int16GetDatum(results_entry->segid);
+
+		tuple = heap_form_tuple(funcctx->attinmeta->tupdesc, values, nulls);
+
+		result = HeapTupleGetDatum(tuple);
+
+		SRF_RETURN_NEXT(funcctx, result);
+	}
+
+	/* finished, do the clear staff */
+	hash_destroy(cache->result);
+	pfree(cache);
+	SRF_RETURN_DONE(funcctx);
 }

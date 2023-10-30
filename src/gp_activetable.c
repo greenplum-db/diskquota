@@ -43,16 +43,7 @@
 #include "relation_cache.h"
 #include "diskquota_guc.h"
 
-PG_FUNCTION_INFO_V1(diskquota_fetch_table_stat);
-
-/* The results set cache for SRF call*/
-typedef struct DiskQuotaSetOFCache
-{
-	HTAB           *result;
-	HASH_SEQ_STATUS pos;
-} DiskQuotaSetOFCache;
-
-HTAB *active_tables_map = NULL; // Set<DiskQuotaActiveTableFileEntry>
+HTAB *active_tables_map = NULL; // Set<ActiveTableFileEntry>
 
 /*
  * monitored_dbid_cache is a allow list for diskquota
@@ -76,8 +67,6 @@ static void active_table_hook_smgrtruncate(RelFileNodeBackend rnode);
 static void active_table_hook_smgrunlink(RelFileNodeBackend rnode);
 static void object_access_hook_QuotaStmt(ObjectAccessType access, Oid classId, Oid objectId, int subId, void *arg);
 
-static HTAB          *get_active_tables_stats(ArrayType *array);
-static HTAB          *get_active_tables_oid(void);
 static HTAB          *pull_active_list_from_seg(void);
 static void           pull_active_table_size_from_seg(HTAB *local_table_stats_map, char *active_oid_array);
 static StringInfoData convert_map_to_string(HTAB *active_list);
@@ -86,12 +75,6 @@ static void           report_active_table_helper(const RelFileNodeBackend *relFi
 static void           remove_from_active_table_map(const RelFileNodeBackend *relFileNode);
 static void           report_relation_cache_helper(Oid relid);
 static void           report_altered_reloid(Oid reloid);
-static Oid            get_dbid(ArrayType *array);
-
-void  init_active_table_hook(void);
-void  init_shm_worker_active_tables(void);
-void  init_lock_active_tables(void);
-HTAB *gp_fetch_active_tables(bool is_init);
 
 /*
  * Init active_tables_map shared memory
@@ -102,8 +85,8 @@ init_shm_worker_active_tables(void)
 	HASHCTL ctl;
 
 	memset(&ctl, 0, sizeof(ctl));
-	ctl.keysize       = sizeof(DiskQuotaActiveTableFileEntry);
-	ctl.entrysize     = sizeof(DiskQuotaActiveTableFileEntry);
+	ctl.keysize       = sizeof(ActiveTableFileEntry);
+	ctl.entrysize     = sizeof(ActiveTableFileEntry);
 	active_tables_map = DiskquotaShmemInitHash("active_tables", diskquota_max_active_tables,
 	                                           diskquota_max_active_tables, &ctl, HASH_ELEM, DISKQUOTA_TAG_HASH);
 
@@ -112,6 +95,16 @@ init_shm_worker_active_tables(void)
 	ctl.entrysize        = sizeof(Oid);
 	altered_reloid_cache = DiskquotaShmemInitHash("altered_reloid_cache", diskquota_max_active_tables,
 	                                              diskquota_max_active_tables, &ctl, HASH_ELEM, DISKQUOTA_OID_HASH);
+}
+
+Size
+active_table_shmem_size(void)
+{
+	Size size = 0;
+
+	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(ActiveTableEntry)));
+	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(Oid)));
+	return size;
 }
 
 /*
@@ -290,10 +283,10 @@ report_relation_cache_helper(Oid relid)
 static void
 report_active_table_helper(const RelFileNodeBackend *relFileNode)
 {
-	DiskQuotaActiveTableFileEntry *entry;
-	DiskQuotaActiveTableFileEntry  item;
-	bool                           found = false;
-	Oid                            dbid  = relFileNode->node.dbNode;
+	ActiveTableFileEntry *entry;
+	ActiveTableFileEntry  item;
+	bool                  found = false;
+	Oid                   dbid  = relFileNode->node.dbNode;
 
 	/* We do not collect the active table in mirror segments  */
 	if (IsRoleMirror())
@@ -313,7 +306,7 @@ report_active_table_helper(const RelFileNodeBackend *relFileNode)
 	}
 	found = false;
 
-	MemSet(&item, 0, sizeof(DiskQuotaActiveTableFileEntry));
+	MemSet(&item, 0, sizeof(ActiveTableFileEntry));
 	item.dbid          = relFileNode->node.dbNode;
 	item.relfilenode   = relFileNode->node.relNode;
 	item.tablespaceoid = relFileNode->node.spcNode;
@@ -339,7 +332,7 @@ report_active_table_helper(const RelFileNodeBackend *relFileNode)
 static void
 remove_from_active_table_map(const RelFileNodeBackend *relFileNode)
 {
-	DiskQuotaActiveTableFileEntry item = {0};
+	ActiveTableFileEntry item = {0};
 
 	item.dbid          = relFileNode->node.dbNode;
 	item.relfilenode   = relFileNode->node.relNode;
@@ -369,8 +362,8 @@ gp_fetch_active_tables(bool is_init)
 	Assert(Gp_role == GP_ROLE_DISPATCH);
 
 	memset(&ctl, 0, sizeof(ctl));
-	ctl.keysize   = sizeof(TableEntryKey);
-	ctl.entrysize = sizeof(DiskQuotaActiveTableEntry);
+	ctl.keysize   = sizeof(ActiveTableEntryKey);
+	ctl.entrysize = sizeof(ActiveTableEntry);
 	ctl.hcxt      = CurrentMemoryContext;
 
 	local_table_stats_map = diskquota_hash_create("local active table map with relfilenode info", 1024, &ctl,
@@ -399,206 +392,29 @@ gp_fetch_active_tables(bool is_init)
 }
 
 /*
- * Function to get the table size from each segments
- * There are 4 modes:
- *
- * - FETCH_ACTIVE_OID: gather active table oid from all the segments, since
- * table may only be modified on a subset of the segments, we need to firstly
- * gather the active table oid list from all the segments.
- *
- * - FETCH_ACTIVE_SIZE: calculate the active table size based on the active
- * table oid list.
- *
- * - ADD_DB_TO_MONITOR: add MyDatabaseId to the monitored db cache so that
- * active tables in the current database will be recorded. This is used each
- * time a worker starts.
- *
- * - REMOVE_DB_FROM_BEING_MONITORED: remove MyDatabaseId from the monitored
- * db cache so that active tables in the current database will be recorded.
- * This is used when DROP EXTENSION.
- */
-Datum
-diskquota_fetch_table_stat(PG_FUNCTION_ARGS)
-{
-	FuncCallContext *funcctx;
-	int32            mode = PG_GETARG_INT32(0);
-	AttInMetadata   *attinmeta;
-	bool             isFirstCall = true;
-	Oid              dbid;
-
-	HTAB                      *localCacheTable = NULL;
-	DiskQuotaSetOFCache       *cache           = NULL;
-	DiskQuotaActiveTableEntry *results_entry   = NULL;
-
-#ifdef FAULT_INJECTOR
-	if (SIMPLE_FAULT_INJECTOR("ereport_warning_from_segment") == FaultInjectorTypeSkip)
-	{
-		ereport(WARNING, (errmsg("[Fault Injector] This is a warning reported from segment")));
-	}
-#endif
-
-	/* Init the container list in the first call and get the results back */
-	if (SRF_IS_FIRSTCALL())
-	{
-		MemoryContext oldcontext;
-		TupleDesc     tupdesc;
-		int           ret_code = SPI_connect();
-		if (ret_code != SPI_OK_CONNECT)
-		{
-			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-			                errmsg("unable to connect to execute internal query. return code: %d.", ret_code)));
-		}
-		SPI_finish();
-
-		/* create a function context for cross-call persistence */
-		funcctx = SRF_FIRSTCALL_INIT();
-
-		/* switch to memory context appropriate for multiple function calls */
-		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
-
-		if (Gp_role == GP_ROLE_DISPATCH || Gp_role == GP_ROLE_UTILITY)
-		{
-			ereport(ERROR, (errmsg("This function must not be called on master or by user")));
-		}
-
-		switch (mode)
-		{
-			case FETCH_ACTIVE_OID:
-				localCacheTable = get_active_tables_oid();
-				break;
-			case FETCH_ACTIVE_SIZE:
-				localCacheTable = get_active_tables_stats(PG_GETARG_ARRAYTYPE_P(1));
-				break;
-			/*TODO: add another UDF to update the monitored_db_cache */
-			case ADD_DB_TO_MONITOR:
-				dbid = get_dbid(PG_GETARG_ARRAYTYPE_P(1));
-				update_monitor_db(dbid, ADD_DB_TO_MONITOR);
-				PG_RETURN_NULL();
-			case REMOVE_DB_FROM_BEING_MONITORED:
-				dbid = get_dbid(PG_GETARG_ARRAYTYPE_P(1));
-				update_monitor_db(dbid, REMOVE_DB_FROM_BEING_MONITORED);
-				PG_RETURN_NULL();
-			case PAUSE_DB_TO_MONITOR:
-				dbid = get_dbid(PG_GETARG_ARRAYTYPE_P(1));
-				update_monitor_db(dbid, PAUSE_DB_TO_MONITOR);
-				PG_RETURN_NULL();
-			case RESUME_DB_TO_MONITOR:
-				dbid = get_dbid(PG_GETARG_ARRAYTYPE_P(1));
-				update_monitor_db(dbid, RESUME_DB_TO_MONITOR);
-				PG_RETURN_NULL();
-			default:
-				ereport(ERROR, (errmsg("Unused mode number %d, transaction will be aborted", mode)));
-				break;
-		}
-
-		/*
-		 * total number of active tables to be returned, each tuple contains
-		 * one active table stat
-		 */
-		funcctx->max_calls = localCacheTable ? (uint32)hash_get_num_entries(localCacheTable) : 0;
-
-		/*
-		 * prepare attribute metadata for next calls that generate the tuple
-		 */
-		tupdesc = DiskquotaCreateTemplateTupleDesc(3);
-		TupleDescInitEntry(tupdesc, (AttrNumber)1, "TABLE_OID", OIDOID, -1, 0);
-		TupleDescInitEntry(tupdesc, (AttrNumber)2, "TABLE_SIZE", INT8OID, -1, 0);
-		TupleDescInitEntry(tupdesc, (AttrNumber)3, "GP_SEGMENT_ID", INT2OID, -1, 0);
-
-		attinmeta          = TupleDescGetAttInMetadata(tupdesc);
-		funcctx->attinmeta = attinmeta;
-
-		/* Prepare SetOf results HATB */
-		cache         = (DiskQuotaSetOFCache *)palloc(sizeof(DiskQuotaSetOFCache));
-		cache->result = localCacheTable;
-		hash_seq_init(&(cache->pos), localCacheTable);
-
-		MemoryContextSwitchTo(oldcontext);
-	}
-	else
-	{
-		isFirstCall = false;
-	}
-
-	funcctx = SRF_PERCALL_SETUP();
-
-	if (isFirstCall)
-	{
-		funcctx->user_fctx = (void *)cache;
-	}
-	else
-	{
-		cache = (DiskQuotaSetOFCache *)funcctx->user_fctx;
-	}
-
-	/* return the results back to SPI caller */
-	while ((results_entry = (DiskQuotaActiveTableEntry *)hash_seq_search(&(cache->pos))) != NULL)
-	{
-		Datum     result;
-		Datum     values[3];
-		bool      nulls[3];
-		HeapTuple tuple;
-
-		memset(values, 0, sizeof(values));
-		memset(nulls, false, sizeof(nulls));
-
-		values[0] = ObjectIdGetDatum(results_entry->reloid);
-		values[1] = Int64GetDatum(results_entry->tablesize);
-		values[2] = Int16GetDatum(results_entry->segid);
-
-		tuple = heap_form_tuple(funcctx->attinmeta->tupdesc, values, nulls);
-
-		result = HeapTupleGetDatum(tuple);
-
-		SRF_RETURN_NEXT(funcctx, result);
-	}
-
-	/* finished, do the clear staff */
-	hash_destroy(cache->result);
-	pfree(cache);
-	SRF_RETURN_DONE(funcctx);
-}
-
-static Oid
-get_dbid(ArrayType *array)
-{
-	Assert(ARR_ELEMTYPE(array) == OIDOID);
-	char *ptr;
-	bool  typbyval;
-	int16 typlen;
-	char  typalign;
-	Oid   dbid;
-
-	get_typlenbyvalalign(ARR_ELEMTYPE(array), &typlen, &typbyval, &typalign);
-	ptr  = ARR_DATA_PTR(array);
-	dbid = DatumGetObjectId(fetch_att(ptr, typbyval, typlen));
-	return dbid;
-}
-
-/*
  * Call pg_table_size to calcualte the
  * active table size on each segments.
  */
-static HTAB *
+HTAB *
 get_active_tables_stats(ArrayType *array)
 {
-	int                        ndim = ARR_NDIM(array);
-	int                       *dims = ARR_DIMS(array);
-	int                        nitems;
-	int16                      typlen;
-	bool                       typbyval;
-	char                       typalign;
-	char                      *ptr;
-	bits8                     *bitmap;
-	int                        bitmask;
-	int                        i;
-	Oid                        relOid;
-	int                        segId;
-	HTAB                      *local_table = NULL;
-	HASHCTL                    ctl;
-	TableEntryKey              key;
-	DiskQuotaActiveTableEntry *entry;
-	bool                       found;
+	int                 ndim = ARR_NDIM(array);
+	int                *dims = ARR_DIMS(array);
+	int                 nitems;
+	int16               typlen;
+	bool                typbyval;
+	char                typalign;
+	char               *ptr;
+	bits8              *bitmap;
+	int                 bitmask;
+	int                 i;
+	Oid                 relOid;
+	int                 segId;
+	HTAB               *local_table = NULL;
+	HASHCTL             ctl;
+	ActiveTableEntryKey key;
+	ActiveTableEntry   *entry;
+	bool                found;
 
 	Assert(ARR_ELEMTYPE(array) == OIDOID);
 
@@ -611,8 +427,8 @@ get_active_tables_stats(ArrayType *array)
 	bitmask = 1;
 
 	memset(&ctl, 0, sizeof(ctl));
-	ctl.keysize   = sizeof(TableEntryKey);
-	ctl.entrysize = sizeof(DiskQuotaActiveTableEntry);
+	ctl.keysize   = sizeof(ActiveTableEntryKey);
+	ctl.entrysize = sizeof(ActiveTableEntry);
 	ctl.hcxt      = CurrentMemoryContext;
 	local_table   = diskquota_hash_create("local table map", 1024, &ctl, HASH_ELEM | HASH_CONTEXT, DISKQUOTA_TAG_HASH);
 
@@ -633,11 +449,9 @@ get_active_tables_stats(ArrayType *array)
 			key.reloid = relOid;
 			key.segid  = segId;
 
-			entry = (DiskQuotaActiveTableEntry *)hash_search(local_table, &key, HASH_ENTER, &found);
+			entry = (ActiveTableEntry *)hash_search(local_table, &key, HASH_ENTER, &found);
 			if (!found)
 			{
-				entry->reloid    = relOid;
-				entry->segid     = segId;
 				entry->tablesize = calculate_table_size(relOid);
 			}
 
@@ -735,25 +549,25 @@ is_cached_relfilenode_stale(Oid relOid, RelFileNode rnode)
  * the local map and find corresponding table oid and table file
  * size. Finally stores them into local active table map and return.
  */
-static HTAB *
+HTAB *
 get_active_tables_oid(void)
 {
-	HASHCTL                        ctl;
-	HTAB                          *local_active_table_file_map  = NULL;
-	HTAB                          *local_active_table_stats_map = NULL;
-	HTAB                          *local_altered_reloid_cache   = NULL;
-	HASH_SEQ_STATUS                iter;
-	DiskQuotaActiveTableFileEntry *active_table_file_entry;
-	DiskQuotaActiveTableEntry     *active_table_entry;
-	Oid                           *altered_reloid_entry;
+	HASHCTL               ctl;
+	HTAB                 *local_active_table_file_map  = NULL;
+	HTAB                 *local_active_table_stats_map = NULL;
+	HTAB                 *local_altered_reloid_cache   = NULL;
+	HASH_SEQ_STATUS       iter;
+	ActiveTableFileEntry *active_table_file_entry;
+	ActiveTableEntry     *active_table_entry;
+	Oid                  *altered_reloid_entry;
 
 	Oid relOid;
 
 	refresh_monitored_dbid_cache();
 
 	memset(&ctl, 0, sizeof(ctl));
-	ctl.keysize                 = sizeof(DiskQuotaActiveTableFileEntry);
-	ctl.entrysize               = sizeof(DiskQuotaActiveTableFileEntry);
+	ctl.keysize                 = sizeof(ActiveTableFileEntry);
+	ctl.entrysize               = sizeof(ActiveTableFileEntry);
 	ctl.hcxt                    = CurrentMemoryContext;
 	local_active_table_file_map = diskquota_hash_create("local active table map with relfilenode info", 1024, &ctl,
 	                                                    HASH_ELEM | HASH_CONTEXT, DISKQUOTA_TAG_HASH);
@@ -771,10 +585,10 @@ get_active_tables_oid(void)
 	hash_seq_init(&iter, active_tables_map);
 
 	/* copy active table from shared memory into local memory */
-	while ((active_table_file_entry = (DiskQuotaActiveTableFileEntry *)hash_seq_search(&iter)) != NULL)
+	while ((active_table_file_entry = (ActiveTableFileEntry *)hash_seq_search(&iter)) != NULL)
 	{
-		bool                           found;
-		DiskQuotaActiveTableFileEntry *entry;
+		bool                  found;
+		ActiveTableFileEntry *entry;
 
 		if (active_table_file_entry->dbid != MyDatabaseId)
 		{
@@ -792,7 +606,7 @@ get_active_tables_oid(void)
 	memset(&ctl, 0, sizeof(ctl));
 	/* only use Oid as key here, segid is not needed */
 	ctl.keysize                  = sizeof(Oid);
-	ctl.entrysize                = sizeof(DiskQuotaActiveTableEntry);
+	ctl.entrysize                = sizeof(ActiveTableEntry);
 	ctl.hcxt                     = CurrentMemoryContext;
 	local_active_table_stats_map = diskquota_hash_create("local active table map with relfilenode info", 1024, &ctl,
 	                                                     HASH_ELEM | HASH_CONTEXT, DISKQUOTA_OID_HASH);
@@ -805,7 +619,7 @@ get_active_tables_oid(void)
 	 */
 	hash_seq_init(&iter, local_active_table_file_map);
 
-	while ((active_table_file_entry = (DiskQuotaActiveTableFileEntry *)hash_seq_search(&iter)) != NULL)
+	while ((active_table_file_entry = (ActiveTableFileEntry *)hash_seq_search(&iter)) != NULL)
 	{
 		bool        found;
 		RelFileNode rnode;
@@ -855,7 +669,7 @@ get_active_tables_oid(void)
 	/* Adding the remaining relfilenodes back to the map in the shared memory */
 	LWLockAcquire(diskquota_locks.active_table_lock, LW_EXCLUSIVE);
 	hash_seq_init(&iter, local_active_table_file_map);
-	while ((active_table_file_entry = (DiskQuotaActiveTableFileEntry *)hash_seq_search(&iter)) != NULL)
+	while ((active_table_file_entry = (ActiveTableFileEntry *)hash_seq_search(&iter)) != NULL)
 	{
 		/* TODO: handle possible ERROR here so that the bgworker will not go down. */
 		hash_search(active_tables_map, active_table_file_entry, HASH_ENTER, NULL);
@@ -913,12 +727,12 @@ get_active_tables_oid(void)
 	 */
 	if (hash_get_num_entries(local_active_table_file_map) > 0)
 	{
-		bool                           found;
-		DiskQuotaActiveTableFileEntry *entry;
+		bool                  found;
+		ActiveTableFileEntry *entry;
 
 		hash_seq_init(&iter, local_active_table_file_map);
 		LWLockAcquire(diskquota_locks.active_table_lock, LW_EXCLUSIVE);
-		while ((active_table_file_entry = (DiskQuotaActiveTableFileEntry *)hash_seq_search(&iter)) != NULL)
+		while ((active_table_file_entry = (ActiveTableFileEntry *)hash_seq_search(&iter)) != NULL)
 		{
 			entry = hash_search(active_tables_map, active_table_file_entry, HASH_ENTER_NULL, &found);
 			if (entry) *entry = *active_table_file_entry;
@@ -938,14 +752,14 @@ get_active_tables_oid(void)
 static void
 load_table_size(HTAB *local_table_stats_map)
 {
-	TupleDesc                  tupdesc;
-	int                        i;
-	bool                       found;
-	TableEntryKey              key;
-	DiskQuotaActiveTableEntry *quota_entry;
-	SPIPlanPtr                 plan;
-	Portal                     portal;
-	char                      *sql = "select tableid, size, segid from diskquota.table_size";
+	TupleDesc           tupdesc;
+	int                 i;
+	bool                found;
+	ActiveTableEntryKey key;
+	ActiveTableEntry   *quota_entry;
+	SPIPlanPtr          plan;
+	Portal              portal;
+	char               *sql = "select tableid, size, segid from diskquota.table_size";
 
 	if ((plan = SPI_prepare(sql, 0, NULL)) == NULL)
 		ereport(ERROR, (errmsg("[diskquota] SPI_prepare(\"%s\") failed", sql)));
@@ -1012,7 +826,7 @@ load_table_size(HTAB *local_table_stats_map)
 			key.reloid = reloid;
 			key.segid  = segid;
 
-			quota_entry = (DiskQuotaActiveTableEntry *)hash_search(local_table_stats_map, &key, HASH_ENTER, &found);
+			quota_entry            = (ActiveTableEntry *)hash_search(local_table_stats_map, &key, HASH_ENTER, &found);
 			quota_entry->reloid    = reloid;
 			quota_entry->tablesize = size;
 			quota_entry->segid     = segid;
@@ -1034,18 +848,18 @@ load_table_size(HTAB *local_table_stats_map)
 static StringInfoData
 convert_map_to_string(HTAB *local_active_table_oid_maps)
 {
-	HASH_SEQ_STATUS            iter;
-	StringInfoData             buffer;
-	DiskQuotaActiveTableEntry *entry;
-	uint32                     count  = 0;
-	uint32                     nitems = hash_get_num_entries(local_active_table_oid_maps);
+	HASH_SEQ_STATUS   iter;
+	StringInfoData    buffer;
+	ActiveTableEntry *entry;
+	uint32            count  = 0;
+	uint32            nitems = hash_get_num_entries(local_active_table_oid_maps);
 
 	initStringInfo(&buffer);
 	appendStringInfo(&buffer, "{");
 
 	hash_seq_init(&iter, local_active_table_oid_maps);
 
-	while ((entry = (DiskQuotaActiveTableEntry *)hash_seq_search(&iter)) != NULL)
+	while ((entry = (ActiveTableEntry *)hash_seq_search(&iter)) != NULL)
 	{
 		count++;
 		if (count != nitems)
@@ -1071,16 +885,16 @@ convert_map_to_string(HTAB *local_active_table_oid_maps)
 static HTAB *
 pull_active_list_from_seg(void)
 {
-	CdbPgResults               cdb_pgresults = {NULL, 0};
-	int                        i, j;
-	char                      *sql                        = NULL;
-	HTAB                      *local_active_table_oid_map = NULL;
-	HASHCTL                    ctl;
-	DiskQuotaActiveTableEntry *entry;
+	CdbPgResults      cdb_pgresults = {NULL, 0};
+	int               i, j;
+	char             *sql                        = NULL;
+	HTAB             *local_active_table_oid_map = NULL;
+	HASHCTL           ctl;
+	ActiveTableEntry *entry;
 
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize                = sizeof(Oid);
-	ctl.entrysize              = sizeof(DiskQuotaActiveTableEntry);
+	ctl.entrysize              = sizeof(ActiveTableEntry);
 	ctl.hcxt                   = CurrentMemoryContext;
 	local_active_table_oid_map = diskquota_hash_create("local active table map with relfilenode info", 1024, &ctl,
 	                                                   HASH_ELEM | HASH_CONTEXT, DISKQUOTA_OID_HASH);
@@ -1109,7 +923,7 @@ pull_active_list_from_seg(void)
 		{
 			reloid = atooid(PQgetvalue(pgresult, j, 0));
 
-			entry = (DiskQuotaActiveTableEntry *)hash_search(local_active_table_oid_map, &reloid, HASH_ENTER, &found);
+			entry = (ActiveTableEntry *)hash_search(local_active_table_oid_map, &reloid, HASH_ENTER, &found);
 
 			if (!found)
 			{
@@ -1156,12 +970,12 @@ pull_active_table_size_from_seg(HTAB *local_table_stats_map, char *active_oid_ar
 	/* sum table size from each segment into local_table_stats_map */
 	for (i = 0; i < cdb_pgresults.numResults; i++)
 	{
-		Size                       tableSize;
-		bool                       found;
-		Oid                        reloid;
-		int                        segId;
-		TableEntryKey              key;
-		DiskQuotaActiveTableEntry *entry;
+		Size                tableSize;
+		bool                found;
+		Oid                 reloid;
+		int                 segId;
+		ActiveTableEntryKey key;
+		ActiveTableEntry   *entry;
 
 		PGresult *pgresult = cdb_pgresults.pg_results[i];
 
@@ -1183,7 +997,7 @@ pull_active_table_size_from_seg(HTAB *local_table_stats_map, char *active_oid_ar
 				/* get the segid, tablesize for each table */
 				segId     = atoi(PQgetvalue(pgresult, j, 2));
 				key.segid = segId;
-				entry     = (DiskQuotaActiveTableEntry *)hash_search(local_table_stats_map, &key, HASH_ENTER, &found);
+				entry     = (ActiveTableEntry *)hash_search(local_table_stats_map, &key, HASH_ENTER, &found);
 
 				if (!found)
 				{
@@ -1196,7 +1010,7 @@ pull_active_table_size_from_seg(HTAB *local_table_stats_map, char *active_oid_ar
 
 			/* when segid is -1, the tablesize is the sum of tablesize of master and all segments */
 			key.segid = -1;
-			entry     = (DiskQuotaActiveTableEntry *)hash_search(local_table_stats_map, &key, HASH_ENTER, &found);
+			entry     = (ActiveTableEntry *)hash_search(local_table_stats_map, &key, HASH_ENTER, &found);
 
 			if (!found)
 			{
