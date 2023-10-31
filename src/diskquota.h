@@ -92,58 +92,15 @@ struct DiskQuotaLocks
 typedef struct DiskQuotaLocks DiskQuotaLocks;
 #define DiskQuotaLocksItemNumber (sizeof(DiskQuotaLocks) / sizeof(void *))
 
-/*
- * MessageBox is used to store a message for communication between
- * the diskquota launcher process and backends.
- * When backend create an extension, it send a message to launcher
- * to start the diskquota worker process and write the corresponding
- *
- * dbOid into diskquota database_list table in postgres database.
- * When backend drop an extension, it will send a message to launcher
- * to stop the diskquota worker process and remove the dbOid from diskquota
- * database_list table as well.
- */
-struct ExtensionDDLMessage
-{
-	int launcher_pid; /* diskquota launcher pid */
-	int req_pid;      /* pid of the QD process which create/drop
-	                   * diskquota extension */
-	int cmd;          /* message command type, see MessageCommand */
-	int result;       /* message result writen by launcher, see
-	                   * MessageResult */
-	int dbid;         /* dbid of create/drop diskquota
-	                   * extensionstatement */
-};
-
 enum MessageCommand
 {
 	CMD_CREATE_EXTENSION = 1,
 	CMD_DROP_EXTENSION,
 };
 
-enum MessageResult
-{
-	ERR_PENDING = 0,
-	ERR_OK,
-	/* the number of database exceeds the maximum */
-	ERR_EXCEED,
-	/* add the dbid to diskquota_namespace.database_list failed */
-	ERR_ADD_TO_DB,
-	/* delete dbid from diskquota_namespace.database_list failed */
-	ERR_DEL_FROM_DB,
-	/* cann't start worker process */
-	ERR_START_WORKER,
-	/* invalid dbid */
-	ERR_INVALID_DBID,
-	ERR_UNKNOWN,
-};
+typedef enum MessageCommand MessageCommand;
 
-typedef struct ExtensionDDLMessage ExtensionDDLMessage;
-typedef enum MessageCommand        MessageCommand;
-typedef enum MessageResult         MessageResult;
-
-extern DiskQuotaLocks       diskquota_locks;
-extern ExtensionDDLMessage *extension_ddl_message;
+extern DiskQuotaLocks diskquota_locks;
 
 typedef struct DiskQuotaWorkerEntry DiskQuotaWorkerEntry;
 typedef struct DiskquotaDBEntry     DiskquotaDBEntry;

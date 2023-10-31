@@ -45,6 +45,7 @@
 #include "quota.h"
 #include "rejectmap.h"
 #include "diskquota_util.h"
+#include "ddl_message.h"
 
 int SEGCOUNT = 0;
 
@@ -130,7 +131,6 @@ init_disk_quota_shmem(void)
 static void
 disk_quota_shmem_startup(void)
 {
-	bool    found;
 	HASHCTL hash_ctl;
 
 	if (prev_shmem_startup_hook) (*prev_shmem_startup_hook)();
@@ -145,8 +145,7 @@ disk_quota_shmem_startup(void)
 	 * to store out-of-quota rejectmap. active_tables_map is used to store
 	 * active tables whose disk usage is changed.
 	 */
-	extension_ddl_message = ShmemInitStruct("disk_quota_extension_ddl_message", sizeof(ExtensionDDLMessage), &found);
-	if (!found) memset((void *)extension_ddl_message, 0, sizeof(ExtensionDDLMessage));
+	init_shm_ddl_message();
 
 	init_shm_worker_rejectmap();
 
@@ -219,7 +218,7 @@ static Size
 DiskQuotaShmemSize(void)
 {
 	Size size;
-	size = sizeof(ExtensionDDLMessage);
+	size = diskquota_ddl_message_shmem_size();
 	size = add_size(size, active_table_shmem_size());
 	size = add_size(size, diskquota_rejectmap_shmem_size());
 	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(DiskQuotaRelationCacheEntry)));
