@@ -57,6 +57,7 @@
 
 #include "diskquota.h"
 #include "gp_activetable.h"
+#include "ddl_message.h"
 
 /* disk quota helper function */
 
@@ -71,19 +72,7 @@ PG_FUNCTION_INFO_V1(diskquota_fetch_table_stat);
 /* timeout count to wait response from launcher process, in 1/10 sec */
 #define WAIT_TIME_COUNT 1200
 
-#define report_ddl_err(ddl_msg, prefix)                                                      \
-	do                                                                                       \
-	{                                                                                        \
-		MessageResult ddl_result_ = (MessageResult)ddl_msg->result;                          \
-		const char   *ddl_err_;                                                              \
-		const char   *ddl_hint_;                                                             \
-		ddl_err_code_to_err_message(ddl_result_, &ddl_err_, &ddl_hint_);                     \
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("%s: %s", prefix, ddl_err_), \
-		                ddl_hint_ ? errhint("%s", ddl_hint_) : 0));                          \
-	} while (0)
-
 static bool is_database_empty(void);
-static void ddl_err_code_to_err_message(MessageResult code, const char **err_msg, const char **hint_msg);
 static Oid  get_dbid(ArrayType *array);
 
 List *get_rel_oid_list(void);
@@ -569,45 +558,6 @@ diskquota_stop_worker(void)
 	}
 	LWLockRelease(diskquota_locks.extension_ddl_message_lock);
 	LWLockRelease(diskquota_locks.extension_ddl_lock);
-}
-
-/*
- * For extension DDL('create extension/drop extension')
- * Using this function to convert error code from diskquota
- * launcher to error message and return it to client.
- */
-static void
-ddl_err_code_to_err_message(MessageResult code, const char **err_msg, const char **hint_msg)
-{
-	*hint_msg = NULL;
-	switch (code)
-	{
-		case ERR_PENDING:
-			*err_msg  = "no response from diskquota launcher, check whether launcher process exists";
-			*hint_msg = "Create \"diskquota\" database and restart the cluster.";
-			break;
-		case ERR_OK:
-			*err_msg = "succeeded";
-			break;
-		case ERR_EXCEED:
-			*err_msg = "too many databases to monitor";
-			break;
-		case ERR_ADD_TO_DB:
-			*err_msg = "add dbid to database_list failed";
-			break;
-		case ERR_DEL_FROM_DB:
-			*err_msg = "delete dbid from database_list failed";
-			break;
-		case ERR_START_WORKER:
-			*err_msg = "start diskquota worker failed";
-			break;
-		case ERR_INVALID_DBID:
-			*err_msg = "invalid dbid";
-			break;
-		default:
-			*err_msg = "unknown error";
-			break;
-	}
 }
 
 int

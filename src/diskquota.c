@@ -46,6 +46,7 @@
 #include "gp_activetable.h"
 #include "diskquota_guc.h"
 #include "rejectmap.h"
+#include "ddl_message.h"
 
 PG_MODULE_MAGIC;
 
@@ -71,8 +72,7 @@ static volatile sig_atomic_t got_sigterm = false;
 static volatile sig_atomic_t got_sigusr1 = false;
 static volatile sig_atomic_t got_sigusr2 = false;
 
-DiskQuotaLocks       diskquota_locks;
-ExtensionDDLMessage *extension_ddl_message = NULL;
+DiskQuotaLocks diskquota_locks;
 
 // Only access in diskquota worker, different from each worker.
 // a pointer to DiskquotaLauncherShmem->workerEntries in shared memory
