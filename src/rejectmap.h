@@ -11,7 +11,7 @@
  */
 
 #ifndef REJECTMAP_H
-#define REJECTMAP
+#define REJECTMAP_H
 
 #include "quota_config.h"
 
