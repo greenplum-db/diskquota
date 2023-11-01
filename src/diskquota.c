@@ -45,6 +45,7 @@
 #include "diskquota.h"
 #include "gp_activetable.h"
 #include "diskquota_guc.h"
+#include "rejectmap.h"
 
 PG_MODULE_MAGIC;
 
@@ -119,7 +120,6 @@ static void terminate_all_workers(void);
 static void on_add_db(Oid dbid, MessageResult *code);
 static void on_del_db(Oid dbid, MessageResult *code);
 static bool is_valid_dbid(Oid dbid);
-extern void invalidate_database_rejectmap(Oid dbid);
 static void FreeWorkerOnExit(int code, Datum arg);
 static void FreeWorker(DiskQuotaWorkerEntry *worker);
 static void init_database_list(void);

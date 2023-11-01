@@ -26,9 +26,11 @@
 #include "utils/array.h"
 #include "utils/inval.h"
 #include "funcapi.h"
+
 #include "diskquota.h"
 #include "relation_cache.h"
 #include "diskquota_guc.h"
+#include "diskquota_util.h"
 
 HTAB *relation_cache = NULL;
 HTAB *relid_cache    = NULL;

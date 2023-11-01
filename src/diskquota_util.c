@@ -19,7 +19,11 @@
 #include "utils/formatting.h"
 #include "utils/acl.h"
 #include "utils/numeric.h"
+#include "utils/inval.h"
+#include "utils/syscache.h"
+#include "utils/lsyscache.h"
 #include "executor/spi.h"
+#include "commands/tablespace.h"
 
 #include "quota_config.h"
 #include "diskquota_util.h"
@@ -178,4 +182,107 @@ check_superuser(void)
 	{
 		ereport(ERROR, (errcode(ERRCODE_INSUFFICIENT_PRIVILEGE), errmsg("must be superuser to set disk quota limit")));
 	}
+}
+
+char *
+GetNamespaceName(Oid spcid, bool skip_name)
+{
+	if (skip_name)
+	{
+		NameData spcstr;
+		pg_ltoa(spcid, spcstr.data);
+		return pstrdup(spcstr.data);
+	}
+	return get_namespace_name(spcid);
+}
+
+char *
+GetTablespaceName(Oid spcid, bool skip_name)
+{
+	if (skip_name)
+	{
+		NameData spcstr;
+		pg_ltoa(spcid, spcstr.data);
+		return pstrdup(spcstr.data);
+	}
+	return get_tablespace_name(spcid);
+}
+
+char *
+GetUserName(Oid relowner, bool skip_name)
+{
+	if (skip_name)
+	{
+		NameData namestr;
+		pg_ltoa(relowner, namestr.data);
+		return pstrdup(namestr.data);
+	}
+#if GP_VERSION_NUM < 70000
+	return GetUserNameFromId(relowner);
+#else
+	return GetUserNameFromId(relowner, false);
+#endif /* GP_VERSION_NUM */
+}
+
+/*
+ * Given table oid, search for namespace and owner.
+ */
+bool
+get_rel_owner_schema_tablespace(Oid relid, Oid *ownerOid, Oid *nsOid, Oid *tablespaceoid)
+{
+	HeapTuple tp;
+
+	/*
+	 * Since we don't take any lock on relation, check for cache
+	 * invalidation messages manually to minimize risk of cache
+	 * inconsistency.
+	 */
+	AcceptInvalidationMessages();
+	tp         = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
+	bool found = HeapTupleIsValid(tp);
+	if (HeapTupleIsValid(tp))
+	{
+		Form_pg_class reltup = (Form_pg_class)GETSTRUCT(tp);
+
+		*ownerOid      = reltup->relowner;
+		*nsOid         = reltup->relnamespace;
+		*tablespaceoid = reltup->reltablespace;
+
+		if (!OidIsValid(*tablespaceoid))
+		{
+			*tablespaceoid = MyDatabaseTableSpace;
+		}
+
+		ReleaseSysCache(tp);
+	}
+	return found;
+}
+
+/*
+ * Given table oid, search for namespace and name.
+ * Memory relname points to should be pre-allocated at least NAMEDATALEN bytes.
+ */
+bool
+get_rel_name_namespace(Oid relid, Oid *nsOid, char *relname)
+{
+	HeapTuple tp;
+
+	/*
+	 * Since we don't take any lock on relation, check for cache
+	 * invalidation messages manually to minimize risk of cache
+	 * inconsistency.
+	 */
+	AcceptInvalidationMessages();
+	tp         = SearchSysCache1(RELOID, ObjectIdGetDatum(relid));
+	bool found = HeapTupleIsValid(tp);
+	if (found)
+	{
+		Form_pg_class reltup = (Form_pg_class)GETSTRUCT(tp);
+
+		*nsOid = reltup->relnamespace;
+		memcpy(relname, reltup->relname.data, NAMEDATALEN);
+
+		ReleaseSysCache(tp);
+	}
+	return found;
 }
