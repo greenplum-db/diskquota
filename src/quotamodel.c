@@ -145,8 +145,6 @@ disk_quota_shmem_startup(void)
 	 * to store out-of-quota rejectmap. active_tables_map is used to store
 	 * active tables whose disk usage is changed.
 	 */
-	init_shm_ddl_message();
-
 	init_shm_worker_rejectmap();
 
 	init_shm_worker_active_tables();
@@ -160,7 +158,14 @@ disk_quota_shmem_startup(void)
 	monitored_dbid_cache =
 	        DiskquotaShmemInitHash("table oid cache which shoud tracking", diskquota_max_monitored_databases,
 	                               diskquota_max_monitored_databases, &hash_ctl, HASH_ELEM, DISKQUOTA_OID_HASH);
-	init_launcher_shmem();
+
+	/* only initialize ddl_message and launcher memory on master/standby. */
+	if (IS_QUERY_DISPATCHER())
+	{
+		init_shm_ddl_message();
+
+		init_launcher_shmem();
+	}
 	LWLockRelease(AddinShmemInitLock);
 }
 
@@ -217,8 +222,8 @@ diskquota_worker_shmem_size()
 static Size
 DiskQuotaShmemSize(void)
 {
-	Size size;
-	size = diskquota_ddl_message_shmem_size();
+	Size size = 0;
+
 	size = add_size(size, active_table_shmem_size());
 	size = add_size(size, diskquota_rejectmap_shmem_size());
 	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(DiskQuotaRelationCacheEntry)));
@@ -228,6 +233,7 @@ DiskQuotaShmemSize(void)
 
 	if (IS_QUERY_DISPATCHER())
 	{
+		size = add_size(size, diskquota_ddl_message_shmem_size());
 		size = add_size(size, diskquota_launcher_shmem_size());
 		size = add_size(size, sizeof(pg_atomic_uint32));
 		size = add_size(size, diskquota_worker_shmem_size() * diskquota_max_monitored_databases);
