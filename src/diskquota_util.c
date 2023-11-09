@@ -13,6 +13,7 @@
 
 #include "postgres.h"
 
+#include "access/xact.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_collation.h"
 #include "utils/builtins.h"
@@ -22,8 +23,10 @@
 #include "utils/inval.h"
 #include "utils/syscache.h"
 #include "utils/lsyscache.h"
+#include "utils/snapmgr.h"
 #include "executor/spi.h"
 #include "commands/tablespace.h"
+#include "commands/dbcommands.h"
 
 #include "quota_config.h"
 #include "diskquota_util.h"
@@ -285,4 +288,39 @@ get_rel_name_namespace(Oid relid, Oid *nsOid, char *relname)
 		ReleaseSysCache(tp);
 	}
 	return found;
+}
+
+/*
+ * Check whether db oid is valid.
+ */
+bool
+is_valid_dbid(Oid dbid)
+{
+	HeapTuple tuple;
+
+	if (dbid == InvalidOid) return false;
+	tuple = SearchSysCache1(DATABASEOID, ObjectIdGetDatum(dbid));
+	if (!HeapTupleIsValid(tuple)) return false;
+	ReleaseSysCache(tuple);
+	return true;
+}
+
+char *
+get_db_name(Oid dbid)
+{
+	char	     *dbname = NULL;
+	MemoryContext old_ctx;
+	if (dbid == InvalidOid)
+	{
+		elog(WARNING, "database oid is invalid");
+		return NULL;
+	}
+
+	StartTransactionCommand();
+	(void)GetTransactionSnapshot();
+	old_ctx = MemoryContextSwitchTo(TopMemoryContext);
+	dbname  = get_database_name(dbid);
+	MemoryContextSwitchTo(old_ctx);
+	CommitTransactionCommand();
+	return dbname;
 }

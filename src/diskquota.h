@@ -39,6 +39,12 @@ typedef enum
 	DISKQUOTA_STRING_HASH,
 } DiskquotaHashFunction;
 
+#define DISKQUOTA_DB "diskquota"
+#define DISKQUOTA_APPLICATION_NAME "gp_reserved_gpdiskquota"
+
+#define MIN_SLEEPTIME 100         /* milliseconds */
+#define BGWORKER_LOG_TIME 3600000 /* milliseconds */
+
 /* max number of monitored database with diskquota enabled */
 #define LAUNCHER_SCHEMA "diskquota_utility"
 #define EXTENSION_SCHEMA "diskquota"
@@ -76,7 +82,7 @@ typedef enum
 	DISKQUOTA_READY_STATE
 } DiskQuotaState;
 
-struct DiskQuotaLocks
+typedef struct DiskQuotaLocks
 {
 	LWLock *active_table_lock;
 	LWLock *reject_map_lock;
@@ -88,8 +94,7 @@ struct DiskQuotaLocks
 	LWLock *dblist_lock;
 	LWLock *workerlist_lock;
 	LWLock *altered_reloid_cache_lock;
-};
-typedef struct DiskQuotaLocks DiskQuotaLocks;
+} DiskQuotaLocks;
 #define DiskQuotaLocksItemNumber (sizeof(DiskQuotaLocks) / sizeof(void *))
 
 enum MessageCommand
@@ -202,8 +207,6 @@ extern bool         diskquota_is_paused(void);
 extern bool         do_check_diskquota_state_is_ready(void);
 extern bool         diskquota_is_readiness_logged(void);
 extern void         diskquota_set_readiness_logged(void);
-extern Size         diskquota_launcher_shmem_size(void);
-extern void         init_launcher_shmem(void);
 extern void         vacuum_disk_quota_model(uint32 id);
 extern void         update_monitor_db(Oid dbid, FetchTableStatType action);
 extern void         update_monitor_db_mpp(Oid dbid, FetchTableStatType action, const char *schema);
