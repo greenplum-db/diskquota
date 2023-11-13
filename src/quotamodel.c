@@ -46,6 +46,7 @@
 #include "rejectmap.h"
 #include "diskquota_util.h"
 #include "ddl_message.h"
+#include "diskquota_launcher.h"
 
 int SEGCOUNT = 0;
 

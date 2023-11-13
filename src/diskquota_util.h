@@ -25,4 +25,7 @@ extern char *GetUserName(Oid relowner, bool skip_name);
 extern bool get_rel_owner_schema_tablespace(Oid relid, Oid *ownerOid, Oid *nsOid, Oid *tablespaceoid);
 extern bool get_rel_name_namespace(Oid relid, Oid *nsOid, char *relname);
 
+extern bool  is_valid_dbid(Oid dbid);
+extern char *get_db_name(Oid dbid);
+
 #endif
