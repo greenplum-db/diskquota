@@ -13,10 +13,10 @@
 #ifndef DISK_QUOTA_H
 #define DISK_QUOTA_H
 
-#include "c.h"
 #include "postgres.h"
-#include "port/atomics.h"
 
+#include "pgstat.h"
+#include "port/atomics.h"
 #include "catalog/pg_class.h"
 #include "lib/ilist.h"
 #include "lib/stringinfo.h"
