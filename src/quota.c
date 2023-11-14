@@ -9,8 +9,10 @@
  *
  * -------------------------------------------------------------------------
  */
+#include <math.h>
 
 #include "postgres.h"
+
 #include "access/xact.h"
 #include "utils/snapmgr.h"
 #include "utils/hsearch.h"
