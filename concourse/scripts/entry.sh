@@ -108,12 +108,15 @@ setup_gpadmin() {
     fi
     mkdir -p /home/gpadmin
     chown gpadmin:gpadmin /home/gpadmin
+
+    chown -R gpadmin:gpadmin /tmp/build
+    ln -s "${CONCOURSE_WORK_DIR}"/* /home/gpadmin
 }
 
 # Extract gpdb binary
 function install_gpdb() {
     [ ! -d /usr/local/greenplum-db-devel ] && mkdir -p /usr/local/greenplum-db-devel
-    tar -xzf "${CONCOURSE_WORK_DIR}"/bin_gpdb/bin_gpdb.tar.gz -C /usr/local/greenplum-db-devel
+    tar -xzf "${CONCOURSE_WORK_DIR}"/bin_gpdb/*.tar.gz -C /usr/local/greenplum-db-devel
     chown -R gpadmin:gpadmin /usr/local/greenplum-db-devel
 }
 
@@ -127,11 +130,21 @@ function create_fake_gpdb_src() {
         grep -rhw '/usr/local/greenplum-db-devel' -e 'abs_top_srcdir = .*' |\
         head -n 1 | awk '{ print $NF; }')"
 
+    if [ -d "${fake_gpdb_src}" ]; then
+        echo "Fake gpdb source directory has been configured."
+        return
+    fi
+
     pushd /home/gpadmin/gpdb_src
     ./configure --prefix=/usr/local/greenplum-db-devel \
         --without-zstd \
         --disable-orca --disable-gpcloud --enable-debug-extensions
     popd
+
+    local fake_root
+    fake_root=$(dirname "${fake_gpdb_src}")
+    mkdir -p "${fake_root}"
+    ln -s /home/gpadmin/gpdb_src "${fake_gpdb_src}"
 }
 
 # Setup common environment
