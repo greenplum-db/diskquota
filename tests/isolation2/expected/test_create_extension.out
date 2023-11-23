@@ -1,3 +1,16 @@
+-- check that diskquota ignores global flag appendonly=true
+
+SET gp_default_storage_options='appendonly=true';
+SET
+
+CREATE EXTENSION diskquota;
+CREATE
+DROP EXTENSION diskquota;
+DROP
+
+SET gp_default_storage_options='appendonly=false';
+SET
+
 CREATE EXTENSION diskquota;
 CREATE
 

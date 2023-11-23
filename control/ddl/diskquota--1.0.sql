@@ -9,18 +9,18 @@ CREATE TABLE diskquota.quota_config(
     quotatype int,
     quotalimitMB int8,
     PRIMARY KEY(targetOid, quotatype)
-);
+) WITH (appendonly=false);
 
 CREATE TABLE diskquota.table_size(
     tableid oid,
     size bigint,
     PRIMARY KEY(tableid)
-);
+) WITH (appendonly=false);
 
 CREATE TABLE diskquota.state(
     state int,
     PRIMARY KEY(state)
-);
+) WITH (appendonly=false);
 
 -- only diskquota.quota_config is dump-able, other table can be generate on fly
 SELECT pg_catalog.pg_extension_config_dump('diskquota.quota_config', '');
