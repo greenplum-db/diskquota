@@ -247,8 +247,6 @@ static bool get_table_size_entry_flag(TableSizeEntry *entry, TableSizeEntryFlag 
 static void reset_table_size_entry_flag(TableSizeEntry *entry, TableSizeEntryFlag flag);
 static void set_table_size_entry_flag(TableSizeEntry *entry, TableSizeEntryFlag flag);
 
-static void delete_from_table_size_map(char *str);
-
 /* add a new entry quota or update the old entry quota */
 static void
 update_size_for_quota(int64 size, QuotaType type, Oid *keys, int16 segid)
@@ -914,10 +912,6 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 	TableEntryKey              active_table_key;
 	List                      *oidlist;
 	ListCell                  *l;
-	int                        delete_entries_num = 0;
-	StringInfoData             delete_statement;
-
-	initStringInfo(&delete_statement);
 
 	/*
 	 * unset is_exist flag for tsentry in table_size_map this is used to
@@ -934,7 +928,7 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 	 * calculate the file size for active table and update namespace_size_map
 	 * and role_size_map
 	 */
-	oidlist = get_rel_oid_list(is_init);
+	oidlist = get_rel_oid_list();
 
 	oidlist = merge_uncommitted_table_to_oidlist(oidlist);
 
@@ -968,23 +962,6 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 			{
 				elog(WARNING, "cache lookup failed for relation %u", relOid);
 				LWLockRelease(diskquota_locks.relation_cache_lock);
-
-				if (!is_init) continue;
-
-				for (int i = -1; i < SEGCOUNT; i++)
-				{
-					appendStringInfo(&delete_statement, "%s(%u,%d)", (delete_entries_num == 0) ? " " : ", ", relOid, i);
-
-					delete_entries_num++;
-
-					if (delete_entries_num > SQL_MAX_VALUES_NUMBER)
-					{
-						delete_from_table_size_map(delete_statement.data);
-						resetStringInfo(&delete_statement);
-						delete_entries_num = 0;
-					}
-				}
-
 				continue;
 			}
 			relnamespace  = relation_entry->namespaceoid;
@@ -1124,9 +1101,6 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 		}
 	}
 
-	if (delete_entries_num) delete_from_table_size_map(delete_statement.data);
-
-	pfree(delete_statement.data);
 	list_free(oidlist);
 
 	/*
