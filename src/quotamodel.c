@@ -227,7 +227,7 @@ static void clear_all_quota_maps(void);
 static void transfer_table_for_quota(int64 totalsize, QuotaType type, Oid *old_keys, Oid *new_keys, int16 segid);
 
 /* functions to refresh disk quota model*/
-static void refresh_disk_quota_usage(DiskquotaDBEntry *dbEntry);
+static void refresh_disk_quota_usage(bool is_init);
 static void calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map);
 static void flush_to_table_size(void);
 static bool flush_local_reject_map(void);
@@ -763,10 +763,8 @@ do_check_diskquota_state_is_ready(void)
  * recalculate the changed disk usage.
  */
 void
-refresh_disk_quota_model(DiskquotaDBEntry *dbEntry)
+refresh_disk_quota_model(bool is_init)
 {
-	bool is_init = !dbEntry->inited;
-
 	SEGCOUNT = getgpsegmentCount();
 	if (SEGCOUNT <= 0)
 	{
@@ -777,7 +775,7 @@ refresh_disk_quota_model(DiskquotaDBEntry *dbEntry)
 	/* skip refresh model when load_quotas failed */
 	if (load_quotas())
 	{
-		refresh_disk_quota_usage(dbEntry);
+		refresh_disk_quota_usage(is_init);
 	}
 	if (is_init) ereport(LOG, (errmsg("[diskquota] initialize quota model finished")));
 }
@@ -789,12 +787,11 @@ refresh_disk_quota_model(DiskquotaDBEntry *dbEntry)
  * process is constructing quota model.
  */
 static void
-refresh_disk_quota_usage(DiskquotaDBEntry *dbEntry)
+refresh_disk_quota_usage(bool is_init)
 {
 	bool  connected                   = false;
 	bool  pushed_active_snap          = false;
 	bool  ret                         = true;
-	bool  is_init                     = !dbEntry->inited;
 	HTAB *local_active_table_stat_map = NULL;
 
 	StartTransactionCommand();
@@ -846,14 +843,6 @@ refresh_disk_quota_usage(DiskquotaDBEntry *dbEntry)
 	}
 	PG_CATCH();
 	{
-		/* Initialization failed.  */
-		if (is_init)
-		{
-			LWLockAcquire(diskquota_locks.dblist_lock, LW_EXCLUSIVE);
-			dbEntry->corrupted = true;
-			LWLockRelease(diskquota_locks.dblist_lock);
-			PG_RE_THROW();
-		}
 		/* Prevents interrupts while cleaning up */
 		HOLD_INTERRUPTS();
 		EmitErrorReport();
