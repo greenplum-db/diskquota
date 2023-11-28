@@ -1,5 +1,8 @@
 -- Ensure diskquota does not save information about dropped table during restart cluster by invalidates it at startup
 
+!\retcode gpconfig -c diskquota.naptime -v 2 --skipvalidation;
+!\retcode gpstop -u;
+
 1: CREATE SCHEMA dropped_schema;
 1: SET search_path TO dropped_schema;
 1: SELECT diskquota.set_schema_quota('dropped_schema', '1 MB');
@@ -20,3 +23,6 @@
 1: SELECT tableid FROM diskquota.table_size WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class WHERE tableid = oid) AND segid = -1;
 1: DROP SCHEMA dropped_schema CASCADE;
 1q:
+
+!\retcode gpconfig -c diskquota.naptime -v 0 --skipvalidation;
+!\retcode gpstop -u;

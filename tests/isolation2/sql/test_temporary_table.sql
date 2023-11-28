@@ -1,5 +1,8 @@
 -- Ensure diskquota does not save information about temporary table during restart cluster by invalidates it at startup
 
+!\retcode gpconfig -c diskquota.naptime -v 2 --skipvalidation;
+!\retcode gpstop -u;
+
 1: CREATE SCHEMA temporary_schema;
 1: SET search_path TO temporary_schema;
 1: SELECT diskquota.set_schema_quota('temporary_schema', '1 MB');
@@ -19,3 +22,6 @@
 1: SELECT tableid FROM diskquota.table_size WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class WHERE tableid = oid) AND segid = -1;
 1: DROP SCHEMA temporary_schema CASCADE;
 1q:
+
+!\retcode gpconfig -c diskquota.naptime -v 0 --skipvalidation;
+!\retcode gpstop -u;
