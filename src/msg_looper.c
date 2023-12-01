@@ -23,6 +23,16 @@
 #include "msg_looper.h"
 
 /*----------------------------init function-----------------------------*/
+void
+request_looper_lock(const char *looper_name)
+{
+#if GP_VERSION_NUM < 70000
+	RequestAddinLWLocks(1);
+#else
+	RequestNamedLWLockTranche(looper_name, 1);
+#endif /* GP_VERSION_NUM */
+}
+
 static void
 init_looper_lock(DiskquotaLooper *looper)
 {
@@ -30,31 +40,41 @@ init_looper_lock(DiskquotaLooper *looper)
 #if GP_VERSION_NUM < 70000
 	looper->loop_lock = LWLockAssign();
 #else
-	LWLockPadded *lock_base = GetNamedLWLockTranche(DISKQUOTA_CENTER_WORKER_LOCK_TRANCHE_NAME);
+	LWLockPadded *lock_base = GetNamedLWLockTranche(NameStr(looper->name));
 	looper->loop_lock       = &lock_base[0].lock;
 #endif /* GP_VERSION_NUM */
 }
 
-/* init message looper. This function is called in center worker main function */
+void
+init_looper(DiskquotaLooper *looper, message_handler handler)
+{
+	looper->server_pid  = MyProcPid;
+	looper->slatch      = &(MyProc->procLatch);
+	looper->msg_handler = handler;
+	init_looper_lock(looper);
+}
+
+/* init message looper. This function is called in server main function */
 DiskquotaLooper *
-init_looper(const char *name, message_handler handler)
+create_looper(const char *looper_name)
 {
 	bool found = false;
 
-	DiskquotaLooper *looper = (DiskquotaLooper *)ShmemInitStruct(name, sizeof(DiskquotaLooper), &found);
+	DiskquotaLooper *looper = (DiskquotaLooper *)ShmemInitStruct(looper_name, sizeof(DiskquotaLooper), &found);
 	if (found)
 	{
 		// TODO Report warning
 		return looper;
 	}
-	looper->server_pid = MyProcPid;
+
+	Assert(strlen(looper_name) < NAMEDATALEN);
+	StrNCpy(looper->name.data, looper_name, NAMEDATALEN);
+
+	looper->server_pid = InvalidPid;
 	looper->client_pid = InvalidPid;
 
-	looper->slatch = &MyProc->procLatch;
+	looper->slatch = NULL;
 	looper->clatch = NULL;
-
-	/* Init locks */
-	init_looper_lock(looper);
 
 	looper->req_handle = DSM_HANDLE_INVALID;
 	looper->rsp_handle = DSM_HANDLE_INVALID;
@@ -62,18 +82,21 @@ init_looper(const char *name, message_handler handler)
 	looper->request_done  = false;
 	looper->response_done = false;
 
-	looper->msg_handler = handler;
-
 	return looper;
 }
 
+/*--------------------------message----------------------------------*/
 /*
  * Create a message.
  */
 DiskquotaMessage *
 init_message(DiskquotaMessageID msg_id, size_t payload_len)
 {
-	dsm_segment      *seg = dsm_create(MSG_SIZE(payload_len));
+#if GP_VERSION_NUM < 70000
+	dsm_segment *seg = dsm_create(MSG_SIZE(payload_len));
+#else
+	dsm_segment *seg        = dsm_create(MSG_SIZE(payload_len), 0);
+#endif
 	DiskquotaMessage *msg = dsm_segment_address(seg);
 	msg->msg_id           = msg_id;
 	msg->handle           = dsm_segment_handle(seg);
@@ -148,12 +171,12 @@ send_request_and_wait(DiskquotaLooper *looper, DiskquotaMessage *req_msg, signal
 	 */
 	looper->response_done = false;
 	/*
-	 * set request_done to true instead of use LWLock: in the center worker
-	 * - if request_done is false due to the parallel problem, the center worker can check whether
+	 * set request_done to true instead of use LWLock: in the server
+	 * - if request_done is false due to the parallel problem, the server can check whether
 	 *   req_handle != DSM_HANDLE_INVALID.
-	 * 		- if YES, the center worker can go on to handle this message.
-	 * 		- if NO, the center worker will handle this message in the next loop. Because SetLatch(looper->slatch) is
-	 * 		  behind of ResetLatch(looper->slatch), the center worker won't hang by DiskquotaWaitLatch() in the next
+	 * 		- if YES, the server can go on to handle this message.
+	 * 		- if NO, the server will handle this message in the next loop. Because SetLatch(looper->slatch) is
+	 * 		  behind of ResetLatch(looper->slatch), the server won't hang by DiskquotaWaitLatch() in the next
 	 *        loop.
 	 * - if request_done is true, then the request message is set completely.
 	 */

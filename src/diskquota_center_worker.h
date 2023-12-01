@@ -15,8 +15,7 @@
 #define DISKQUOTA_CENTER_WORKER_H
 
 #define DISKQUOTA_CENTER_WORKER_NAME "diskquota_center_worker"
-#define DISKQUOTA_CENTER_WORKER_LOCK_TRANCHE_NAME "DiskquotaCenterWorkerLocks"
-#define CENTER_WORKER_LWLOCK_NUMBER 1
+#define DISKQUOTA_CENTER_WORKER_MESSAGE_LOOPER_NAME "diskquota_center_worker_message_looper"
 
 extern Size diskquota_center_worker_shmem_size(void);
 

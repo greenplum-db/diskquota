@@ -70,12 +70,24 @@ typedef struct DiskquotaLooper
 	 */
 	bool response_done;
 
-	/* Private to center worker */
+	/* Private to server */
+	NameData        name;
 	message_handler msg_handler;
 } DiskquotaLooper;
 
-/* Called by center worker */
-extern DiskquotaLooper *init_looper(const char *name, message_handler handler);
+/* Called by server */
+/*
+ * To initialize a looper
+ * 1. request locks in the _pg_init() on the postmaster process
+ * request_looper_lock("my_looper");
+ * 2. create the looper struct on the server process (cannot be the postmaster process)
+ * looper = create_looper("my_looper");
+ * 3. initialize the looper
+ * init_looper(looper, handler);
+ */
+extern void             request_looper_lock(const char *looper_name);
+extern DiskquotaLooper *create_looper(const char *looper_name);
+extern void             init_looper(DiskquotaLooper *looper, message_handler handler);
 
 /* Called by client */
 extern DiskquotaLooper  *attach_looper(const char *name);

@@ -48,6 +48,7 @@
 #include "ddl_message.h"
 #include "diskquota_launcher.h"
 #include "diskquota_center_worker.h"
+#include "msg_looper.h"
 
 int SEGCOUNT = 0;
 
@@ -117,11 +118,11 @@ init_disk_quota_shmem(void)
 	/* locks for diskquota refer to init_lwlocks() for details */
 #if GP_VERSION_NUM < 70000
 	RequestAddinLWLocks(DiskQuotaLocksItemNumber);
-	RequestAddinLWLocks(CENTER_WORKER_LWLOCK_NUMBER);
 #else
 	RequestNamedLWLockTranche("DiskquotaLocks", DiskQuotaLocksItemNumber);
-	RequestNamedLWLockTranche(DISKQUOTA_CENTER_WORKER_LOCK_TRANCHE_NAME, CENTER_WORKER_LWLOCK_NUMBER);
 #endif /* GP_VERSION_NUM */
+
+	request_looper_lock(DISKQUOTA_CENTER_WORKER_MESSAGE_LOOPER_NAME);
 
 	/* Install startup hook to initialize our shared memory. */
 	prev_shmem_startup_hook = shmem_startup_hook;

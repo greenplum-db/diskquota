@@ -120,8 +120,9 @@ disk_quota_center_worker_main(Datum main_arg)
 	init_ps_display("center worker:", "[diskquota]", DISKQUOTA_DB, "");
 
 	CurrentResourceOwner    = ResourceOwnerCreate(NULL, DISKQUOTA_CENTER_WORKER_NAME);
-	DiskquotaLooper *looper = init_looper(DISKQUOTA_CENTER_WORKER_NAME, disk_quota_message_handler);
+	DiskquotaLooper *looper = create_looper(DISKQUOTA_CENTER_WORKER_MESSAGE_LOOPER_NAME);
 	Assert(looper != NULL);
+	init_looper(looper, disk_quota_message_handler);
 
 	// FIXME: should we destroy gangs?
 	while (!got_sigterm)
