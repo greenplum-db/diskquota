@@ -396,7 +396,7 @@ disk_quota_refresh(bool is_init)
 
 	if (is_init) ereport(LOG, (errmsg("[diskquota] initialize quota model started")));
 	// TODO: calculate size, send message to center worker, and receive rejectmap
-	table_size_map = pull_current_database_table_size(is_init);
+	// table_size_map = pull_current_database_table_size(is_init);
 	if (is_init) ereport(LOG, (errmsg("[diskquota] initialize quota model finished")));
 }
 
