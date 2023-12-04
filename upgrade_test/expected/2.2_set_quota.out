@@ -4,7 +4,18 @@ GUC          : shared_preload_libraries
 Master  value: diskquota-2.2.so
 Segment value: diskquota-2.2.so
 create extension diskquota with version '2.2';
-\!sleep 5
+select diskquota.init_table_size_table();
+ init_table_size_table 
+-----------------------
+ 
+(1 row)
+
+select diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
 -- schema quota
 create schema s1;
 select diskquota.set_schema_quota('s1', '1 MB');

@@ -42,6 +42,8 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/timestamp.h"
+#include "utils/formatting.h"
+#include "tcop/pquery.h"
 
 PG_MODULE_MAGIC;
 
@@ -68,12 +70,14 @@ static volatile sig_atomic_t got_sigusr1 = false;
 static volatile sig_atomic_t got_sigusr2 = false;
 
 /* GUC variables */
-int  diskquota_naptime            = 0;
-int  diskquota_max_active_tables  = 0;
-int  diskquota_worker_timeout     = 60; /* default timeout is 60 seconds */
-bool diskquota_hardlimit          = false;
-int  diskquota_max_workers        = 10;
-int  diskquota_max_table_segments = 0;
+int  diskquota_naptime                 = 0;
+int  diskquota_max_active_tables       = 0;
+int  diskquota_worker_timeout          = 60; /* default timeout is 60 seconds */
+bool diskquota_hardlimit               = false;
+int  diskquota_max_workers             = 10;
+int  diskquota_max_table_segments      = 0;
+int  diskquota_max_monitored_databases = 0;
+int  diskquota_max_quota_probes        = 0;
 
 DiskQuotaLocks       diskquota_locks;
 ExtensionDDLMessage *extension_ddl_message = NULL;
@@ -87,6 +91,9 @@ static int num_db = 0;
 
 /* how many TableSizeEntry are maintained in all the table_size_map in shared memory*/
 pg_atomic_uint32 *diskquota_table_size_entry_num;
+
+/* how many QuotaInfoEntry are maintained in all the quota_info_map in shared memory*/
+pg_atomic_uint32 *diskquota_quota_info_entry_num;
 
 static DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
 
@@ -142,11 +149,12 @@ static void                    vacuum_db_entry(DiskquotaDBEntry *db);
 static void                    init_bgworker_handles(void);
 static BackgroundWorkerHandle *get_bgworker_handle(uint32 worker_id);
 static void                    free_bgworker_handle(uint32 worker_id);
-static void                    resetBackgroundWorkerCorruption(void);
 #if GP_VERSION_NUM < 70000
 /* WaitForBackgroundWorkerShutdown is copied from gpdb7 */
 static BgwHandleStatus WaitForBackgroundWorkerShutdown(BackgroundWorkerHandle *handle);
 #endif /* GP_VERSION_NUM */
+static bool is_altering_extension_to_default_version(char *version);
+static bool check_alter_extension(void);
 
 /*
  * diskquota_launcher_shmem_size
@@ -158,11 +166,93 @@ diskquota_launcher_shmem_size(void)
 	Size size;
 
 	size = MAXALIGN(sizeof(DiskquotaLauncherShmemStruct));
-	size = add_size(size, mul_size(diskquota_max_workers,
-	                               sizeof(struct DiskQuotaWorkerEntry))); // hidden memory for DiskQuotaWorkerEntry
-	size = add_size(size, mul_size(MAX_NUM_MONITORED_DB, sizeof(struct DiskquotaDBEntry))); // hidden memory for dbArray
+	// hidden memory for DiskQuotaWorkerEntry
+	size = add_size(size, mul_size(diskquota_max_workers, sizeof(struct DiskQuotaWorkerEntry)));
+	// hidden memory for dbArray
+	size = add_size(size, mul_size(diskquota_max_monitored_databases, sizeof(struct DiskquotaDBEntry)));
 	return size;
 }
+
+/*
+ * Check whether altering the extension to the default version.
+ */
+static bool
+is_altering_extension_to_default_version(char *version)
+{
+	int  spi_ret;
+	bool ret = false;
+	SPI_connect();
+	spi_ret = SPI_execute("select default_version from pg_available_extensions where name ='diskquota'", true, 0);
+	if (spi_ret != SPI_OK_SELECT)
+		elog(ERROR, "[diskquota] failed to select diskquota default version during diskquota update.");
+	if (SPI_processed > 0)
+	{
+		HeapTuple tup = SPI_tuptable->vals[0];
+		Datum     dat;
+		bool      isnull;
+
+		dat = SPI_getbinval(tup, SPI_tuptable->tupdesc, 1, &isnull);
+		if (!isnull)
+		{
+			char *default_version = DatumGetCString(dat);
+			if (strcmp(version, default_version) == 0) ret = true;
+		}
+	}
+	SPI_finish();
+	return ret;
+}
+
+static bool
+check_alter_extension(void)
+{
+	if (ActivePortal == NULL) return false;
+	/* QD: When the sourceTag is T_AlterExtensionStmt, then return true */
+	if (ActivePortal->sourceTag == T_AlterExtensionStmt) return true;
+
+	/*
+	 * QE: The sourceTag won't be T_AlterExtensionStmt, we should check the sourceText.
+	 * If the sourceText contains 'alter extension diskquota update', we consider it is
+	 * a alter extension query.
+	 */
+	char        *query  = asc_tolower(ActivePortal->sourceText, strlen(ActivePortal->sourceText));
+	char        *pos    = query;
+	bool         ret    = true;
+	static char *regs[] = {"alter", "extension", "diskquota", "update"};
+	int          i;
+
+	/* Check whether the sql statement is alter extension. */
+	for (i = 0; i < sizeof(regs) / sizeof(char *); i++)
+	{
+		pos = strstr(pos, regs[i]);
+		if (pos == 0)
+		{
+			ret = false;
+			break;
+		}
+	}
+
+	/*
+	 * If the current version is the final version, which is altered,
+	 * we need to throw an error to the user.
+	 */
+	if (ret)
+	{
+		/*
+		 * If version is set in alter extension statement, then compare the current version
+		 * with the version in this statement. Otherwise, compare the current version with
+		 * the default version of diskquota.
+		 */
+		pos = strstr(pos, "to");
+		if (pos)
+			ret = strstr(pos, DISKQUOTA_VERSION) != 0;
+		else
+			ret = is_altering_extension_to_default_version(DISKQUOTA_VERSION);
+	}
+
+	pfree(query);
+	return ret;
+}
+
 /*
  * Entrypoint of diskquota module.
  *
@@ -176,6 +266,15 @@ _PG_init(void)
 	/* diskquota.so must be in shared_preload_libraries to init SHM. */
 	if (!process_shared_preload_libraries_in_progress)
 	{
+		/*
+		 * To support the continuous upgrade/downgrade, we should skip the library
+		 * check in _PG_init() during upgrade/downgrade.
+		 */
+		if (IsNormalProcessingMode() && check_alter_extension())
+		{
+			ereport(LOG, (errmsg("[diskquota] altering diskquota version to " DISKQUOTA_VERSION ".")));
+			return;
+		}
 		ereport(ERROR, (errmsg("[diskquota] booting " DISKQUOTA_VERSION ", but " DISKQUOTA_BINARY_NAME
 		                       " not in shared_preload_libraries. abort.")));
 	}
@@ -308,9 +407,13 @@ define_guc_variables(void)
 	        "Max number of backgroud workers to run diskquota extension, should be less than max_worker_processes.",
 	        NULL, &diskquota_max_workers, 10, 1, 20, PGC_POSTMASTER, 0, NULL, NULL, NULL);
 	DefineCustomIntVariable("diskquota.max_table_segments", "Max number of tables segments on the cluster.", NULL,
-	                        &diskquota_max_table_segments, 10 * 1024 * 1024,
-	                        INIT_NUM_TABLE_SIZE_ENTRIES * MAX_NUM_MONITORED_DB, INT_MAX, PGC_POSTMASTER, 0, NULL, NULL,
-	                        NULL);
+	                        &diskquota_max_table_segments, 10 * 1024 * 1024, INIT_NUM_TABLE_SIZE_ENTRIES * 1024,
+	                        INT_MAX, PGC_POSTMASTER, 0, NULL, NULL, NULL);
+	DefineCustomIntVariable("diskquota.max_monitored_databases", "Max number of database on the cluster.", NULL,
+	                        &diskquota_max_monitored_databases, 50, 1, 1024, PGC_POSTMASTER, 0, NULL, NULL, NULL);
+	DefineCustomIntVariable("diskquota.max_quota_probes", "Max number of quotas on the cluster.", NULL,
+	                        &diskquota_max_quota_probes, 1024 * 1024, 1024 * INIT_QUOTA_MAP_ENTRIES, INT_MAX,
+	                        PGC_POSTMASTER, 0, NULL, NULL, NULL);
 }
 
 /* ---- Functions for disk quota worker process ---- */
@@ -339,7 +442,13 @@ disk_quota_worker_main(Datum main_arg)
 	pqsignal(SIGUSR1, disk_quota_sigusr1);
 
 	if (!MyWorkerInfo->dbEntry->inited)
+	{
+		MyWorkerInfo->dbEntry->last_log_time = GetCurrentTimestamp();
 		ereport(LOG, (errmsg("[diskquota] start disk quota worker process to monitor database:%s", dbname)));
+	}
+	/* To avoid last_log_time from being uninitialized. */
+	if (MyWorkerInfo->dbEntry->last_log_time > GetCurrentTimestamp())
+		MyWorkerInfo->dbEntry->last_log_time = GetCurrentTimestamp();
 	/*
 	 * The shmem exit hook is registered after registering disk_quota_sigterm.
 	 * So if the SIGTERM arrives before this statement, the shmem exit hook
@@ -483,15 +592,13 @@ disk_quota_worker_main(Datum main_arg)
 
 	if (!MyWorkerInfo->dbEntry->inited) update_monitordb_status(MyWorkerInfo->dbEntry->dbid, DB_RUNNING);
 
-	bool        is_gang_destroyed   = false;
-	TimestampTz log_start_timestamp = GetCurrentTimestamp();
-	TimestampTz log_end_timestamp;
+	bool        is_gang_destroyed    = false;
 	TimestampTz loop_start_timestamp = 0;
 	TimestampTz loop_end_timestamp;
+	TimestampTz log_time;
 	long        sleep_time = diskquota_naptime * 1000;
 	long        secs;
 	int         usecs;
-	ereport(LOG, (errmsg("[diskquota] disk quota worker process is monitoring database:%s", dbname)));
 
 	while (!got_sigterm)
 	{
@@ -503,11 +610,11 @@ disk_quota_worker_main(Datum main_arg)
 		 * every BGWORKER_LOG_TIME to ensure that we can find the database name
 		 * by the bgworker's pid in the log file.
 		 */
-		log_end_timestamp = GetCurrentTimestamp();
-		if (TimestampDifferenceExceeds(log_start_timestamp, log_end_timestamp, BGWORKER_LOG_TIME))
+		log_time = GetCurrentTimestamp();
+		if (TimestampDifferenceExceeds(MyWorkerInfo->dbEntry->last_log_time, log_time, BGWORKER_LOG_TIME))
 		{
 			ereport(LOG, (errmsg("[diskquota] disk quota worker process is monitoring database:%s", dbname)));
-			log_start_timestamp = log_end_timestamp;
+			MyWorkerInfo->dbEntry->last_log_time = log_time;
 		}
 
 		/*
@@ -526,7 +633,7 @@ disk_quota_worker_main(Datum main_arg)
 			if (!diskquota_is_paused())
 			{
 				/* Refresh quota model with init mode */
-				refresh_disk_quota_model(MyWorkerInfo->dbEntry);
+				refresh_disk_quota_model(!MyWorkerInfo->dbEntry->inited);
 				MyWorkerInfo->dbEntry->inited = true;
 				is_gang_destroyed             = false;
 			}
@@ -763,7 +870,6 @@ disk_quota_launcher_main(Datum main_arg)
 		{
 			elog(DEBUG1, "[diskquota] got sighup");
 			got_sighup = false;
-			resetBackgroundWorkerCorruption();
 			ProcessConfigFile(PGC_SIGHUP);
 		}
 
@@ -789,12 +895,11 @@ disk_quota_launcher_main(Datum main_arg)
 		 * When curDB->in_use is false means dbEtnry has been romoved
 		 * When curDB->dbid doesn't equtal curDBId, it means the slot has
 		 * been used by another db
-		 * When curDB->corrupted is true means worker couldn't initialize
-		 * the extension in the first run.
+		 *
 		 * For the above conditions, we just skip this loop and try to fetch
 		 * next db to run.
 		 */
-		if (curDB == NULL || !curDB->in_use || curDB->dbid != curDBId || curDB->corrupted)
+		if (curDB == NULL || !curDB->in_use || curDB->dbid != curDBId)
 		{
 			advance_one_db = true;
 			continue;
@@ -1001,10 +1106,10 @@ init_database_list(void)
 		if (dbEntry == NULL) continue;
 		num++;
 		/*
-		 * diskquota only supports to monitor at most MAX_NUM_MONITORED_DB
+		 * diskquota only supports to monitor at most diskquota_max_monitored_databases
 		 * databases
 		 */
-		if (num >= MAX_NUM_MONITORED_DB)
+		if (num >= diskquota_max_monitored_databases)
 		{
 			ereport(LOG, (errmsg("[diskquota launcher] diskquota monitored database limit is reached, database(oid:%u) "
 			                     "will not enable diskquota",
@@ -1014,7 +1119,7 @@ init_database_list(void)
 	}
 	num_db = num;
 	/* As update_monitor_db_mpp needs to execute sql, so can not put in the loop above */
-	for (int i = 0; i < MAX_NUM_MONITORED_DB; i++)
+	for (int i = 0; i < diskquota_max_monitored_databases; i++)
 	{
 		DiskquotaDBEntry *dbEntry = &DiskquotaLauncherShmem->dbArray[i];
 		if (dbEntry->in_use)
@@ -1196,7 +1301,7 @@ do_process_extension_ddl_message(MessageResult *code, ExtensionDDLMessage local_
 static void
 on_add_db(Oid dbid, MessageResult *code)
 {
-	if (num_db >= MAX_NUM_MONITORED_DB)
+	if (num_db >= diskquota_max_monitored_databases)
 	{
 		*code = ERR_EXCEED;
 		ereport(ERROR, (errmsg("[diskquota launcher] too many databases to monitor")));
@@ -1517,10 +1622,8 @@ diskquota_status_binary_version()
 static const char *
 diskquota_status_schema_version()
 {
-	static char version[64] = {0};
-	memset(version, 0, sizeof(version));
-
-	int ret = SPI_connect();
+	static char ret_version[64];
+	int         ret = SPI_connect();
 	Assert(ret = SPI_OK_CONNECT);
 
 	ret = SPI_execute("select extversion from pg_extension where extname = 'diskquota'", true, 0);
@@ -1529,30 +1632,33 @@ diskquota_status_schema_version()
 	{
 		ereport(WARNING,
 		        (errmsg("[diskquota] when reading installed version lines %ld code = %d", SPI_processed, ret)));
-		goto out;
+		goto fail;
 	}
 
 	if (SPI_processed == 0)
 	{
-		goto out;
+		goto fail;
 	}
 
-	bool  is_null = false;
-	Datum v       = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &is_null);
+	bool  is_null       = false;
+	Datum version_datum = SPI_getbinval(SPI_tuptable->vals[0], SPI_tuptable->tupdesc, 1, &is_null);
 	Assert(is_null == false);
 
-	char *vv = TextDatumGetCString(v);
-	if (vv == NULL)
+	char *version = TextDatumGetCString(version_datum);
+	if (version == NULL || *version == '\0')
 	{
 		ereport(WARNING, (errmsg("[diskquota] 'extversion' is empty in pg_class.pg_extension. may catalog corrupted")));
-		goto out;
+		goto fail;
 	}
 
-	StrNCpy(version, vv, sizeof(version));
+	StrNCpy(ret_version, version, sizeof(ret_version) - 1);
 
-out:
 	SPI_finish();
-	return version;
+	return ret_version;
+
+fail:
+	SPI_finish();
+	return "";
 }
 
 PG_FUNCTION_INFO_V1(diskquota_status);
@@ -1673,7 +1779,7 @@ init_launcher_shmem()
 
 		// get dbArray from the hidden memory
 		DiskquotaDBEntry *dbArray = (DiskquotaDBEntry *)hidden_memory_prt;
-		hidden_memory_prt += mul_size(MAX_NUM_MONITORED_DB, sizeof(struct DiskquotaDBEntry));
+		hidden_memory_prt += mul_size(diskquota_max_monitored_databases, sizeof(struct DiskquotaDBEntry));
 
 		// get the dbArrayTail from the hidden memory
 		DiskquotaDBEntry *dbArrayTail = (DiskquotaDBEntry *)hidden_memory_prt;
@@ -1689,7 +1795,7 @@ init_launcher_shmem()
 		DiskquotaLauncherShmem->dbArray     = dbArray;
 		DiskquotaLauncherShmem->dbArrayTail = dbArrayTail;
 
-		for (int i = 0; i < MAX_NUM_MONITORED_DB; i++)
+		for (int i = 0; i < diskquota_max_monitored_databases; i++)
 		{
 			memset(&DiskquotaLauncherShmem->dbArray[i], 0, sizeof(DiskquotaDBEntry));
 			DiskquotaLauncherShmem->dbArray[i].id       = i;
@@ -1700,6 +1806,11 @@ init_launcher_shmem()
 	diskquota_table_size_entry_num =
 	        ShmemInitStruct("diskquota TableSizeEntry counter", sizeof(pg_atomic_uint32), &found);
 	if (!found) pg_atomic_init_u32(diskquota_table_size_entry_num, 0);
+
+	/* init QuotaInfoEntry counter */
+	diskquota_quota_info_entry_num =
+	        ShmemInitStruct("diskquota QuotaInfoEntry counter", sizeof(pg_atomic_uint32), &found);
+	if (!found) pg_atomic_init_u32(diskquota_quota_info_entry_num, 0);
 }
 
 /*
@@ -1717,7 +1828,7 @@ add_db_entry(Oid dbid)
 
 	LWLockAcquire(diskquota_locks.dblist_lock, LW_EXCLUSIVE);
 	/* if there is already dbEntry's dbid equals dbid, returning the existing one */
-	for (int i = 0; i < MAX_NUM_MONITORED_DB; i++)
+	for (int i = 0; i < diskquota_max_monitored_databases; i++)
 	{
 		DiskquotaDBEntry *dbEntry = &DiskquotaLauncherShmem->dbArray[i];
 		if (!dbEntry->in_use && result == NULL)
@@ -1747,7 +1858,7 @@ static void
 release_db_entry(Oid dbid)
 {
 	DiskquotaDBEntry *db = NULL;
-	for (int i = 0; i < MAX_NUM_MONITORED_DB; i++)
+	for (int i = 0; i < diskquota_max_monitored_databases; i++)
 	{
 		DiskquotaDBEntry *dbEntry = &DiskquotaLauncherShmem->dbArray[i];
 		if (dbEntry->in_use && dbEntry->dbid == dbid)
@@ -1794,14 +1905,12 @@ next_db(DiskquotaDBEntry *curDB)
 	 */
 	StartTransactionCommand();
 	LWLockAcquire(diskquota_locks.dblist_lock, LW_SHARED);
-	for (int i = 0; i < MAX_NUM_MONITORED_DB; i++)
+	for (int i = 0; i < diskquota_max_monitored_databases; i++)
 	{
-		if (nextSlot >= MAX_NUM_MONITORED_DB) nextSlot = 0;
+		if (nextSlot >= diskquota_max_monitored_databases) nextSlot = 0;
 		DiskquotaDBEntry *dbEntry = &DiskquotaLauncherShmem->dbArray[nextSlot];
 		nextSlot++;
-		if (!dbEntry->in_use || dbEntry->workerId != INVALID_WORKER_ID || dbEntry->dbid == InvalidOid ||
-		    dbEntry->corrupted)
-			continue;
+		if (!dbEntry->in_use || dbEntry->workerId != INVALID_WORKER_ID || dbEntry->dbid == InvalidOid) continue;
 		/* TODO: should release the invalid db related things */
 		if (!is_valid_dbid(dbEntry->dbid)) continue;
 		result = dbEntry;
@@ -1865,11 +1974,10 @@ static void
 vacuum_db_entry(DiskquotaDBEntry *db)
 {
 	if (db == NULL) return;
-	db->dbid      = InvalidOid;
-	db->inited    = false;
-	db->workerId  = INVALID_WORKER_ID;
-	db->in_use    = false;
-	db->corrupted = false;
+	db->dbid     = InvalidOid;
+	db->inited   = false;
+	db->workerId = INVALID_WORKER_ID;
+	db->in_use   = false;
 }
 
 static void
@@ -1902,18 +2010,6 @@ free_bgworker_handle(uint32 worker_id)
 		pfree(*handle);
 		*handle = NULL;
 	}
-}
-
-static void
-resetBackgroundWorkerCorruption(void)
-{
-	LWLockAcquire(diskquota_locks.dblist_lock, LW_EXCLUSIVE);
-	for (int i = 0; i < MAX_NUM_MONITORED_DB; i++)
-	{
-		DiskquotaDBEntry *dbEntry = &DiskquotaLauncherShmem->dbArray[i];
-		if (dbEntry->corrupted) dbEntry->corrupted = false;
-	}
-	LWLockRelease(diskquota_locks.dblist_lock);
 }
 
 #if GP_VERSION_NUM < 70000

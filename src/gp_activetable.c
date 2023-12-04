@@ -377,7 +377,6 @@ gp_fetch_active_tables(bool is_init)
 
 	if (is_init)
 	{
-		SIMPLE_FAULT_INJECTOR("diskquota_worker_initialization");
 		load_table_size(local_table_stats_map);
 	}
 	else
@@ -748,6 +747,8 @@ get_active_tables_oid(void)
 	Oid                           *altered_reloid_entry;
 
 	Oid relOid;
+
+	refresh_monitored_dbid_cache();
 
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize                 = sizeof(DiskQuotaActiveTableFileEntry);
