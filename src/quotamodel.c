@@ -122,7 +122,7 @@ init_disk_quota_shmem(void)
 	RequestNamedLWLockTranche("DiskquotaLocks", DiskQuotaLocksItemNumber);
 #endif /* GP_VERSION_NUM */
 
-	request_looper_lock(DISKQUOTA_CENTER_WORKER_MESSAGE_LOOPER_NAME);
+	request_message_looper_lock(DISKQUOTA_CENTER_WORKER_MESSAGE_LOOPER_NAME);
 
 	/* Install startup hook to initialize our shared memory. */
 	prev_shmem_startup_hook = shmem_startup_hook;

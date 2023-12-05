@@ -403,7 +403,7 @@ disk_quota_refresh(bool is_init)
 static HTAB *
 pull_current_database_table_size(bool is_init)
 {
-	DiskquotaLooper  *looper  = attach_looper(DISKQUOTA_CENTER_WORKER_NAME);
+	DiskquotaLooper  *looper  = attach_message_looper(DISKQUOTA_CENTER_WORKER_NAME);
 	DiskquotaMessage *req_msg = init_message(MSG_TestMessage, sizeof(TestMessage));
 	DiskquotaMessage *rsp_msg;
 	TestMessage      *body = (TestMessage *)MSG_BODY(req_msg);

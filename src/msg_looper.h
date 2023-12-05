@@ -53,15 +53,15 @@ typedef void (*signal_handler)(void);
 /*
  * To initialize a looper
  * 1. request locks in the _pg_init() on the postmaster process
- * request_looper_lock("my_looper");
+ * request_message_looper_lock("my_looper");
  * 2. create the looper struct on the server process (cannot be the postmaster process)
- * looper = create_looper("my_looper");
+ * looper = create_message_looper("my_looper");
  * 3. initialize the looper
- * init_looper(looper, handler);
+ * init_message_looper(looper, handler);
  */
-extern void             request_looper_lock(const char *looper_name);
-extern DiskquotaLooper *create_looper(const char *looper_name);
-extern void             init_looper(DiskquotaLooper *looper, message_handler handler);
+extern void             request_message_looper_lock(const char *looper_name);
+extern DiskquotaLooper *create_message_looper(const char *looper_name);
+extern void             init_message_looper(DiskquotaLooper *looper, message_handler handler);
 
 extern Size message_looper_size(void);
 extern void message_looper_wait_for_latch(DiskquotaLooper *looper);
@@ -69,7 +69,7 @@ extern void message_looper_handle_message(DiskquotaLooper *looper);
 extern void message_looper_set_server_latch(DiskquotaLooper *looper);
 
 /* Called by client */
-extern DiskquotaLooper  *attach_looper(const char *name);
+extern DiskquotaLooper  *attach_message_looper(const char *name);
 extern DiskquotaMessage *send_request_and_wait(DiskquotaLooper *looper, DiskquotaMessage *req_msg,
                                                signal_handler handler);
 

@@ -46,7 +46,7 @@ disk_quota_sigterm(SIGNAL_ARGS)
 
 	got_sigterm = true;
 
-	DiskquotaLooper *looper = attach_looper(DISKQUOTA_CENTER_WORKER_NAME);
+	DiskquotaLooper *looper = attach_message_looper(DISKQUOTA_CENTER_WORKER_NAME);
 	if (looper) message_looper_set_server_latch(looper);
 
 	errno = save_errno;
@@ -64,7 +64,7 @@ disk_quota_sighup(SIGNAL_ARGS)
 
 	got_sighup = true;
 
-	DiskquotaLooper *looper = attach_looper(DISKQUOTA_CENTER_WORKER_NAME);
+	DiskquotaLooper *looper = attach_message_looper(DISKQUOTA_CENTER_WORKER_NAME);
 	if (looper) message_looper_set_server_latch(looper);
 
 	errno = save_errno;
@@ -120,9 +120,9 @@ disk_quota_center_worker_main(Datum main_arg)
 	init_ps_display("center worker:", "[diskquota]", DISKQUOTA_DB, "");
 
 	CurrentResourceOwner    = ResourceOwnerCreate(NULL, DISKQUOTA_CENTER_WORKER_NAME);
-	DiskquotaLooper *looper = create_looper(DISKQUOTA_CENTER_WORKER_MESSAGE_LOOPER_NAME);
+	DiskquotaLooper *looper = create_message_looper(DISKQUOTA_CENTER_WORKER_MESSAGE_LOOPER_NAME);
 	Assert(looper != NULL);
-	init_looper(looper, disk_quota_message_handler);
+	init_message_looper(looper, disk_quota_message_handler);
 
 	// FIXME: should we destroy gangs?
 	while (!got_sigterm)

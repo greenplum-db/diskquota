@@ -58,7 +58,7 @@ message_looper_size(void)
 }
 
 void
-request_looper_lock(const char *looper_name)
+request_message_looper_lock(const char *looper_name)
 {
 #if GP_VERSION_NUM < 70000
 	RequestAddinLWLocks(1);
@@ -80,7 +80,7 @@ init_looper_lock(DiskquotaLooper *looper)
 }
 
 void
-init_looper(DiskquotaLooper *looper, message_handler handler)
+init_message_looper(DiskquotaLooper *looper, message_handler handler)
 {
 	looper->server_pid  = MyProcPid;
 	looper->slatch      = &(MyProc->procLatch);
@@ -90,7 +90,7 @@ init_looper(DiskquotaLooper *looper, message_handler handler)
 
 /* init message looper. This function is called in server main function */
 DiskquotaLooper *
-create_looper(const char *looper_name)
+create_message_looper(const char *looper_name)
 {
 	bool found = false;
 
@@ -225,7 +225,7 @@ message_looper_handle_message(DiskquotaLooper *looper)
  * If the looper is not initialized yet, the return value is NULL.
  */
 DiskquotaLooper *
-attach_looper(const char *name)
+attach_message_looper(const char *name)
 {
 	bool found = false;
 	// FIXME: When to de-init?
