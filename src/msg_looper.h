@@ -45,35 +45,9 @@ typedef struct DiskquotaMessage
 	Size               size;   /* the size of message content */
 } DiskquotaMessage;
 
+typedef struct DiskquotaLooper DiskquotaLooper;
 typedef DiskquotaMessage *(*message_handler)(DiskquotaMessage *req_msg);
 typedef void (*signal_handler)(void);
-
-typedef struct DiskquotaLooper
-{
-	pid_t server_pid; /* the pid of the server */
-	pid_t client_pid; /* the oud if the client */
-
-	Latch *slatch; /* the latch on the server side */
-	Latch *clatch; /* the latch on the client side */
-
-	LWLock *loop_lock; /* Clients holds this lock before sending request, and release it after receiving response. */
-
-	dsm_handle req_handle; /* the dsm handle of request message */
-	dsm_handle rsp_handle; /* the dsm handle of response message */
-
-	bool request_done; /* Check whether request message is prepared. */
-	/*
-	 * Check whether response message is generated. Client waits for latch after send request,
-	 * then if client receives a signal, the latch will be set and client will go on.
-	 * In this case, client should check whether response_done == true, if false, client should
-	 * wait for the latch again.
-	 */
-	bool response_done;
-
-	/* Private to server */
-	NameData        name;
-	message_handler msg_handler;
-} DiskquotaLooper;
 
 /* Called by server */
 /*
@@ -88,6 +62,11 @@ typedef struct DiskquotaLooper
 extern void             request_looper_lock(const char *looper_name);
 extern DiskquotaLooper *create_looper(const char *looper_name);
 extern void             init_looper(DiskquotaLooper *looper, message_handler handler);
+
+extern Size message_looper_size(void);
+extern void message_looper_wait_for_latch(DiskquotaLooper *looper);
+extern void message_looper_handle_message(DiskquotaLooper *looper);
+extern void message_looper_set_server_latch(DiskquotaLooper *looper);
 
 /* Called by client */
 extern DiskquotaLooper  *attach_looper(const char *name);
