@@ -7,6 +7,7 @@
 #include "diskquota.h"
 #include "msg_looper.h"
 #include "diskquota_center_worker.h"
+#include "message_def.h"
 
 /*---------------------------test UDF---------------------------------*/
 PG_FUNCTION_INFO_V1(test_send_message);

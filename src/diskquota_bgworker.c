@@ -26,6 +26,7 @@
 #include "diskquota_center_worker.h"
 #include "diskquota_launcher.h"
 #include "diskquota_guc.h"
+#include "message_def.h"
 
 #include <unistd.h> // for useconds_t
 

@@ -17,23 +17,11 @@
 #include "postgres.h"
 #include "storage/dsm.h"
 
+#define DiskquotaMessageID uint32
 #define MSG_BODY(msg) ((char *)msg + MAXALIGN(sizeof(DiskquotaMessage)))
 #define MSG_SIZE(msg) (MAXALIGN(msg->size) + MAXALIGN(sizeof(DiskquotaMessage)))
 #define init_request_message(msg_id, payload_len) init_message(msg_id, payload_len)
 #define init_response_message(msg_id, payload_len) init_message(msg_id, payload_len)
-
-typedef struct TestMessage
-{
-	int a;
-	int b;
-} TestMessage;
-
-typedef enum
-{
-	MSG_DEBUG = 10000,
-	MSG_TestMessage,
-	TIMEOUT_EVENT,
-} DiskquotaMessageID;
 
 /*
  * The message header.

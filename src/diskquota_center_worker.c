@@ -24,6 +24,7 @@
 #include "diskquota.h"
 #include "msg_looper.h"
 #include "diskquota_center_worker.h"
+#include "message_def.h"
 
 /* sinal callback function */
 static void disk_quota_sigterm(SIGNAL_ARGS);
