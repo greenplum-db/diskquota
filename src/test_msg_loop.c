@@ -22,7 +22,7 @@ test_send_message(PG_FUNCTION_ARGS)
 	TupleDesc tuple_desc = BlessTupleDesc(tupdesc);
 
 	DiskquotaLooper  *looper  = attach_message_looper(DISKQUOTA_CENTER_WORKER_NAME);
-	DiskquotaMessage *req_msg = init_message(MSG_TestMessage, sizeof(TestMessage));
+	DiskquotaMessage *req_msg = init_request_message(MSG_TestMessage, sizeof(TestMessage));
 	DiskquotaMessage *rsp_msg;
 	TestMessage      *body = (TestMessage *)MSG_BODY(req_msg);
 	body->a                = a;

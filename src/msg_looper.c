@@ -23,6 +23,11 @@
 
 #include "msg_looper.h"
 
+static void              init_looper_lock(DiskquotaLooper *looper);
+static DiskquotaMessage *attach_message(dsm_handle handle);
+static void              free_message_by_handle(dsm_handle handle);
+static void              looper_wait_for_client_latch(DiskquotaLooper *looper);
+
 struct DiskquotaLooper
 {
 	pid_t server_pid; /* the pid of the server */
@@ -121,15 +126,15 @@ create_message_looper(const char *looper_name)
 
 /*--------------------------message----------------------------------*/
 /*
- * Create a message.
+ * Create a message. The message should be free by free_message().
  */
 DiskquotaMessage *
 init_message(DiskquotaMessageID msg_id, size_t payload_len)
 {
 #if GP_VERSION_NUM < 70000
-	dsm_segment *seg = dsm_create(MSG_SIZE(payload_len));
+	dsm_segment *seg = dsm_create(MAXALIGN(payload_len) + MAXALIGN(sizeof(DiskquotaMessage)));
 #else
-	dsm_segment *seg        = dsm_create(MSG_SIZE(payload_len), 0);
+	dsm_segment *seg        = dsm_create(MAXALIGN(payload_len) + MAXALIGN(sizeof(DiskquotaMessage)), 0);
 #endif
 	DiskquotaMessage *msg = dsm_segment_address(seg);
 	msg->msg_id           = msg_id;
@@ -138,13 +143,16 @@ init_message(DiskquotaMessageID msg_id, size_t payload_len)
 	return msg;
 }
 
-DiskquotaMessage *
+static DiskquotaMessage *
 attach_message(dsm_handle handle)
 {
 	dsm_segment *seg = dsm_attach(handle);
 	return dsm_segment_address(seg);
 }
 
+/*
+ * free message
+ */
 void
 free_message(DiskquotaMessage *msg)
 {
@@ -154,9 +162,13 @@ free_message(DiskquotaMessage *msg)
 /*
  * Called by server to free the response dsm created in the last connection.
  */
-void
+static void
 free_message_by_handle(dsm_handle handle)
 {
+	/* 
+	 * If the server has not handle the message yet, the handle is invalid.
+	 * We just need to return.
+	 */
 	if (handle == DSM_HANDLE_INVALID) return;
 	dsm_detach(dsm_find_mapping(handle));
 }
@@ -209,13 +221,6 @@ message_looper_handle_message(DiskquotaLooper *looper)
 		free_message(req_msg);
 
 		SetLatch(looper->clatch);
-
-		// GPDB6 opend a MemoryAccount for us without asking us.
-		// and GPDB6 did not release the MemoryAccount after SPI finish.
-		// Reset the MemoryAccount although we never create it.
-#if GP_VERSION_NUM < 70000
-		MemoryAccounting_Reset();
-#endif /* GP_VERSION_NUM */
 	}
 }
 
@@ -232,11 +237,7 @@ attach_message_looper(const char *name)
 	DiskquotaLooper *looper = (DiskquotaLooper *)ShmemInitStruct(name, sizeof(DiskquotaLooper), &found);
 	if (!found)
 	{
-		/*
-		 * The looper has not been started yet. Even the shmem can be created,
-		 * the looper's client cannot do anything with it.
-		 */
-		return NULL;
+		ereport(ERROR, (errmsg("message looper does not exist: %s", name)));
 	}
 	// TODO: Check pid invalid
 	return looper;
@@ -264,7 +265,7 @@ looper_wait_for_client_latch(DiskquotaLooper *looper)
 
 /*
  * send a request to server and wait for response
- * request segment and response segment should be free by client
+ * request message and response message should be free by client
  */
 DiskquotaMessage *
 send_request_and_wait(DiskquotaLooper *looper, DiskquotaMessage *req_msg, signal_handler handler)

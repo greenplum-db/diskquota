@@ -18,7 +18,9 @@
 #include "storage/dsm.h"
 
 #define MSG_BODY(msg) ((char *)msg + MAXALIGN(sizeof(DiskquotaMessage)))
-#define MSG_SIZE(sz) (MAXALIGN(sizeof(DiskquotaMessage)) + MAXALIGN(sz))
+#define MSG_SIZE(msg) (MAXALIGN(msg->size) + MAXALIGN(sizeof(DiskquotaMessage)))
+#define init_request_message(msg_id, payload_len) init_message(msg_id, payload_len)
+#define init_response_message(msg_id, payload_len) init_message(msg_id, payload_len)
 
 typedef struct TestMessage
 {
@@ -52,11 +54,13 @@ typedef void (*signal_handler)(void);
 /* Called by server */
 /*
  * To initialize a looper
- * 1. request locks in the _pg_init() on the postmaster process
+ * 1. request shared memory in the _pg_init() on the postmaster process
+ * by calling RequestAddinShmemSpace(message_looper_size())
+ * 2. request locks in the _pg_init() on the postmaster process
  * request_message_looper_lock("my_looper");
- * 2. create the looper struct on the server process (cannot be the postmaster process)
+ * 3. create the looper struct on the server process (cannot be the postmaster process)
  * looper = create_message_looper("my_looper");
- * 3. initialize the looper
+ * 4. initialize the looper
  * init_message_looper(looper, handler);
  */
 extern void             request_message_looper_lock(const char *looper_name);
@@ -75,8 +79,6 @@ extern DiskquotaMessage *send_request_and_wait(DiskquotaLooper *looper, Diskquot
 
 /* message function */
 extern DiskquotaMessage *init_message(DiskquotaMessageID msg_id, size_t payload_len);
-extern DiskquotaMessage *attach_message(dsm_handle handle);
 extern void              free_message(DiskquotaMessage *msg);
-extern void              free_message_by_handle(dsm_handle handle);
 
 #endif

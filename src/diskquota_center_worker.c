@@ -167,16 +167,22 @@ loop(DiskquotaLooper *looper)
 static DiskquotaMessage *
 disk_quota_message_handler(DiskquotaMessage *req_msg)
 {
+	DiskquotaMessage *rsp_msg = NULL;
 	switch (req_msg->msg_id)
 	{
 		case MSG_TestMessage: {
-			DiskquotaMessage *rsp_msg = init_message(MSG_TestMessage, sizeof(TestMessage));
-			memcpy(MSG_BODY(rsp_msg), MSG_BODY(req_msg), MSG_SIZE(sizeof(TestMessage)));
-			return rsp_msg;
+			rsp_msg = init_response_message(MSG_TestMessage, sizeof(TestMessage));
+			memcpy(MSG_BODY(rsp_msg), MSG_BODY(req_msg), MSG_SIZE(req_msg));
 		}
 		break;
 		default:
 			break;
 	}
-	return NULL;
+		// GPDB6 opend a MemoryAccount for us without asking us.
+		// and GPDB6 did not release the MemoryAccount after SPI finish.
+		// Reset the MemoryAccount although we never create it.
+#if GP_VERSION_NUM < 70000
+	MemoryAccounting_Reset();
+#endif /* GP_VERSION_NUM */
+	return rsp_msg;
 }
