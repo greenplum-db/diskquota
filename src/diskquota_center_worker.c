@@ -172,6 +172,12 @@ disk_quota_message_handler(DiskquotaMessage *req_msg)
 			memcpy(MSG_BODY(rsp_msg), MSG_BODY(req_msg), MSG_SIZE(req_msg));
 		}
 		break;
+		case MSG_TestMessageLoop: {
+			TestMessageLoop *req_body = (TestMessageLoop *)MSG_BODY(req_msg);
+			rsp_msg                   = init_response_message(MSG_TestMessageLoop, sizeof(TestMessageLoop));
+			TestMessageLoop *rsp_body = (TestMessageLoop *)MSG_BODY(rsp_msg);
+			rsp_body->a               = req_body->a + 1;
+		}
 		default:
 			break;
 	}

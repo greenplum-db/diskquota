@@ -20,8 +20,14 @@ typedef struct TestMessage
 	int b;
 } TestMessage;
 
+typedef struct TestMessageLoop
+{
+	int a;
+} TestMessageLoop;
+
 #define MSG_DEBUG 1
 #define MSG_TestMessage 2
-#define TIMEOUT_EVENT 3
+#define MSG_TestMessageLoop 3
+#define TIMEOUT_EVENT 4
 
 #endif

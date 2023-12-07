@@ -2,12 +2,19 @@
 
 #include "utils/faultinjector.h"
 #include "catalog/pg_type.h"
+#include "storage/ipc.h"
 #include "funcapi.h"
 
 #include "diskquota.h"
 #include "msg_looper.h"
 #include "diskquota_center_worker.h"
 #include "message_def.h"
+
+static void
+disk_quota_sigterm(SIGNAL_ARGS)
+{
+	proc_exit(0);
+}
 
 /*---------------------------test UDF---------------------------------*/
 PG_FUNCTION_INFO_V1(test_send_message);
@@ -41,4 +48,31 @@ test_send_message(PG_FUNCTION_ARGS)
 	free_message(req_msg);
 	free_message(rsp_msg);
 	PG_RETURN_DATUM(result);
+}
+
+PG_FUNCTION_INFO_V1(test_send_message_loop);
+Datum
+test_send_message_loop(PG_FUNCTION_ARGS)
+{
+	int a = PG_GETARG_INT32(0);
+	pqsignal(SIGTERM, disk_quota_sigterm);
+
+	DiskquotaLooper *looper = attach_message_looper(DISKQUOTA_CENTER_WORKER_MESSAGE_LOOPER_NAME);
+
+	while (true)
+	{
+		DiskquotaMessage *req_msg  = init_request_message(MSG_TestMessageLoop, sizeof(TestMessageLoop));
+		TestMessageLoop  *req_body = (TestMessageLoop *)MSG_BODY(req_msg);
+		req_body->a                = a;
+
+		DiskquotaMessage *rsp_msg  = send_request_and_wait(looper, req_msg, NULL);
+		TestMessageLoop  *rsp_body = (TestMessageLoop *)MSG_BODY(rsp_msg);
+		Assert(rsp_body->a == req_body->a + 1);
+
+		a++;
+		free_message(req_msg);
+		free_message(rsp_msg);
+	}
+
+	PG_RETURN_BOOL(true);
 }

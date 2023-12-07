@@ -313,6 +313,8 @@ WHERE
 -- refer to see test case 'test_drop_after_pause'
 SELECT FROM diskquota.resume();
 
+-- for test
+CREATE OR REPLACE FUNCTION diskquota.test_send_message_loop(int) RETURNS boolean STRICT AS '$libdir/diskquota-3.0.so' LANGUAGE C;
 
 --- Starting the worker has to be the last step.
 CREATE FUNCTION diskquota.diskquota_start_worker() RETURNS void STRICT AS '$libdir/diskquota-3.0.so' LANGUAGE C;
