@@ -165,7 +165,7 @@ free_message(DiskquotaMessage *msg)
 static void
 free_message_by_handle(dsm_handle handle)
 {
-	/* 
+	/*
 	 * If the server has not handle the message yet, the handle is invalid.
 	 * We just need to return.
 	 */
@@ -180,6 +180,9 @@ message_looper_set_server_latch(DiskquotaLooper *looper)
 	SetLatch(looper->slatch);
 }
 
+/*
+ * Before receiving the request message, the server waits for slatch.
+ */
 void
 message_looper_wait_for_latch(DiskquotaLooper *looper)
 {
@@ -201,6 +204,13 @@ message_looper_wait_for_latch(DiskquotaLooper *looper)
 	}
 }
 
+/*
+ * Message handle function on the server.
+ * - as soon as `slatch` is set, server gets a request message from client.
+ * - server handles the request.
+ * - server writes the response message by `rsp_handle`.
+ * - server sets `clatch` to notify client to handle the response message.
+ */
 void
 message_looper_handle_message(DiskquotaLooper *looper)
 {
@@ -216,6 +226,7 @@ message_looper_handle_message(DiskquotaLooper *looper)
 
 		DiskquotaMessage *rsp_msg = looper->msg_handler(req_msg);
 		looper->rsp_handle        = rsp_msg->handle;
+		looper->req_handle        = DSM_HANDLE_INVALID;
 		looper->response_done     = true;
 		looper->request_done      = false;
 		free_message(req_msg);
@@ -304,7 +315,6 @@ send_request_and_wait(DiskquotaLooper *looper, DiskquotaMessage *req_msg, signal
 
 	DiskquotaMessage *rsp_msg = attach_message(looper->rsp_handle);
 
-	looper->req_handle    = DSM_HANDLE_INVALID;
 	looper->client_pid    = InvalidPid;
 	looper->clatch        = NULL;
 	looper->response_done = false;

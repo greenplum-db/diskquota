@@ -32,7 +32,7 @@ static void disk_quota_sighup(SIGNAL_ARGS);
 
 /* center worker main function */
 void                     disk_quota_center_worker_main(Datum main_arg);
-static void              loop(DiskquotaLooper *looper);
+static inline void       loop(DiskquotaLooper *looper);
 static DiskquotaMessage *disk_quota_message_handler(DiskquotaMessage *req_msg);
 
 /* flags set by signal handlers */
@@ -47,7 +47,7 @@ disk_quota_sigterm(SIGNAL_ARGS)
 
 	got_sigterm = true;
 
-	DiskquotaLooper *looper = attach_message_looper(DISKQUOTA_CENTER_WORKER_NAME);
+	DiskquotaLooper *looper = attach_message_looper(DISKQUOTA_CENTER_WORKER_MESSAGE_LOOPER_NAME);
 	if (looper) message_looper_set_server_latch(looper);
 
 	errno = save_errno;
@@ -65,7 +65,7 @@ disk_quota_sighup(SIGNAL_ARGS)
 
 	got_sighup = true;
 
-	DiskquotaLooper *looper = attach_message_looper(DISKQUOTA_CENTER_WORKER_NAME);
+	DiskquotaLooper *looper = attach_message_looper(DISKQUOTA_CENTER_WORKER_MESSAGE_LOOPER_NAME);
 	if (looper) message_looper_set_server_latch(looper);
 
 	errno = save_errno;
@@ -140,12 +140,8 @@ disk_quota_center_worker_main(Datum main_arg)
 /*
  * Message handle function on the center worker.
  * - center worker always waits for `slatch`.
- * - as soon as `slatch` is set, center worker gets a request message from client.
- * - handles the request.
- * - write the response message by `rsp_handle`.
- * - set `clatch` to notify client to handle the response message.
  */
-static void
+static inline void
 loop(DiskquotaLooper *looper)
 {
 	message_looper_wait_for_latch(looper);
