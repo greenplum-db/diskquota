@@ -35,8 +35,9 @@
 HTAB *relation_cache = NULL;
 HTAB *relid_cache    = NULL;
 
-static void update_relation_entry(Oid relid, DiskQuotaRelationCacheEntry *relation_entry,
-                                  DiskQuotaRelidCacheEntry *relid_entry);
+static void  update_relation_entry(Oid relid, DiskQuotaRelationCacheEntry *relation_entry,
+                                   DiskQuotaRelidCacheEntry *relid_entry);
+static List *merge_uncommitted_table_to_oidlist(List *oidlist);
 
 PG_FUNCTION_INFO_V1(show_relation_cache);
 
@@ -632,4 +633,40 @@ calculate_table_size(Oid relid)
 	get_relation_entry(relid, &entry);
 
 	return do_calculate_table_size(&entry);
+}
+
+static List *
+merge_uncommitted_table_to_oidlist(List *oidlist)
+{
+	HASH_SEQ_STATUS              iter;
+	DiskQuotaRelationCacheEntry *entry;
+
+	if (relation_cache == NULL)
+	{
+		return oidlist;
+	}
+
+	remove_committed_relation_from_cache();
+
+	LWLockAcquire(diskquota_locks.relation_cache_lock, LW_SHARED);
+	hash_seq_init(&iter, relation_cache);
+	while ((entry = hash_seq_search(&iter)) != NULL)
+	{
+		/* The session of db1 should not see the table inside db2. */
+		if (entry->primary_table_relid == entry->relid && entry->rnode.node.dbNode == MyDatabaseId)
+		{
+			oidlist = lappend_oid(oidlist, entry->relid);
+		}
+	}
+	LWLockRelease(diskquota_locks.relation_cache_lock);
+
+	return oidlist;
+}
+
+List *
+get_current_database_oid_list(void)
+{
+	List *oidlist = get_rel_oid_list();
+	oidlist       = merge_uncommitted_table_to_oidlist(oidlist);
+	return oidlist;
 }

@@ -84,16 +84,12 @@ typedef enum
 	TABLE_EXIST = (1 << 0), /* whether table is already dropped */
 } TableSizeEntryFlag;
 
-extern HTAB *table_size_map;
-
-extern void init_table_size_map(uint32 id);
-extern void vacuum_table_size_map(uint32 id);
-extern Size diskquota_table_size_shmem_size(void);
+extern HTAB *create_table_size_map(const char *name);
+extern void  vacuum_table_size_map(HTAB *table_size_map);
+extern HTAB *get_current_database_table_size_map(HTAB *local_active_table_map);
 
 extern bool get_table_size_entry_flag(TableSizeEntry *entry, TableSizeEntryFlag flag);
 extern void reset_table_size_entry_flag(TableSizeEntry *entry, TableSizeEntryFlag flag);
 extern void set_table_size_entry_flag(TableSizeEntry *entry, TableSizeEntryFlag flag);
-
-extern void flush_to_table_size(void);
 
 #endif

@@ -12,62 +12,133 @@
 
 #include "postgres.h"
 
-#include "table_size.h"
-
 #include "executor/spi.h"
 #include "utils/hsearch.h"
 #include "utils/guc.h"
+#include "utils/syscache.h"
 
-/* using hash table to support incremental update the table size entry.*/
-HTAB *table_size_map = NULL;
+#include "table_size.h"
+#include "quota.h"
+#include "gp_activetable.h"
+#include "relation_cache.h"
 
-static void insert_into_table_size_map(char *str);
-static void delete_from_table_size_map(char *str);
-
-Size
-diskquota_table_size_shmem_size(void)
+HTAB *
+create_table_size_map(const char *name)
 {
-	return hash_estimate_size(MAX_NUM_TABLE_SIZE_ENTRIES / diskquota_max_monitored_databases + 100,
-	                          sizeof(TableSizeEntry));
+	HASHCTL ctl;
+	HTAB   *table_size_map;
+
+	memset(&ctl, 0, sizeof(ctl));
+	ctl.keysize    = sizeof(TableSizeEntryKey);
+	ctl.entrysize  = sizeof(TableSizeEntry);
+	ctl.hcxt       = CurrentMemoryContext;
+	table_size_map = diskquota_hash_create(name, 1024, &ctl, HASH_ELEM | HASH_CONTEXT, DISKQUOTA_TAG_HASH);
+	return table_size_map;
 }
 
+// TODO: when drop extension, vacuum table size map
+// in center worker
 void
-init_table_size_map(uint32 id)
+vacuum_table_size_map(HTAB *table_size_map)
 {
-	HASHCTL        hash_ctl;
-	StringInfoData str;
-
-	initStringInfo(&str);
-	appendStringInfo(&str, "TableSizeEntrymap_%u", id);
-	memset(&hash_ctl, 0, sizeof(hash_ctl));
-	hash_ctl.keysize   = sizeof(TableSizeEntryKey);
-	hash_ctl.entrysize = sizeof(TableSizeEntry);
-	table_size_map     = DiskquotaShmemInitHash(str.data, INIT_NUM_TABLE_SIZE_ENTRIES, MAX_NUM_TABLE_SIZE_ENTRIES,
-	                                            &hash_ctl, HASH_ELEM, DISKQUOTA_TAG_HASH);
-	pfree(str.data);
-}
-
-void
-vacuum_table_size_map(uint32 id)
-{
-	HASHCTL         hash_ctl;
 	HASH_SEQ_STATUS iter;
-	StringInfoData  str;
 	TableSizeEntry *tsentry;
 
-	initStringInfo(&str);
-	appendStringInfo(&str, "TableSizeEntrymap_%u", id);
-	memset(&hash_ctl, 0, sizeof(hash_ctl));
-	hash_ctl.keysize   = sizeof(TableSizeEntryKey);
-	hash_ctl.entrysize = sizeof(TableSizeEntry);
-	table_size_map     = DiskquotaShmemInitHash(str.data, INIT_NUM_TABLE_SIZE_ENTRIES, MAX_NUM_TABLE_SIZE_ENTRIES,
-	                                            &hash_ctl, HASH_ELEM, DISKQUOTA_TAG_HASH);
 	hash_seq_init(&iter, table_size_map);
 	while ((tsentry = hash_seq_search(&iter)) != NULL)
 	{
 		hash_search(table_size_map, &tsentry->key, HASH_REMOVE, NULL);
 	}
-	pfree(str.data);
+}
+
+HTAB *
+get_current_database_table_size_map(HTAB *local_active_table_map)
+{
+	TableSizeEntryKey key;
+	TableSizeEntry   *tsentry;
+	ActiveTableEntry *active_table_entry;
+	HASHCTL           ctl;
+	HTAB             *local_table_size_map;
+	bool              table_size_map_found;
+	HASH_SEQ_STATUS   iter;
+
+	memset(&ctl, 0, sizeof(ctl));
+	ctl.keysize   = sizeof(TableSizeEntryKey);
+	ctl.entrysize = sizeof(TableSizeEntry);
+	ctl.hcxt      = CurrentMemoryContext;
+
+	local_table_size_map =
+	        diskquota_hash_create("local_table_size_map", 1024, &ctl, HASH_ELEM | HASH_CONTEXT, DISKQUOTA_TAG_HASH);
+
+	hash_seq_init(&iter, local_active_table_map);
+	while ((active_table_entry = hash_seq_search(&iter)) != NULL)
+	{
+		Oid           relid = active_table_entry->reloid;
+		int           segid = active_table_entry->segid;
+		HeapTuple     classTup;
+		Form_pg_class classForm     = NULL;
+		Oid           relnamespace  = InvalidOid;
+		Oid           relowner      = InvalidOid;
+		Oid           reltablespace = InvalidOid;
+
+		classTup = SearchSysCacheCopy1(RELOID, ObjectIdGetDatum(relid));
+		if (HeapTupleIsValid(classTup))
+		{
+			classForm     = (Form_pg_class)GETSTRUCT(classTup);
+			relnamespace  = classForm->relnamespace;
+			relowner      = classForm->relowner;
+			reltablespace = classForm->reltablespace;
+
+			if (!OidIsValid(reltablespace))
+			{
+				reltablespace = MyDatabaseTableSpace;
+			}
+		}
+		else
+		{
+			LWLockAcquire(diskquota_locks.relation_cache_lock, LW_SHARED);
+			DiskQuotaRelationCacheEntry *relation_entry = hash_search(relation_cache, &relid, HASH_FIND, NULL);
+			if (relation_entry == NULL)
+			{
+				elog(WARNING, "cache lookup failed for relation %u", relid);
+				LWLockRelease(diskquota_locks.relation_cache_lock);
+				continue;
+			}
+			relnamespace  = relation_entry->namespaceoid;
+			relowner      = relation_entry->owneroid;
+			reltablespace = relation_entry->rnode.node.spcNode;
+			LWLockRelease(diskquota_locks.relation_cache_lock);
+		}
+
+		key.reloid = relid;
+		key.id     = TableSizeEntryId(segid);
+		tsentry    = (TableSizeEntry *)hash_search(local_table_size_map, &key, HASH_ENTER, &table_size_map_found);
+
+		if (!table_size_map_found)
+		{
+			tsentry->key.reloid = relid;
+			tsentry->key.id     = key.id;
+			memset(tsentry->totalsize, 0, sizeof(tsentry->totalsize));
+			tsentry->owneroid      = relowner;
+			tsentry->namespaceoid  = relnamespace;
+			tsentry->tablespaceoid = reltablespace;
+			tsentry->flag          = 0;
+		}
+
+		if (segid == -1)
+		{
+			active_table_entry->tablesize += calculate_table_size(relid);
+		}
+
+		TableSizeEntrySetSize(tsentry, segid, active_table_entry->tablesize);
+
+		if (HeapTupleIsValid(classTup))
+		{
+			heap_freetuple(classTup);
+		}
+	}
+
+	return local_table_size_map;
 }
 
 bool
@@ -86,124 +157,4 @@ void
 set_table_size_entry_flag(TableSizeEntry *entry, TableSizeEntryFlag flag)
 {
 	entry->flag |= flag;
-}
-
-static void
-delete_from_table_size_map(char *str)
-{
-	StringInfoData delete_statement;
-	int            ret;
-
-	initStringInfo(&delete_statement);
-	appendStringInfo(&delete_statement,
-	                 "WITH deleted_table AS ( VALUES %s ) "
-	                 "delete from diskquota.table_size "
-	                 "where (tableid, segid) in ( SELECT * FROM deleted_table );",
-	                 str);
-	ret = SPI_execute(delete_statement.data, false, 0);
-	if (ret != SPI_OK_DELETE)
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-		                errmsg("[diskquota] delete_from_table_size_map SPI_execute failed: error code %d", ret)));
-	pfree(delete_statement.data);
-}
-
-static void
-insert_into_table_size_map(char *str)
-{
-	StringInfoData insert_statement;
-	int            ret;
-
-	initStringInfo(&insert_statement);
-	appendStringInfo(&insert_statement, "insert into diskquota.table_size values %s;", str);
-	ret = SPI_execute(insert_statement.data, false, 0);
-	if (ret != SPI_OK_INSERT)
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
-		                errmsg("[diskquota] insert_into_table_size_map SPI_execute failed: error code %d", ret)));
-	pfree(insert_statement.data);
-}
-
-/*
- * Flush the table_size_map to user table diskquota.table_size
- * To improve update performance, we first delete all the need_to_flush
- * entries in table table_size. And then insert new table size entries into
- * table table_size.
- */
-void
-flush_to_table_size(void)
-{
-	HASH_SEQ_STATUS iter;
-	TableSizeEntry *tsentry = NULL;
-	StringInfoData  delete_statement;
-	StringInfoData  insert_statement;
-	int             delete_entries_num = 0;
-	int             insert_entries_num = 0;
-
-	/* TODO: Add flush_size_interval to avoid flushing size info in every loop */
-
-	/* Disable ORCA since it does not support non-scalar subqueries. */
-	bool old_optimizer = optimizer;
-	optimizer          = false;
-
-	initStringInfo(&insert_statement);
-	initStringInfo(&delete_statement);
-
-	hash_seq_init(&iter, table_size_map);
-	while ((tsentry = hash_seq_search(&iter)) != NULL)
-	{
-		int seg_st = TableSizeEntrySegidStart(tsentry);
-		int seg_ed = TableSizeEntrySegidEnd(tsentry);
-		for (int i = seg_st; i < seg_ed; i++)
-		{
-			/* delete dropped table from both table_size_map and table table_size */
-			if (!get_table_size_entry_flag(tsentry, TABLE_EXIST))
-			{
-				appendStringInfo(&delete_statement, "%s(%u,%d)", (delete_entries_num == 0) ? " " : ", ",
-				                 tsentry->key.reloid, i);
-				delete_entries_num++;
-				if (delete_entries_num > SQL_MAX_VALUES_NUMBER)
-				{
-					delete_from_table_size_map(delete_statement.data);
-					resetStringInfo(&delete_statement);
-					delete_entries_num = 0;
-				}
-			}
-			/* update the table size by delete+insert in table table_size */
-			else if (TableSizeEntryGetFlushFlag(tsentry, i))
-			{
-				appendStringInfo(&delete_statement, "%s(%u,%d)", (delete_entries_num == 0) ? " " : ", ",
-				                 tsentry->key.reloid, i);
-				appendStringInfo(&insert_statement, "%s(%u,%ld,%d)", (insert_entries_num == 0) ? " " : ", ",
-				                 tsentry->key.reloid, TableSizeEntryGetSize(tsentry, i), i);
-				delete_entries_num++;
-				insert_entries_num++;
-
-				if (delete_entries_num > SQL_MAX_VALUES_NUMBER)
-				{
-					delete_from_table_size_map(delete_statement.data);
-					resetStringInfo(&delete_statement);
-					delete_entries_num = 0;
-				}
-				if (insert_entries_num > SQL_MAX_VALUES_NUMBER)
-				{
-					insert_into_table_size_map(insert_statement.data);
-					resetStringInfo(&insert_statement);
-					insert_entries_num = 0;
-				}
-
-				TableSizeEntryResetFlushFlag(tsentry, i);
-			}
-		}
-		if (!get_table_size_entry_flag(tsentry, TABLE_EXIST))
-		{
-			hash_search(table_size_map, &tsentry->key, HASH_REMOVE, NULL);
-		}
-	}
-
-	if (delete_entries_num) delete_from_table_size_map(delete_statement.data);
-	if (insert_entries_num) insert_into_table_size_map(insert_statement.data);
-
-	optimizer = old_optimizer;
-
-	pfree(delete_statement.data);
-	pfree(insert_statement.data);
 }

@@ -28,6 +28,16 @@ typedef struct TestMessageLoop
 #define MSG_DEBUG 1
 #define MSG_TestMessage 2
 #define MSG_TestMessageLoop 3
-#define TIMEOUT_EVENT 4
+#define MSG_REFRESH_TABLE_SIZE 4
+
+typedef struct ReqMsgRefreshTableSize
+{
+	Oid   dbid;
+	int   segcount;
+	int   oid_list_length;
+	int   table_size_map_entry_num;
+	void *oid_list;
+	void *table_size_entry_list;
+} ReqMsgRefreshTableSize;
 
 #endif

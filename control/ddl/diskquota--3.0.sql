@@ -7,6 +7,7 @@ CREATE TABLE diskquota.quota_config(
   config jsonb
 ) WITH (appendonly=false);
 
+-- TODO: replace diskquota.table_size with view and UDF
 CREATE TABLE diskquota.table_size(
 	tableid oid,
 	size bigint,

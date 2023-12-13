@@ -14,6 +14,7 @@
 #include "postgres.h"
 
 #include "cdb/cdbgang.h"
+#include "cdb/cdbvars.h"
 #include "storage/ipc.h"
 #include "storage/proc.h"
 #include "tcop/utility.h"
@@ -27,6 +28,9 @@
 #include "diskquota_launcher.h"
 #include "diskquota_guc.h"
 #include "message_def.h"
+#include "relation_cache.h"
+#include "table_size.h"
+#include "gp_activetable.h"
 
 #include <unistd.h> // for useconds_t
 
@@ -35,9 +39,8 @@ static void disk_quota_sigterm(SIGNAL_ARGS);
 static void disk_quota_sighup(SIGNAL_ARGS);
 
 /* bgworker main function */
-void         disk_quota_worker_main_3(Datum main_arg);
-static void  disk_quota_refresh(bool is_init);
-static HTAB *pull_current_database_table_size(bool is_init);
+void        disk_quota_worker_main_3(Datum main_arg);
+static void disk_quota_refresh(bool is_init);
 
 /* extern function */
 // FIXME: free worker on launcher
@@ -380,43 +383,71 @@ disk_quota_worker_main_3(Datum main_arg)
 	proc_exit(0);
 }
 
-/*
- * Diskquota worker will refresh disk quota model
- * periodically. It will reload quota setting and
- * recalculate the changed disk usage.
- */
+// TODO: fetch table size from segments when init
 static void
 disk_quota_refresh(bool is_init)
 {
-	HTAB *table_size_map;
-	SEGCOUNT = getgpsegmentCount();
-	if (SEGCOUNT <= 0)
-	{
-		ereport(ERROR, (errmsg("[diskquota] there is no active segment, SEGCOUNT is %d", SEGCOUNT)));
-	}
+	List                   *oidlist;
+	HTAB                   *local_active_table_map;
+	HTAB                   *local_table_size_map;
+	DiskquotaLooper        *looper;
+	DiskquotaMessage       *req_msg;
+	DiskquotaMessage       *rsp_msg;
+	Size                    msg_sz = 0;
+	ReqMsgRefreshTableSize *req_msg_body;
+	int                     oid_list_length;
+	int                     table_size_map_entry_num;
 
-	if (is_init) ereport(LOG, (errmsg("[diskquota] initialize quota model started")));
-	// TODO: calculate size, send message to center worker, and receive rejectmap
-	// table_size_map = pull_current_database_table_size(is_init);
-	if (is_init) ereport(LOG, (errmsg("[diskquota] initialize quota model finished")));
-}
+	// TODO: do not load table size from diskquota.table_size
+	// when is_init == true
+	/* get active table size from all segments */
+	local_active_table_map = gp_fetch_active_tables(is_init);
+	/* get all relation oids in the current database */
+	oidlist = get_current_database_oid_list();
+	/* get table size map by local_active_table_map */
+	local_table_size_map = get_current_database_table_size_map(local_active_table_map);
 
-static HTAB *
-pull_current_database_table_size(bool is_init)
-{
-	DiskquotaLooper  *looper  = attach_message_looper(DISKQUOTA_CENTER_WORKER_MESSAGE_LOOPER_NAME);
-	DiskquotaMessage *req_msg = InitRequestMessage(MSG_TestMessage, sizeof(TestMessage));
-	DiskquotaMessage *rsp_msg;
-	TestMessage      *body = (TestMessage *)MessageBody(req_msg);
-	body->a                = 100;
-	body->b                = 120;
+	oid_list_length          = list_length(oidlist);
+	table_size_map_entry_num = hash_get_num_entries(local_table_size_map);
 
-	rsp_msg               = send_request_and_wait(looper, req_msg, NULL);
-	TestMessage *msg_body = (TestMessage *)MessageBody(rsp_msg);
+	/*
+	 * message content:
+	 * - ReqMsgRefreshTableSize
+	 * - oid list
+	 * - TableSizeEntry list
+	 */
+	msg_sz = add_size(msg_sz, sizeof(ReqMsgRefreshTableSize));
+	msg_sz = add_size(msg_sz, oid_list_length * sizeof(Oid));
+	msg_sz = add_size(msg_sz, table_size_map_entry_num * sizeof(TableSizeEntry));
 
-	bool ret = rsp_msg->msg_id == req_msg->msg_id && body->a == msg_body->a && body->b == msg_body->b;
-	elog(WARNING, "xxxx %d", ret);
+	/* attach the meesage looper */
+	looper = attach_message_looper(DISKQUOTA_CENTER_WORKER_MESSAGE_LOOPER_NAME);
+	/* initialize request message */
+	req_msg = InitRequestMessage(MSG_REFRESH_TABLE_SIZE, msg_sz);
+	/* get message body */
+	req_msg_body = (ReqMsgRefreshTableSize *)MessageBody(req_msg);
+
+	/* fill message content in meesage body */
+	req_msg_body->dbid                     = MyDatabaseId;
+	req_msg_body->segcount                 = SEGCOUNT;
+	req_msg_body->oid_list_length          = oid_list_length;
+	req_msg_body->table_size_map_entry_num = table_size_map_entry_num;
+	req_msg_body->oid_list                 = (char *)req_msg_body + sizeof(ReqMsgRefreshTableSize);
+	req_msg_body->table_size_entry_list    = (char *)req_msg_body->oid_list + oid_list_length * sizeof(Oid);
+	fill_message_content_by_list(req_msg_body->oid_list, oidlist, sizeof(Oid));
+	fill_message_content_by_hash_table(req_msg_body->table_size_entry_list, local_table_size_map,
+	                                   sizeof(TableSizeEntry));
+
+	/* send request message and wait for response message */
+	// TODO: add signal handle function
+	rsp_msg = send_request_and_wait(looper, req_msg, NULL);
+
+	// TODO: handle response message
+	// update reject map and dispatch to segments
+
 	free_message(req_msg);
 	free_message(rsp_msg);
-	return NULL;
+	list_free(oidlist);
+	hash_destroy(local_active_table_map);
+	hash_destroy(local_table_size_map);
 }
