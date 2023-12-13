@@ -41,7 +41,6 @@ struct DiskquotaLooper
 	dsm_handle req_handle; /* the dsm handle of request message */
 	dsm_handle rsp_handle; /* the dsm handle of response message */
 
-	bool request_done; /* Check whether request message is prepared. */
 	/*
 	 * Check whether response message is generated. Client waits for latch after send request,
 	 * then if client receives a signal, the latch will be set and client will go on.
@@ -118,7 +117,6 @@ create_message_looper(const char *looper_name)
 	looper->req_handle = DSM_HANDLE_INVALID;
 	looper->rsp_handle = DSM_HANDLE_INVALID;
 
-	looper->request_done  = false;
 	looper->response_done = false;
 
 	return looper;
@@ -215,7 +213,7 @@ void
 message_looper_handle_message(DiskquotaLooper *looper)
 {
 	/* handle the message sent by bgworker */
-	if (looper->request_done || looper->req_handle != DSM_HANDLE_INVALID)
+	if (looper->req_handle != DSM_HANDLE_INVALID)
 	{
 		DiskquotaMessage *req_msg = attach_message(looper->req_handle);
 
@@ -228,7 +226,6 @@ message_looper_handle_message(DiskquotaLooper *looper)
 		looper->rsp_handle        = rsp_msg->handle;
 		looper->req_handle        = DSM_HANDLE_INVALID;
 		looper->response_done     = true;
-		looper->request_done      = false;
 		free_message(req_msg);
 
 		SetLatch(looper->clatch);
@@ -283,10 +280,6 @@ send_request_and_wait(DiskquotaLooper *looper, DiskquotaMessage *req_msg, signal
 {
 	LWLockAcquire(looper->loop_lock, LW_EXCLUSIVE);
 
-	/* own the client latch */
-	looper->client_pid = MyProcPid;
-	looper->clatch     = &MyProc->procLatch;
-	looper->req_handle = req_msg->handle;
 	/*
 	 * reset response_done to avoid this scene:
 	 * - response_done is set to true by the last connect
@@ -294,17 +287,17 @@ send_request_and_wait(DiskquotaLooper *looper, DiskquotaMessage *req_msg, signal
 	 * - client finish the waiting loop but does not get reponse
 	 */
 	looper->response_done = false;
+	/* own the client latch */
+	looper->client_pid = MyProcPid;
+	looper->clatch     = &MyProc->procLatch;
 	/*
-	 * set request_done to true instead of use LWLock: in the server
-	 * - if request_done is false due to the parallel problem, the server can check whether
-	 *   req_handle != DSM_HANDLE_INVALID.
-	 * 		- if YES, the server can go on to handle this message.
-	 * 		- if NO, the server will handle this message in the next loop. Because SetLatch(looper->slatch) is
-	 * 		  behind of ResetLatch(looper->slatch), the server won't hang by DiskquotaWaitLatch() in the next
-	 *        loop.
-	 * - if request_done is true, then the request message is set completely.
+	 * req_handle != DSM_HANDLE_INVALID.
+	 * - if YES, the server can go on to handle this message.
+	 * - if NO, the server will handle this message in the next loop. Because SetLatch(looper->slatch) is
+	 * 	 behind of ResetLatch(looper->slatch), the server won't hang by DiskquotaWaitLatch() in the next
+	 *   loop.
 	 */
-	looper->request_done = true;
+	looper->req_handle = req_msg->handle;
 	SetLatch(looper->slatch);
 
 	do
@@ -318,7 +311,6 @@ send_request_and_wait(DiskquotaLooper *looper, DiskquotaMessage *req_msg, signal
 	looper->client_pid    = InvalidPid;
 	looper->clatch        = NULL;
 	looper->response_done = false;
-	looper->request_done  = false;
 
 	LWLockRelease(looper->loop_lock);
 
