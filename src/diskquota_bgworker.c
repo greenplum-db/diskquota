@@ -21,9 +21,12 @@
 #include "utils/syscache.h"
 
 #include "diskquota.h"
+#include "msg_looper.h"
 #include "diskquota_bgworker.h"
+#include "diskquota_center_worker.h"
 #include "diskquota_launcher.h"
 #include "diskquota_guc.h"
+#include "message_def.h"
 
 #include <unistd.h> // for useconds_t
 
@@ -32,8 +35,9 @@ static void disk_quota_sigterm(SIGNAL_ARGS);
 static void disk_quota_sighup(SIGNAL_ARGS);
 
 /* bgworker main function */
-void        disk_quota_worker_main_3(Datum main_arg);
-static void disk_quota_refresh(bool is_init);
+void         disk_quota_worker_main_3(Datum main_arg);
+static void  disk_quota_refresh(bool is_init);
+static HTAB *pull_current_database_table_size(bool is_init);
 
 /* extern function */
 // FIXME: free worker on launcher
@@ -395,4 +399,24 @@ disk_quota_refresh(bool is_init)
 	// TODO: calculate size, send message to center worker, and receive rejectmap
 	// table_size_map = pull_current_database_table_size(is_init);
 	if (is_init) ereport(LOG, (errmsg("[diskquota] initialize quota model finished")));
+}
+
+static HTAB *
+pull_current_database_table_size(bool is_init)
+{
+	DiskquotaLooper  *looper  = attach_message_looper(DISKQUOTA_CENTER_WORKER_MESSAGE_LOOPER_NAME);
+	DiskquotaMessage *req_msg = init_request_message(MSG_TestMessage, sizeof(TestMessage));
+	DiskquotaMessage *rsp_msg;
+	TestMessage      *body = (TestMessage *)MSG_BODY(req_msg);
+	body->a                = 100;
+	body->b                = 120;
+
+	rsp_msg               = send_request_and_wait(looper, req_msg, NULL);
+	TestMessage *msg_body = (TestMessage *)MSG_BODY(rsp_msg);
+
+	bool ret = rsp_msg->msg_id == req_msg->msg_id && body->a == msg_body->a && body->b == msg_body->b;
+	elog(WARNING, "xxxx %d", ret);
+	free_message(req_msg);
+	free_message(rsp_msg);
+	return NULL;
 }

@@ -47,6 +47,8 @@
 #include "diskquota_util.h"
 #include "ddl_message.h"
 #include "diskquota_launcher.h"
+#include "diskquota_center_worker.h"
+#include "msg_looper.h"
 
 int SEGCOUNT = 0;
 
@@ -119,6 +121,8 @@ init_disk_quota_shmem(void)
 #else
 	RequestNamedLWLockTranche("DiskquotaLocks", DiskQuotaLocksItemNumber);
 #endif /* GP_VERSION_NUM */
+
+	request_message_looper_lock(DISKQUOTA_CENTER_WORKER_MESSAGE_LOOPER_NAME);
 
 	/* Install startup hook to initialize our shared memory. */
 	prev_shmem_startup_hook = shmem_startup_hook;
@@ -239,6 +243,7 @@ DiskQuotaShmemSize(void)
 		size = add_size(size, sizeof(pg_atomic_uint32));
 		size = add_size(size, diskquota_worker_shmem_size() * diskquota_max_monitored_databases);
 		size = add_size(size, quota_info_map_shmem_size());
+		size = add_size(size, diskquota_center_worker_shmem_size());
 	}
 
 	return size;

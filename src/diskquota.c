@@ -46,6 +46,8 @@
 #include "gp_activetable.h"
 #include "diskquota_guc.h"
 #include "rejectmap.h"
+#include "msg_looper.h"
+#include "diskquota_center_worker.h"
 
 PG_MODULE_MAGIC;
 
@@ -87,7 +89,9 @@ _PG_init(void)
 	}
 
 	BackgroundWorker worker;
+	BackgroundWorker center_worker;
 	memset(&worker, 0, sizeof(BackgroundWorker));
+	memset(&center_worker, 0, sizeof(BackgroundWorker));
 
 	/* values are used in later calls */
 	define_guc_variables();
@@ -114,6 +118,19 @@ _PG_init(void)
 	snprintf(worker.bgw_name, BGW_MAXLEN, "[diskquota] - launcher");
 
 	RegisterBackgroundWorker(&worker);
+
+	/* set up common data for diskquota center worker */
+	center_worker.bgw_flags      = BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
+	center_worker.bgw_start_time = BgWorkerStart_RecoveryFinished;
+	/* center worker process should be restarted after pm reset. */
+	center_worker.bgw_restart_time = BGW_DEFAULT_RESTART_INTERVAL;
+	snprintf(center_worker.bgw_library_name, BGW_MAXLEN, DISKQUOTA_BINARY_NAME);
+	snprintf(center_worker.bgw_function_name, BGW_MAXLEN, "disk_quota_center_worker_main");
+	center_worker.bgw_notify_pid = 0;
+
+	snprintf(center_worker.bgw_name, BGW_MAXLEN, "[diskquota] - center worker");
+
+	RegisterBackgroundWorker(&center_worker);
 }
 
 void
