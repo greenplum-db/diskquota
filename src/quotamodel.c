@@ -2118,6 +2118,11 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 			}
 			LWLockRelease(diskquota_locks.relation_cache_lock);
 		}
+
+		if (HeapTupleIsValid(tuple))
+		{
+			heap_freetuple(tuple);
+		}
 	}
 
 	LWLockAcquire(diskquota_locks.reject_map_lock, LW_EXCLUSIVE);
