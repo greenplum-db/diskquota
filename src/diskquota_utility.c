@@ -1675,3 +1675,29 @@ DiskquotaShmemInitHash(const char           *name,       /* table string name fo
 	return ShmemInitHash(name, init_size, max_size, infoP, hash_flags | HASH_BLOBS);
 #endif /* GP_VERSION_NUM */
 }
+
+/*
+ * Returns HASH_FIND if hash table is full and HASH_ENTER otherwise.
+ * It can be used only under lock.
+ */
+HASHACTION
+check_hash_fullness(HTAB *hashp, int max_size, const char *warning_message, TimestampTz *last_overflow_report)
+{
+	long num_entries = hash_get_num_entries(hashp);
+
+	if (num_entries < max_size) return HASH_ENTER;
+
+	if (num_entries == max_size)
+	{
+		TimestampTz current_time = GetCurrentTimestamp();
+
+		if (*last_overflow_report == 0 || TimestampDifferenceExceeds(*last_overflow_report, current_time,
+		                                                             diskquota_hashmap_overflow_report_timeout * 1000))
+		{
+			ereport(WARNING, (errmsg("[diskquota] %s", warning_message)));
+			*last_overflow_report = current_time;
+		}
+	}
+
+	return HASH_FIND;
+}

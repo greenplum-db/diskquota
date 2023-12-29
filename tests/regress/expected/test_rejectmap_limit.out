@@ -1,0 +1,87 @@
+--
+-- This file contains tests for limiting reject map
+--
+\! gpconfig -c diskquota.max_reject_entries -v 4 > /dev/null
+\! gpstop -arf > /dev/null
+\c
+CREATE DATABASE test_reject_map_limit_01;
+\c test_reject_map_limit_01
+CREATE EXTENSION diskquota;
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+-- we only read the current log file
+CREATE EXTERNAL WEB TABLE master_log(line text)
+    EXECUTE 'cat $GP_SEG_DATADIR/pg_log/$(ls -Art $GP_SEG_DATADIR/pg_log | tail -n 1)'
+    ON MASTER FORMAT 'TEXT' (DELIMITER 'OFF');
+CREATE SCHEMA s1;
+CREATE SCHEMA s2;
+CREATE SCHEMA s3;
+CREATE SCHEMA s4;
+CREATE SCHEMA s5;
+SELECT diskquota.set_schema_quota('s1', '1 MB');
+ set_schema_quota 
+------------------
+ 
+(1 row)
+
+SELECT diskquota.set_schema_quota('s2', '1 MB');
+ set_schema_quota 
+------------------
+ 
+(1 row)
+
+SELECT diskquota.set_schema_quota('s3', '1 MB');
+ set_schema_quota 
+------------------
+ 
+(1 row)
+
+SELECT diskquota.set_schema_quota('s4', '1 MB');
+ set_schema_quota 
+------------------
+ 
+(1 row)
+
+SELECT diskquota.set_schema_quota('s5', '1 MB');
+ set_schema_quota 
+------------------
+ 
+(1 row)
+
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+CREATE TABLE s1.a(i int) DISTRIBUTED BY (i);
+CREATE TABLE s2.a(i int) DISTRIBUTED BY (i);
+CREATE TABLE s3.a(i int) DISTRIBUTED BY (i);
+CREATE TABLE s4.a(i int) DISTRIBUTED BY (i);
+CREATE TABLE s5.a(i int) DISTRIBUTED BY (i);
+INSERT INTO s1.a SELECT generate_series(1,100000);
+INSERT INTO s2.a SELECT generate_series(1,100000);
+INSERT INTO s3.a SELECT generate_series(1,100000);
+INSERT INTO s4.a SELECT generate_series(1,100000);
+INSERT INTO s5.a SELECT generate_series(1,100000);
+SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t
+(1 row)
+
+SELECT count(*) FROM master_log WHERE line LIKE '%the number of local quota reject map entries reached the limit%' AND line NOT LIKE '%LOG%';
+ count 
+-------
+     1
+(1 row)
+
+DROP EXTENSION diskquota;
+\c contrib_regression
+DROP DATABASE test_reject_map_limit_01;
+\! gpconfig -r diskquota.max_reject_entries > /dev/null
+\! gpstop -arf > /dev/null

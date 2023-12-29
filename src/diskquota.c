@@ -70,14 +70,16 @@ static volatile sig_atomic_t got_sigusr1 = false;
 static volatile sig_atomic_t got_sigusr2 = false;
 
 /* GUC variables */
-int  diskquota_naptime                 = 0;
-int  diskquota_max_active_tables       = 0;
-int  diskquota_worker_timeout          = 60; /* default timeout is 60 seconds */
-bool diskquota_hardlimit               = false;
-int  diskquota_max_workers             = 10;
-int  diskquota_max_table_segments      = 0;
-int  diskquota_max_monitored_databases = 0;
-int  diskquota_max_quota_probes        = 0;
+int  diskquota_naptime                         = 0;
+int  diskquota_max_active_tables               = 0;
+int  diskquota_worker_timeout                  = 60; /* default timeout is 60 seconds */
+bool diskquota_hardlimit                       = false;
+int  diskquota_max_workers                     = 10;
+int  diskquota_max_table_segments              = 0;
+int  diskquota_max_monitored_databases         = 0;
+int  diskquota_max_quota_probes                = 0;
+int  diskquota_max_local_reject_entries        = 0;
+int  diskquota_hashmap_overflow_report_timeout = 0;
 
 DiskQuotaLocks       diskquota_locks;
 ExtensionDDLMessage *extension_ddl_message = NULL;
@@ -88,12 +90,6 @@ static DiskQuotaWorkerEntry *volatile MyWorkerInfo = NULL;
 
 // how many database diskquota are monitoring on
 static int num_db = 0;
-
-/* how many TableSizeEntry are maintained in all the table_size_map in shared memory*/
-pg_atomic_uint32 *diskquota_table_size_entry_num;
-
-/* how many QuotaInfoEntry are maintained in all the quota_info_map in shared memory*/
-pg_atomic_uint32 *diskquota_quota_info_entry_num;
 
 static DiskquotaLauncherShmemStruct *DiskquotaLauncherShmem;
 
@@ -414,6 +410,12 @@ define_guc_variables(void)
 	DefineCustomIntVariable("diskquota.max_quota_probes", "Max number of quotas on the cluster.", NULL,
 	                        &diskquota_max_quota_probes, 1024 * 1024, 1024 * INIT_QUOTA_MAP_ENTRIES, INT_MAX,
 	                        PGC_POSTMASTER, 0, NULL, NULL, NULL);
+	DefineCustomIntVariable("diskquota.max_reject_entries", "Max number of reject entries per database.", NULL,
+	                        &diskquota_max_local_reject_entries, 8192, 1, INT_MAX, PGC_POSTMASTER, 0, NULL, NULL, NULL);
+	DefineCustomIntVariable("diskquota.hashmap_overflow_report_timeout",
+	                        "The duration between each warning report about the shared hashmap overflow (in seconds).",
+	                        NULL, &diskquota_hashmap_overflow_report_timeout, 60, 0, INT_MAX / 1000, PGC_SUSET, 0, NULL,
+	                        NULL, NULL);
 }
 
 /* ---- Functions for disk quota worker process ---- */
@@ -1802,15 +1804,6 @@ init_launcher_shmem()
 			DiskquotaLauncherShmem->dbArray[i].workerId = INVALID_WORKER_ID;
 		}
 	}
-	/* init TableSizeEntry counter */
-	diskquota_table_size_entry_num =
-	        ShmemInitStruct("diskquota TableSizeEntry counter", sizeof(pg_atomic_uint32), &found);
-	if (!found) pg_atomic_init_u32(diskquota_table_size_entry_num, 0);
-
-	/* init QuotaInfoEntry counter */
-	diskquota_quota_info_entry_num =
-	        ShmemInitStruct("diskquota QuotaInfoEntry counter", sizeof(pg_atomic_uint32), &found);
-	if (!found) pg_atomic_init_u32(diskquota_quota_info_entry_num, 0);
 }
 
 /*

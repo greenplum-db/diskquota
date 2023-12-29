@@ -1,5 +1,6 @@
 -- table in 'diskquota not enabled database' should not be activetable
-\! gpconfig -c diskquota.max_active_tables -v 2 > /dev/null
+\! gpconfig -c diskquota.max_active_tables -v 5 > /dev/null
+\! gpconfig -c diskquota.naptime -v 1 > /dev/null
 \! gpstop -arf > /dev/null
 
 \c
@@ -19,29 +20,34 @@ INSERT INTO a03 values(generate_series(0, 500));
 
 \c test_tablenum_limit_02
 CREATE EXTENSION diskquota;
+-- we only read the current log file
+CREATE EXTERNAL WEB TABLE segment_logs(line text)
+    EXECUTE 'cat $GP_SEG_DATADIR/pg_log/$(ls -Art $GP_SEG_DATADIR/pg_log | tail -n 1)'
+    ON ALL FORMAT 'TEXT' (DELIMITER 'OFF');
+
 CREATE SCHEMA s;
 SELECT diskquota.set_schema_quota('s', '1 MB');
 
 SELECT diskquota.wait_for_worker_new_epoch();
 
-CREATE TABLE s.t1(i int) DISTRIBUTED BY (i); -- activetable = 1
-INSERT INTO s.t1 SELECT generate_series(1, 100000); -- ok. diskquota soft limit does not check when first write
+-- We create twice as many tables as the limit to ensure that the active_tables table is overflow.
+CREATE TABLE s.t1 (a int, b int) DISTRIBUTED BY (a)
+    PARTITION BY RANGE (b) ( START (0) END (10) EVERY (1) );
+
+SELECT count(*) FROM segment_logs WHERE line LIKE '%the number of active tables reached the limit%';
+
+CREATE TABLE s.t2(i int) DISTRIBUTED BY (i);
+INSERT INTO s.t2 SELECT generate_series(1, 100000);
 
 SELECT diskquota.wait_for_worker_new_epoch();
 
-CREATE TABLE s.t2(i int) DISTRIBUTED BY (i); -- activetable = 2
-INSERT INTO s.t2 SELECT generate_series(1, 10);  -- expect failed
-CREATE TABLE s.t3(i int) DISTRIBUTED BY (i); -- activetable = 3 should not crash.
-INSERT INTO s.t3 SELECT generate_series(1, 10);  -- expect failed
+INSERT INTO s.t1 SELECT a, a from generate_series(0, 9)a; -- should be successful
+SELECT count(*) FROM s.t1;
 
--- Q: why diskquota still works when activetable = 3?
--- A: the activetable limit by shmem size, calculate by hash_estimate_size()
---    the result will bigger than sizeof(DiskQuotaActiveTableEntry) * max_active_tables
---    the real capacity of this data structure based on the hash conflict probability.
---    so we can not predict when the data structure will be fill in fully.
---
---    this test case is useless, remove this if anyone dislike it.
---    but the hash capacity is smaller than 6, so the test case works for issue 51
+-- altered reloid cache overflow check. expected warning.
+VACUUM FULL;
+
+SELECT count(*) FROM segment_logs WHERE line LIKE '%the number of altered reloid cache entries reached the limit%';
 
 DROP EXTENSION diskquota;
 
@@ -50,4 +56,5 @@ DROP DATABASE test_tablenum_limit_01;
 DROP DATABASE test_tablenum_limit_02;
 
 \! gpconfig -r diskquota.max_active_tables > /dev/null
+\! gpconfig -c diskquota.naptime -v 0 > /dev/null
 \! gpstop -arf > /dev/null
