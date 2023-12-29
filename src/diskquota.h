@@ -286,6 +286,7 @@ extern Datum diskquota_fetch_table_stat(PG_FUNCTION_ARGS);
 extern int   diskquota_naptime;
 extern int   diskquota_max_active_tables;
 extern bool  diskquota_hardlimit;
+extern int   diskquota_hashmap_overflow_report_timeout;
 
 extern int      SEGCOUNT;
 extern int      worker_spi_get_extension_version(int *major, int *minor);
@@ -316,4 +317,6 @@ extern HTAB        *diskquota_hash_create(const char *tabname, long nelem, HASHC
 extern HTAB *DiskquotaShmemInitHash(const char *name, long init_size, long max_size, HASHCTL *infoP, int hash_flags,
                                     DiskquotaHashFunction hash_function);
 extern void  refresh_monitored_dbid_cache(void);
+extern HASHACTION check_hash_fullness(HTAB *hashp, int max_size, const char *warning_message,
+                                      TimestampTz *last_overflow_report);
 #endif

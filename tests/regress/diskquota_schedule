@@ -32,6 +32,7 @@ test: test_appendonly
 test: test_rejectmap
 test: test_clean_rejectmap_after_drop
 test: test_rejectmap_mul_db
+test: test_rejectmap_limit
 test: test_ctas_pause
 test: test_ctas_role
 test: test_ctas_schema
