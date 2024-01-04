@@ -106,7 +106,7 @@ create_message_looper(const char *looper_name)
 	}
 
 	Assert(strlen(looper_name) < NAMEDATALEN);
-	StrNCpy(looper->name.data, looper_name, NAMEDATALEN - 1);
+	StrNCpy(looper->name.data, looper_name, NAMEDATALEN);
 
 	looper->server_pid = InvalidPid;
 	looper->client_pid = InvalidPid;
