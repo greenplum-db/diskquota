@@ -405,14 +405,14 @@ static HTAB *
 pull_current_database_table_size(bool is_init)
 {
 	DiskquotaLooper  *looper  = attach_message_looper(DISKQUOTA_CENTER_WORKER_MESSAGE_LOOPER_NAME);
-	DiskquotaMessage *req_msg = init_request_message(MSG_TestMessage, sizeof(TestMessage));
+	DiskquotaMessage *req_msg = InitRequestMessage(MSG_TestMessage, sizeof(TestMessage));
 	DiskquotaMessage *rsp_msg;
-	TestMessage      *body = (TestMessage *)MSG_BODY(req_msg);
+	TestMessage      *body = (TestMessage *)MessageBody(req_msg);
 	body->a                = 100;
 	body->b                = 120;
 
 	rsp_msg               = send_request_and_wait(looper, req_msg, NULL);
-	TestMessage *msg_body = (TestMessage *)MSG_BODY(rsp_msg);
+	TestMessage *msg_body = (TestMessage *)MessageBody(rsp_msg);
 
 	bool ret = rsp_msg->msg_id == req_msg->msg_id && body->a == msg_body->a && body->b == msg_body->b;
 	elog(WARNING, "xxxx %d", ret);

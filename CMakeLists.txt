@@ -58,8 +58,6 @@ else()
       "diskquota-${DISKQUOTA_MAJOR_VERSION}.${DISKQUOTA_MINOR_VERSION}")
 endif()
 
-add_definitions(-fgnu89-inline)
-
 add_compile_definitions(
   DISKQUOTA_VERSION="${DISKQUOTA_VERSION}"
   DISKQUOTA_MAJOR_VERSION=${DISKQUOTA_MAJOR_VERSION}

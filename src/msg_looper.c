@@ -205,18 +205,6 @@ fill_message_content_by_hash_table(void *addr, HTAB *ht, Size sz)
 	}
 }
 
-inline void
-copy_value_from_message_content_list(void *list, void *dst, int idx, Size sz)
-{
-	memcpy(dst, (char *)list + idx * sz, sz);
-}
-
-inline void *
-get_point_from_message_content_list(void *list, int idx, Size sz)
-{
-	return (char *)list + idx * sz;
-}
-
 /*------------------------------server---------------------------------*/
 void
 message_looper_set_server_latch(DiskquotaLooper *looper)

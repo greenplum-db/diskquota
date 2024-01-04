@@ -30,15 +30,15 @@ test_send_message(PG_FUNCTION_ARGS)
 	TupleDesc tuple_desc = BlessTupleDesc(tupdesc);
 
 	DiskquotaLooper  *looper  = attach_message_looper(DISKQUOTA_CENTER_WORKER_MESSAGE_LOOPER_NAME);
-	DiskquotaMessage *req_msg = init_request_message(MSG_TestMessage, sizeof(TestMessage));
+	DiskquotaMessage *req_msg = InitRequestMessage(MSG_TestMessage, sizeof(TestMessage));
 	DiskquotaMessage *rsp_msg;
-	TestMessage      *body = (TestMessage *)MSG_BODY(req_msg);
+	TestMessage      *body = (TestMessage *)MessageBody(req_msg);
 	body->a                = a;
 	body->b                = b;
 
 	SIMPLE_FAULT_INJECTOR("diskquota_message_send");
 	rsp_msg               = send_request_and_wait(looper, req_msg, NULL);
-	TestMessage *msg_body = (TestMessage *)MSG_BODY(rsp_msg);
+	TestMessage *msg_body = (TestMessage *)MessageBody(rsp_msg);
 
 	bool      nulls[2] = {false, false};
 	Datum     v[2]     = {Int32GetDatum(msg_body->a), Int32GetDatum(msg_body->b)};
@@ -61,12 +61,12 @@ test_send_message_loop(PG_FUNCTION_ARGS)
 
 	while (true)
 	{
-		DiskquotaMessage *req_msg  = init_request_message(MSG_TestMessageLoop, sizeof(TestMessageLoop));
-		TestMessageLoop  *req_body = (TestMessageLoop *)MSG_BODY(req_msg);
+		DiskquotaMessage *req_msg  = InitRequestMessage(MSG_TestMessageLoop, sizeof(TestMessageLoop));
+		TestMessageLoop  *req_body = (TestMessageLoop *)MessageBody(req_msg);
 		req_body->a                = a;
 
 		DiskquotaMessage *rsp_msg  = send_request_and_wait(looper, req_msg, NULL);
-		TestMessageLoop  *rsp_body = (TestMessageLoop *)MSG_BODY(rsp_msg);
+		TestMessageLoop  *rsp_body = (TestMessageLoop *)MessageBody(rsp_msg);
 		Assert(rsp_body->a == req_body->a + 1);
 
 		a++;
