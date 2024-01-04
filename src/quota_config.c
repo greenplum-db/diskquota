@@ -24,12 +24,15 @@
 #include "config_parse.h"
 #include "diskquota_util.h"
 #include "diskquota.h"
+#include "msg_looper.h"
+#include "message_def.h"
+#include "diskquota_center_worker.h"
 
 /* quota config function */
 extern HTAB *pull_quota_config(bool *found);
-static void  update_quota_config_table(QuotaConfig *config, bool need_del_quota);
 static void  dump_to_quota_config_table(const char *config_json_str, bool need_update);
 static bool  to_delete_quota(QuotaType type, int64 quota_limit_mb, float4 segratio);
+static void  do_set_quota_config(Oid dbid, QuotaConfig config, bool need_delete_quota);
 
 /* JSON function */
 static void  JSON_parse_quota_config(const char *config_str, HTAB *quota_config_map);
@@ -71,9 +74,7 @@ set_schema_quota(PG_FUNCTION_ARGS)
 
 	need_delete_quota = to_delete_quota(config.quota_type, config.quota_limit_mb, config.segratio);
 
-	SPI_connect();
-	update_quota_config_table(&config, need_delete_quota);
-	SPI_finish();
+	do_set_quota_config(db_oid, config, need_delete_quota);
 	PG_RETURN_VOID();
 }
 
@@ -111,9 +112,7 @@ set_role_quota(PG_FUNCTION_ARGS)
 
 	need_delete_quota = to_delete_quota(config.quota_type, config.quota_limit_mb, config.segratio);
 
-	SPI_connect();
-	update_quota_config_table(&config, need_delete_quota);
-	SPI_finish();
+	do_set_quota_config(db_oid, config, need_delete_quota);
 	PG_RETURN_VOID();
 }
 
@@ -151,9 +150,7 @@ set_schema_tablespace_quota(PG_FUNCTION_ARGS)
 
 	need_delete_quota = to_delete_quota(config.quota_type, config.quota_limit_mb, config.segratio);
 
-	SPI_connect();
-	update_quota_config_table(&config, need_delete_quota);
-	SPI_finish();
+	do_set_quota_config(db_oid, config, need_delete_quota);
 	PG_RETURN_VOID();
 }
 
@@ -196,9 +193,7 @@ set_role_tablespace_quota(PG_FUNCTION_ARGS)
 
 	need_delete_quota = to_delete_quota(config.quota_type, config.quota_limit_mb, config.segratio);
 
-	SPI_connect();
-	update_quota_config_table(&config, need_delete_quota);
-	SPI_finish();
+	do_set_quota_config(db_oid, config, need_delete_quota);
 	PG_RETURN_VOID();
 }
 
@@ -232,9 +227,7 @@ set_tablespace_quota(PG_FUNCTION_ARGS)
 		        (errcode(ERRCODE_INVALID_PARAMETER_VALUE), errmsg("per segment quota ratio can not be set to 0")));
 	}
 
-	SPI_connect();
-	update_quota_config_table(&config, need_delete_quota);
-	SPI_finish();
+	do_set_quota_config(db_oid, config, need_delete_quota);
 	PG_RETURN_VOID();
 }
 
@@ -292,7 +285,7 @@ pull_quota_config(bool *found)
 }
 
 /* update quota config */
-static void
+void
 update_quota_config_table(QuotaConfig *config, bool need_del_quota)
 {
 	QuotaConfigKey *key;
@@ -354,6 +347,37 @@ dump_to_quota_config_table(const char *config_json_str, bool need_update)
 			ereport(ERROR,
 			        (errmsg("cannot insert into quota setting table, reason: %s.", SPI_result_code_string(ret))));
 	}
+}
+
+static void
+do_set_quota_config(Oid dbid, QuotaConfig config, bool need_delete_quota)
+{
+	DiskquotaLooper      *looper;
+	DiskquotaMessage     *req_msg;
+	DiskquotaMessage     *rsp_msg;
+	ReqMsgSetQuotaConfig *req_msg_body;
+	RspMsgSetQuotaConfig *rsp_msg_body;
+	Size                  msg_sz    = 0;
+	char                 *error_msg = NULL;
+
+	looper       = attach_message_looper(DISKQUOTA_CENTER_WORKER_MESSAGE_LOOPER_NAME);
+	msg_sz       = add_size(msg_sz, sizeof(ReqMsgSetQuotaConfig));
+	req_msg      = InitRequestMessage(MSG_SET_QUOTA_CONFIG, msg_sz);
+	req_msg_body = (ReqMsgSetQuotaConfig *)MessageBody(req_msg);
+
+	req_msg_body->dbid              = dbid;
+	req_msg_body->config            = config;
+	req_msg_body->need_delete_quota = need_delete_quota;
+
+	// TODO: set signal handle
+	rsp_msg      = send_request_and_wait(looper, req_msg, NULL);
+	rsp_msg_body = (RspMsgSetQuotaConfig *)MessageBody(rsp_msg);
+	if (!rsp_msg_body->success) error_msg = pstrdup(rsp_msg_body->error);
+
+	free_message(req_msg);
+	free_message(rsp_msg);
+
+	if (error_msg != NULL) ereport(ERROR, (errmsg("%s", error_msg)));
 }
 
 /*--------------------JSON--------------------*/
