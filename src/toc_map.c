@@ -3,26 +3,28 @@
 #include "utils/hsearch.h"
 
 #include "diskquota.h"
-#include "main_hash_map.h"
+#include "toc_map.h"
 #include "table_size.h"
 #include "quota.h"
 
 HTAB *
-init_main_hash_map(void)
+init_toc_map(void)
 {
 	HASHCTL ctl;
-	HTAB   *main_map;
+	HTAB   *toc_map;
 
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize   = NAMEDATALEN;
 	ctl.entrysize = sizeof(HashMap);
 	ctl.hcxt      = TopMemoryContext;
-	main_map      = diskquota_hash_create("diskquota center worker main map", 1024, &ctl, HASH_ELEM | HASH_CONTEXT,
+	toc_map       = diskquota_hash_create("diskquota center worker TOC map", 1024, &ctl, HASH_ELEM | HASH_CONTEXT,
 	                                      DISKQUOTA_TAG_HASH);
+
+	return toc_map;
 }
 
 HashMap *
-search_main_hash_map(HTAB *main_map, HashMapType type, Oid dbid)
+search_toc_map(HTAB *toc_map, HashMapType type, Oid dbid)
 {
 	StringInfoData name;
 	HashMap       *entry;
@@ -44,7 +46,7 @@ search_main_hash_map(HTAB *main_map, HashMapType type, Oid dbid)
 	}
 
 	/* find the table size map related to the current database */
-	entry = hash_search(main_map, name.data, HASH_ENTER, &found);
+	entry = hash_search(toc_map, name.data, HASH_ENTER, &found);
 	if (!found)
 	{
 		switch (type)
