@@ -25,6 +25,12 @@
 #include "msg_looper.h"
 #include "diskquota_center_worker.h"
 #include "message_def.h"
+#include "table_size.h"
+#include "quota.h"
+#include "toc_map.h"
+
+/* table of content map in center worker */
+static HTAB *toc_map;
 
 /* sinal callback function */
 static void disk_quota_sigterm(SIGNAL_ARGS);
@@ -124,6 +130,7 @@ disk_quota_center_worker_main(Datum main_arg)
 	DiskquotaLooper *looper = create_message_looper(DISKQUOTA_CENTER_WORKER_MESSAGE_LOOPER_NAME);
 	Assert(looper != NULL);
 	init_message_looper(looper, disk_quota_message_handler);
+	toc_map = init_toc_map();
 
 	// FIXME: should we destroy gangs?
 	while (!got_sigterm)
