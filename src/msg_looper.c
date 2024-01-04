@@ -106,7 +106,7 @@ create_message_looper(const char *looper_name)
 	}
 
 	Assert(strlen(looper_name) < NAMEDATALEN);
-	StrNCpy(looper->name.data, looper_name, NAMEDATALEN);
+	StrNCpy(looper->name.data, looper_name, NAMEDATALEN - 1);
 
 	looper->server_pid = InvalidPid;
 	looper->client_pid = InvalidPid;
@@ -169,6 +169,52 @@ free_message_by_handle(dsm_handle handle)
 	 */
 	if (handle == DSM_HANDLE_INVALID) return;
 	dsm_detach(dsm_find_mapping(handle));
+}
+
+void
+fill_message_content_by_list(void *addr, List *list, Size sz)
+{
+	ListCell *l;
+
+	foreach (l, list)
+	{
+		switch (sz)
+		{
+			case sizeof(Oid):
+				memcpy(addr, &(lfirst_oid(l)), sz);
+				break;
+			default:
+				memcpy(addr, lfirst(l), sz);
+				break;
+		}
+		addr = (char *)addr + sz;
+	}
+}
+
+void
+fill_message_content_by_hash_table(void *addr, HTAB *ht, Size sz)
+{
+	void           *entry;
+	HASH_SEQ_STATUS iter;
+
+	hash_seq_init(&iter, ht);
+	while ((entry = hash_seq_search(&iter)) != NULL)
+	{
+		memcpy(addr, entry, sz);
+		addr = (char *)addr + sz;
+	}
+}
+
+inline void
+copy_value_from_message_content_list(void *list, void *dst, int idx, Size sz)
+{
+	memcpy(dst, (char *)list + idx * sz, sz);
+}
+
+inline void *
+get_point_from_message_content_list(void *list, int idx, Size sz)
+{
+	return (char *)list + idx * sz;
 }
 
 /*------------------------------server---------------------------------*/

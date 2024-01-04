@@ -68,5 +68,9 @@ extern DiskquotaMessage *send_request_and_wait(DiskquotaLooper *looper, Diskquot
 /* message function */
 extern DiskquotaMessage *init_message(DiskquotaMessageID msg_id, size_t payload_len);
 extern void              free_message(DiskquotaMessage *msg);
+extern void              fill_message_content_by_list(void *addr, List *list, Size sz);
+extern void              fill_message_content_by_hash_table(void *addr, HTAB *ht, Size sz);
+extern inline void       copy_value_from_message_content_list(void *list, void *dst, int idx, Size sz);
+extern inline void      *get_point_from_message_content_list(void *list, int idx, Size sz);
 
 #endif
