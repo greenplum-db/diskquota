@@ -18,15 +18,22 @@
 #include "storage/dsm.h"
 
 #define DiskquotaMessageID uint32
-#define MSG_BODY(msg) ((char *)msg + MAXALIGN(sizeof(DiskquotaMessage)))
-#define MSG_SIZE(msg) (MAXALIGN(msg->size) + MAXALIGN(sizeof(DiskquotaMessage)))
-#define init_request_message(msg_id, payload_len) init_message(msg_id, payload_len)
-#define init_response_message(msg_id, payload_len) init_message(msg_id, payload_len)
+#define MessageBody(msg) ((char *)msg + MAXALIGN(sizeof(DiskquotaMessage)))
+#define MessageSize(msg) (MAXALIGN(msg->size) + MAXALIGN(sizeof(DiskquotaMessage)))
+#define InitRequestMessage(msg_id, payload_len) init_message(msg_id, payload_len)
+#define InitResponseMessage(msg_id, payload_len) init_message(msg_id, payload_len)
+#define CopyValueFromMessageContentList(list, dst, idx, sz) \
+	do                                                      \
+	{                                                       \
+		memcpy(dst, (char *)list + (idx) * (sz), sz);       \
+	} while (0)
+
+#define GetPointFromMessageContentList(list, idx, sz) ((char *)list + (idx) * (sz))
 
 /*
  * The message header.
  * The message content follows the message header.,
- * we can call MSG_BODY() to get the address of the message content.
+ * we can call MessageBody() to get the address of the message content.
  */
 typedef struct DiskquotaMessage
 {
@@ -68,5 +75,7 @@ extern DiskquotaMessage *send_request_and_wait(DiskquotaLooper *looper, Diskquot
 /* message function */
 extern DiskquotaMessage *init_message(DiskquotaMessageID msg_id, size_t payload_len);
 extern void              free_message(DiskquotaMessage *msg);
+extern void              fill_message_content_by_list(void *addr, List *list, Size sz);
+extern void              fill_message_content_by_hash_table(void *addr, HTAB *ht, Size sz);
 
 #endif

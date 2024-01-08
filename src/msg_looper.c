@@ -171,6 +171,40 @@ free_message_by_handle(dsm_handle handle)
 	dsm_detach(dsm_find_mapping(handle));
 }
 
+void
+fill_message_content_by_list(void *addr, List *list, Size sz)
+{
+	ListCell *l;
+
+	foreach (l, list)
+	{
+		switch (sz)
+		{
+			case sizeof(Oid):
+				memcpy(addr, &(lfirst_oid(l)), sz);
+				break;
+			default:
+				memcpy(addr, lfirst(l), sz);
+				break;
+		}
+		addr = (char *)addr + sz;
+	}
+}
+
+void
+fill_message_content_by_hash_table(void *addr, HTAB *ht, Size sz)
+{
+	void           *entry;
+	HASH_SEQ_STATUS iter;
+
+	hash_seq_init(&iter, ht);
+	while ((entry = hash_seq_search(&iter)) != NULL)
+	{
+		memcpy(addr, entry, sz);
+		addr = (char *)addr + sz;
+	}
+}
+
 /*------------------------------server---------------------------------*/
 void
 message_looper_set_server_latch(DiskquotaLooper *looper)
