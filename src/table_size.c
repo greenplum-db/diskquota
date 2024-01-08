@@ -31,7 +31,7 @@ create_table_size_map(const char *name)
 	memset(&ctl, 0, sizeof(ctl));
 	ctl.keysize    = sizeof(TableSizeEntryKey);
 	ctl.entrysize  = sizeof(TableSizeEntry);
-	ctl.hcxt       = CurrentMemoryContext;
+	ctl.hcxt       = TopMemoryContext;
 	table_size_map = diskquota_hash_create(name, 1024, &ctl, HASH_ELEM | HASH_CONTEXT, DISKQUOTA_TAG_HASH);
 	return table_size_map;
 }
@@ -41,14 +41,7 @@ create_table_size_map(const char *name)
 void
 vacuum_table_size_map(HTAB *table_size_map)
 {
-	HASH_SEQ_STATUS iter;
-	TableSizeEntry *tsentry;
-
-	hash_seq_init(&iter, table_size_map);
-	while ((tsentry = hash_seq_search(&iter)) != NULL)
-	{
-		hash_search(table_size_map, &tsentry->key, HASH_REMOVE, NULL);
-	}
+	hash_destroy(table_size_map);
 }
 
 HTAB *
