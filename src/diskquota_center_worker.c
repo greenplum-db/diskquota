@@ -218,7 +218,7 @@ refresh_table_size(ReqMsgRefreshTableSize *req_msg_body)
 {
 	Oid               dbid;
 	int               segcount;
-	int               oid_list_length;
+	int               oid_list_len;
 	int               table_size_map_num;
 	TableSizeEntry   *entry;
 	TableSizeEntryKey key;
@@ -230,8 +230,8 @@ refresh_table_size(ReqMsgRefreshTableSize *req_msg_body)
 
 	dbid               = req_msg_body->dbid;
 	segcount           = req_msg_body->segcount;
-	oid_list_length    = req_msg_body->oid_list_length;
-	table_size_map_num = req_msg_body->table_size_map_entry_num;
+	oid_list_len       = req_msg_body->oid_list_len;
+	table_size_map_num = req_msg_body->table_size_entry_list_len;
 
 	initStringInfo(&hash_map_name);
 	appendStringInfo(&hash_map_name, "TableSizeMap_%d", dbid);
@@ -244,9 +244,9 @@ refresh_table_size(ReqMsgRefreshTableSize *req_msg_body)
 	}
 
 	/* set the TABLE_EXIST flag for existing relations. */
-	for (int i = 0; i < oid_list_length; i++)
+	for (int i = 0; i < oid_list_len; i++)
 	{
-		CopyValueFromMessageContentList(req_msg_body->oid_list, &key.reloid, i, sizeof(Oid));
+		CopyValueFromMessageContentList(req_msg_body, req_msg_body->oid_list_offset, &key.reloid, i, sizeof(Oid));
 		for (int segid = -1; segid < segcount; segid += SEGMENT_SIZE_ARRAY_LENGTH)
 		{
 			key.id = TableSizeEntryId(segid);
@@ -259,9 +259,9 @@ refresh_table_size(ReqMsgRefreshTableSize *req_msg_body)
 	/* update table size */
 	for (int i = 0; i < table_size_map_num; i++)
 	{
-		new_entry = (TableSizeEntry *)GetPointFromMessageContentList(req_msg_body->table_size_entry_list, i,
-		                                                             sizeof(TableSizeEntry));
-		entry     = hash_search(table_size_map->map, &new_entry->key, HASH_ENTER, &found);
+		new_entry = (TableSizeEntry *)GetPointFromMessageContentList(
+		        req_msg_body, req_msg_body->table_size_entry_list_offset, i, sizeof(TableSizeEntry));
+		entry = hash_search(table_size_map->map, &new_entry->key, HASH_ENTER, &found);
 		if (!found)
 		{
 			memset(entry->totalsize, 0, sizeof(entry->totalsize));

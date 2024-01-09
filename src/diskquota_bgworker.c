@@ -395,8 +395,8 @@ disk_quota_refresh(bool is_init)
 	DiskquotaMessage       *rsp_msg;
 	Size                    msg_sz = 0;
 	ReqMsgRefreshTableSize *req_msg_body;
-	int                     oid_list_length;
-	int                     table_size_map_entry_num;
+	int                     oid_list_len;
+	int                     table_size_entry_list_len;
 
 	// TODO: do not load table size from diskquota.table_size
 	// when is_init == true
@@ -407,8 +407,8 @@ disk_quota_refresh(bool is_init)
 	/* get table size map by local_active_table_map */
 	local_table_size_map = get_current_database_table_size_map(local_active_table_map);
 
-	oid_list_length          = list_length(oidlist);
-	table_size_map_entry_num = hash_get_num_entries(local_table_size_map);
+	oid_list_len              = list_length(oidlist);
+	table_size_entry_list_len = hash_get_num_entries(local_table_size_map);
 
 	/*
 	 * message content:
@@ -417,8 +417,8 @@ disk_quota_refresh(bool is_init)
 	 * - TableSizeEntry list
 	 */
 	msg_sz = add_size(msg_sz, sizeof(ReqMsgRefreshTableSize));
-	msg_sz = add_size(msg_sz, oid_list_length * sizeof(Oid));
-	msg_sz = add_size(msg_sz, table_size_map_entry_num * sizeof(TableSizeEntry));
+	msg_sz = add_size(msg_sz, oid_list_len * sizeof(Oid));
+	msg_sz = add_size(msg_sz, table_size_entry_list_len * sizeof(TableSizeEntry));
 
 	/* attach the meesage looper */
 	looper = attach_message_looper(DISKQUOTA_CENTER_WORKER_MESSAGE_LOOPER_NAME);
@@ -428,15 +428,16 @@ disk_quota_refresh(bool is_init)
 	req_msg_body = (ReqMsgRefreshTableSize *)MessageBody(req_msg);
 
 	/* fill message content in meesage body */
-	req_msg_body->dbid                     = MyDatabaseId;
-	req_msg_body->segcount                 = SEGCOUNT;
-	req_msg_body->oid_list_length          = oid_list_length;
-	req_msg_body->table_size_map_entry_num = table_size_map_entry_num;
-	req_msg_body->oid_list                 = (char *)req_msg_body + sizeof(ReqMsgRefreshTableSize);
-	req_msg_body->table_size_entry_list    = (char *)req_msg_body->oid_list + oid_list_length * sizeof(Oid);
-	fill_message_content_by_list(req_msg_body->oid_list, oidlist, sizeof(Oid));
-	fill_message_content_by_hash_table(req_msg_body->table_size_entry_list, local_table_size_map,
-	                                   sizeof(TableSizeEntry));
+	req_msg_body->dbid                         = MyDatabaseId;
+	req_msg_body->segcount                     = SEGCOUNT;
+	req_msg_body->oid_list_len                 = oid_list_len;
+	req_msg_body->table_size_entry_list_len    = table_size_entry_list_len;
+	req_msg_body->oid_list_offset              = sizeof(ReqMsgRefreshTableSize);
+	req_msg_body->table_size_entry_list_offset = req_msg_body->oid_list_offset + oid_list_len * sizeof(Oid);
+	fill_message_content_by_list(MessageContentListAddr(req_msg_body, req_msg_body->oid_list_offset), oidlist,
+	                             sizeof(Oid));
+	fill_message_content_by_hash_table(MessageContentListAddr(req_msg_body, req_msg_body->table_size_entry_list_offset),
+	                                   local_table_size_map, sizeof(TableSizeEntry));
 
 	/* send request message and wait for response message */
 	// TODO: add signal handle function

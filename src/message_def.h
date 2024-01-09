@@ -32,12 +32,12 @@ typedef struct TestMessageLoop
 
 typedef struct ReqMsgRefreshTableSize
 {
-	Oid   dbid;
-	int   segcount;
-	int   oid_list_length;
-	int   table_size_map_entry_num;
-	void *oid_list;
-	void *table_size_entry_list;
+	Oid    dbid;
+	int    segcount;
+	int    oid_list_len;
+	int    table_size_entry_list_len;
+	uint64 oid_list_offset;
+	uint64 table_size_entry_list_offset;
 } ReqMsgRefreshTableSize;
 
 #endif
