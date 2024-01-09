@@ -224,7 +224,6 @@ refresh_table_size(ReqMsgRefreshTableSize *req_msg_body)
 	TableSizeEntryKey key;
 	TableSizeEntry   *new_entry;
 	bool              found;
-	StringInfoData    hash_map_name;
 	HashMap          *table_size_map;
 	HASH_SEQ_STATUS   iter;
 
@@ -233,15 +232,8 @@ refresh_table_size(ReqMsgRefreshTableSize *req_msg_body)
 	oid_list_len       = req_msg_body->oid_list_len;
 	table_size_map_num = req_msg_body->table_size_entry_list_len;
 
-	initStringInfo(&hash_map_name);
-	appendStringInfo(&hash_map_name, "TableSizeMap_%d", dbid);
-
 	/* find the table size map related to the current database */
-	table_size_map = hash_search(toc_map, hash_map_name.data, HASH_ENTER, &found);
-	if (!found)
-	{
-		table_size_map->map = create_table_size_map(hash_map_name.data);
-	}
+	table_size_map = search_toc_map(toc_map, TABLE_SIZE_MAP, dbid);
 
 	/* set the TABLE_EXIST flag for existing relations. */
 	for (int i = 0; i < oid_list_len; i++)
