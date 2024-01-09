@@ -52,8 +52,7 @@ search_toc_map(HTAB *toc_map, HashMapType type, Oid dbid)
 		switch (type)
 		{
 			case TABLE_SIZE_MAP:
-				// TODO: enable in the next commit
-				// entry->map = create_table_size_map(name.data);
+				entry->map = create_table_size_map(name.data);
 				break;
 			case QUOTA_INFO_MAP:
 				// TODO: enable in the next commit

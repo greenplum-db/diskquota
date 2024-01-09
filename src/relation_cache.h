@@ -37,13 +37,14 @@ typedef struct DiskQuotaRelidCacheEntry
 
 extern HTAB *relation_cache;
 
-extern void init_shm_worker_relation_cache(void);
-extern Oid  get_relid_by_relfilenode(RelFileNode relfilenode);
-extern void remove_cache_entry(Oid relid, Oid relfilenode);
-extern Oid  get_uncommitted_table_relid(Oid relfilenode);
-extern void update_relation_cache(Oid relid);
-extern Oid  get_primary_table_oid(Oid relid, bool on_bgworker);
-extern void remove_committed_relation_from_cache(void);
-extern Size calculate_table_size(Oid relid);
+extern void  init_shm_worker_relation_cache(void);
+extern Oid   get_relid_by_relfilenode(RelFileNode relfilenode);
+extern void  remove_cache_entry(Oid relid, Oid relfilenode);
+extern Oid   get_uncommitted_table_relid(Oid relfilenode);
+extern void  update_relation_cache(Oid relid);
+extern Oid   get_primary_table_oid(Oid relid, bool on_bgworker);
+extern void  remove_committed_relation_from_cache(void);
+extern Size  calculate_table_size(Oid relid);
+extern List *get_current_database_oid_list(void);
 
 #endif

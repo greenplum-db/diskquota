@@ -40,6 +40,7 @@ static void disk_quota_sighup(SIGNAL_ARGS);
 void                     disk_quota_center_worker_main(Datum main_arg);
 static inline void       loop(DiskquotaLooper *looper);
 static DiskquotaMessage *disk_quota_message_handler(DiskquotaMessage *req_msg);
+static void              refresh_table_size(ReqMsgRefreshTableSize *req_msg_body);
 
 /* flags set by signal handlers */
 static volatile sig_atomic_t got_sighup  = false;
@@ -185,6 +186,11 @@ disk_quota_message_handler(DiskquotaMessage *req_msg)
 			TestMessageLoop *rsp_body = (TestMessageLoop *)MessageBody(rsp_msg);
 			rsp_body->a               = req_body->a + 1;
 		}
+		break;
+		case MSG_REFRESH_TABLE_SIZE: {
+			refresh_table_size((ReqMsgRefreshTableSize *)MessageBody(req_msg));
+		}
+		break;
 		default:
 			break;
 	}
@@ -195,4 +201,150 @@ disk_quota_message_handler(DiskquotaMessage *req_msg)
 	MemoryAccounting_Reset();
 #endif /* GP_VERSION_NUM */
 	return rsp_msg;
+}
+
+/*
+ * how to refresh table size map:
+ * - send table oid list
+ * 	- remove absent table
+ * - send delta table size with namespace/tablespace/role
+ * 	- update table size
+ * 	- get old_namespace stored in table_size_map
+ * 	- get new_namespace sent by bgworker
+ * 	- if old_namespace != new_namespace: update quota size
+ */
+static void
+refresh_table_size(ReqMsgRefreshTableSize *req_msg_body)
+{
+	Oid               dbid;
+	int               segcount;
+	int               oid_list_len;
+	int               table_size_map_num;
+	TableSizeEntry   *entry;
+	TableSizeEntryKey key;
+	TableSizeEntry   *new_entry;
+	bool              found;
+	StringInfoData    hash_map_name;
+	HashMap          *table_size_map;
+	HASH_SEQ_STATUS   iter;
+
+	dbid               = req_msg_body->dbid;
+	segcount           = req_msg_body->segcount;
+	oid_list_len       = req_msg_body->oid_list_len;
+	table_size_map_num = req_msg_body->table_size_entry_list_len;
+
+	initStringInfo(&hash_map_name);
+	appendStringInfo(&hash_map_name, "TableSizeMap_%d", dbid);
+
+	/* find the table size map related to the current database */
+	table_size_map = hash_search(toc_map, hash_map_name.data, HASH_ENTER, &found);
+	if (!found)
+	{
+		table_size_map->map = create_table_size_map(hash_map_name.data);
+	}
+
+	/* set the TABLE_EXIST flag for existing relations. */
+	for (int i = 0; i < oid_list_len; i++)
+	{
+		CopyValueFromMessageContentList(req_msg_body, req_msg_body->oid_list_offset, &key.reloid, i, sizeof(Oid));
+		for (int segid = -1; segid < segcount; segid += SEGMENT_SIZE_ARRAY_LENGTH)
+		{
+			key.id = TableSizeEntryId(segid);
+			entry  = hash_search(table_size_map->map, &key, HASH_FIND, &found);
+			if (!found) break;
+			set_table_size_entry_flag(entry, TABLE_EXIST);
+		}
+	}
+
+	/* update table size */
+	for (int i = 0; i < table_size_map_num; i++)
+	{
+		new_entry = (TableSizeEntry *)GetPointFromMessageContentList(
+		        req_msg_body, req_msg_body->table_size_entry_list_offset, i, sizeof(TableSizeEntry));
+		entry = hash_search(table_size_map->map, &new_entry->key, HASH_ENTER, &found);
+		if (!found)
+		{
+			memset(entry->totalsize, 0, sizeof(entry->totalsize));
+			entry->owneroid      = InvalidOid;
+			entry->namespaceoid  = InvalidOid;
+			entry->tablespaceoid = InvalidOid;
+			entry->flag          = 0;
+		}
+
+		int seg_st = TableSizeEntrySegidStart(entry);
+		int seg_ed = TableSizeEntrySegidEnd(entry);
+		for (int segid = seg_st; segid < seg_ed; segid++)
+		{
+			Size new_size     = TableSizeEntryGetSize(new_entry, segid);
+			Size updated_size = new_size - TableSizeEntryGetSize(entry, segid);
+			TableSizeEntrySetSize(entry, segid, new_size);
+
+			/* update the disk usage, there may be entries in the map whose keys are InvlidOid as the entry does
+			 * not exist in the table_size_map */
+			// TODO: move quota map to center worker
+			update_size_for_quota(updated_size, NAMESPACE_QUOTA, (Oid[]){entry->namespaceoid}, segid);
+			update_size_for_quota(updated_size, ROLE_QUOTA, (Oid[]){entry->owneroid}, segid);
+			update_size_for_quota(updated_size, ROLE_TABLESPACE_QUOTA, (Oid[]){entry->owneroid, entry->tablespaceoid},
+			                      segid);
+			update_size_for_quota(updated_size, NAMESPACE_TABLESPACE_QUOTA,
+			                      (Oid[]){entry->namespaceoid, entry->tablespaceoid}, segid);
+
+			/* if schema change, transfer the file size */
+			if (entry->namespaceoid != new_entry->namespaceoid)
+			{
+				// TODO: move quota map to center worker
+				transfer_table_for_quota(TableSizeEntryGetSize(entry, segid), NAMESPACE_QUOTA,
+				                         (Oid[]){entry->namespaceoid}, (Oid[]){new_entry->namespaceoid}, segid);
+			}
+			/* if owner change, transfer the file size */
+			if (entry->owneroid != new_entry->owneroid)
+			{
+				transfer_table_for_quota(TableSizeEntryGetSize(entry, segid), ROLE_QUOTA, (Oid[]){entry->owneroid},
+				                         (Oid[]){new_entry->owneroid}, segid);
+			}
+
+			if (entry->tablespaceoid != new_entry->tablespaceoid || entry->namespaceoid != new_entry->namespaceoid)
+			{
+				transfer_table_for_quota(TableSizeEntryGetSize(entry, segid), NAMESPACE_TABLESPACE_QUOTA,
+				                         (Oid[]){entry->namespaceoid, entry->tablespaceoid},
+				                         (Oid[]){new_entry->namespaceoid, new_entry->tablespaceoid}, segid);
+			}
+			if (entry->tablespaceoid != new_entry->tablespaceoid || entry->owneroid != new_entry->owneroid)
+			{
+				transfer_table_for_quota(TableSizeEntryGetSize(entry, segid), ROLE_TABLESPACE_QUOTA,
+				                         (Oid[]){entry->owneroid, entry->tablespaceoid},
+				                         (Oid[]){new_entry->owneroid, new_entry->tablespaceoid}, segid);
+			}
+		}
+
+		entry->namespaceoid  = new_entry->namespaceoid;
+		entry->owneroid      = new_entry->owneroid;
+		entry->tablespaceoid = new_entry->tablespaceoid;
+	}
+
+	/* remove absent table from table size map */
+	hash_seq_init(&iter, table_size_map->map);
+	while ((entry = hash_seq_search(&iter)) != NULL)
+	{
+		if (!get_table_size_entry_flag(entry, TABLE_EXIST))
+		{
+			int seg_st = TableSizeEntrySegidStart(entry);
+			int seg_ed = TableSizeEntrySegidEnd(entry);
+			for (int i = seg_st; i < seg_ed; i++)
+			{
+				update_size_for_quota(-TableSizeEntryGetSize(entry, i), NAMESPACE_QUOTA, (Oid[]){entry->namespaceoid},
+				                      i);
+				update_size_for_quota(-TableSizeEntryGetSize(entry, i), ROLE_QUOTA, (Oid[]){entry->owneroid}, i);
+				update_size_for_quota(-TableSizeEntryGetSize(entry, i), ROLE_TABLESPACE_QUOTA,
+				                      (Oid[]){entry->owneroid, entry->tablespaceoid}, i);
+				update_size_for_quota(-TableSizeEntryGetSize(entry, i), NAMESPACE_TABLESPACE_QUOTA,
+				                      (Oid[]){entry->namespaceoid, entry->tablespaceoid}, i);
+			}
+			hash_search(table_size_map->map, &entry->key, HASH_REMOVE, NULL);
+		}
+		else
+		{
+			reset_table_size_entry_flag(entry, TABLE_EXIST);
+		}
+	}
 }

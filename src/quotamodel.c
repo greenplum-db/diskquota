@@ -59,7 +59,6 @@ static void refresh_quota_info_map(void);
 
 /* functions to refresh disk quota model*/
 static void refresh_disk_quota_usage(bool is_init);
-static void calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map);
 
 static Size DiskQuotaShmemSize(void);
 static void disk_quota_shmem_startup(void);
@@ -215,7 +214,6 @@ static Size
 diskquota_worker_shmem_size()
 {
 	Size size = 0;
-	size      = add_size(size, diskquota_table_size_shmem_size());
 	size      = add_size(size, diskquota_local_rejectmap_shmem_size());
 	return size;
 }
@@ -256,9 +254,6 @@ DiskQuotaShmemSize(void)
 void
 init_disk_quota_model(uint32 id)
 {
-	/* for table_size_map */
-	init_table_size_map(id);
-
 	/* for local_reject_map */
 	init_local_reject_map(id);
 
@@ -281,9 +276,6 @@ init_disk_quota_model(uint32 id)
 void
 vacuum_disk_quota_model(uint32 id)
 {
-	/* table_size_map */
-	vacuum_table_size_map(id);
-
 	/* localrejectmap */
 	vacuum_local_reject_map(id);
 
@@ -455,13 +447,8 @@ refresh_disk_quota_usage(bool is_init)
 		 */
 		local_active_table_stat_map = gp_fetch_active_tables(is_init);
 		bool hasActiveTable         = (hash_get_num_entries(local_active_table_stat_map) != 0);
-		/* TODO: if we can skip the following steps when there is no active table */
-		/* recalculate the disk usage of table, schema and role */
-		calculate_table_disk_usage(is_init, local_active_table_stat_map);
 		/* refresh quota_info_map */
 		refresh_quota_info_map();
-		/* flush local table_size_map to user table table_size */
-		flush_to_table_size();
 		/* copy local reject map back to shared reject map */
 		bool reject_map_changed = flush_local_reject_map();
 		/*
@@ -493,251 +480,6 @@ refresh_disk_quota_usage(bool is_init)
 		AbortCurrentTransaction();
 
 	return;
-}
-
-static List *
-merge_uncommitted_table_to_oidlist(List *oidlist)
-{
-	HASH_SEQ_STATUS              iter;
-	DiskQuotaRelationCacheEntry *entry;
-
-	if (relation_cache == NULL)
-	{
-		return oidlist;
-	}
-
-	remove_committed_relation_from_cache();
-
-	LWLockAcquire(diskquota_locks.relation_cache_lock, LW_SHARED);
-	hash_seq_init(&iter, relation_cache);
-	while ((entry = hash_seq_search(&iter)) != NULL)
-	{
-		/* The session of db1 should not see the table inside db2. */
-		if (entry->primary_table_relid == entry->relid && entry->rnode.node.dbNode == MyDatabaseId)
-		{
-			oidlist = lappend_oid(oidlist, entry->relid);
-		}
-	}
-	LWLockRelease(diskquota_locks.relation_cache_lock);
-
-	return oidlist;
-}
-
-/*
- *  Incremental way to update the disk quota of every database objects
- *  Recalculate the table's disk usage when it's a new table or active table.
- *  Detect the removed table if it's no longer in pg_class.
- *  If change happens, no matter size change or owner change,
- *  update namespace_size_map and role_size_map correspondingly.
- *  Parameter 'is_init' set to true at initialization stage to fetch tables
- *  size from table table_size
- */
-
-static void
-calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
-{
-	bool                table_size_map_found;
-	bool                active_tbl_found;
-	int64               updated_total_size;
-	TableSizeEntry     *tsentry = NULL;
-	Oid                 relOid;
-	HASH_SEQ_STATUS     iter;
-	ActiveTableEntry   *active_table_entry;
-	TableSizeEntryKey   key;
-	ActiveTableEntryKey active_table_key;
-	List               *oidlist;
-	ListCell           *l;
-
-	/*
-	 * unset is_exist flag for tsentry in table_size_map this is used to
-	 * detect tables which have been dropped.
-	 */
-	hash_seq_init(&iter, table_size_map);
-	while ((tsentry = hash_seq_search(&iter)) != NULL)
-	{
-		reset_table_size_entry_flag(tsentry, TABLE_EXIST);
-	}
-
-	/*
-	 * scan pg_class to detect table event: drop, reset schema, reset owner.
-	 * calculate the file size for active table and update namespace_size_map
-	 * and role_size_map
-	 */
-	oidlist = get_rel_oid_list();
-
-	oidlist = merge_uncommitted_table_to_oidlist(oidlist);
-
-	foreach (l, oidlist)
-	{
-		HeapTuple     classTup;
-		Form_pg_class classForm     = NULL;
-		Oid           relnamespace  = InvalidOid;
-		Oid           relowner      = InvalidOid;
-		Oid           reltablespace = InvalidOid;
-		relOid                      = lfirst_oid(l);
-
-		classTup = SearchSysCacheCopy1(RELOID, ObjectIdGetDatum(relOid));
-		if (HeapTupleIsValid(classTup))
-		{
-			classForm     = (Form_pg_class)GETSTRUCT(classTup);
-			relnamespace  = classForm->relnamespace;
-			relowner      = classForm->relowner;
-			reltablespace = classForm->reltablespace;
-
-			if (!OidIsValid(reltablespace))
-			{
-				reltablespace = MyDatabaseTableSpace;
-			}
-		}
-		else
-		{
-			LWLockAcquire(diskquota_locks.relation_cache_lock, LW_SHARED);
-			DiskQuotaRelationCacheEntry *relation_entry = hash_search(relation_cache, &relOid, HASH_FIND, NULL);
-			if (relation_entry == NULL)
-			{
-				elog(WARNING, "cache lookup failed for relation %u", relOid);
-				LWLockRelease(diskquota_locks.relation_cache_lock);
-				continue;
-			}
-			relnamespace  = relation_entry->namespaceoid;
-			relowner      = relation_entry->owneroid;
-			reltablespace = relation_entry->rnode.node.spcNode;
-			LWLockRelease(diskquota_locks.relation_cache_lock);
-		}
-
-		/*
-		 * The segid is the same as the content id in gp_segment_configuration
-		 * and the content id is continuous, so it's safe to use SEGCOUNT
-		 * to get segid.
-		 */
-		for (int cur_segid = -1; cur_segid < SEGCOUNT; cur_segid++)
-		{
-			key.reloid = relOid;
-			key.id     = TableSizeEntryId(cur_segid);
-
-			tsentry = (TableSizeEntry *)hash_search(table_size_map, &key, HASH_ENTER, &table_size_map_found);
-
-			if (!table_size_map_found)
-			{
-				tsentry->key.reloid = relOid;
-				tsentry->key.id     = key.id;
-				Assert(TableSizeEntrySegidStart(tsentry) == cur_segid);
-				memset(tsentry->totalsize, 0, sizeof(tsentry->totalsize));
-				tsentry->owneroid      = InvalidOid;
-				tsentry->namespaceoid  = InvalidOid;
-				tsentry->tablespaceoid = InvalidOid;
-				tsentry->flag          = 0;
-
-				int seg_st = TableSizeEntrySegidStart(tsentry);
-				int seg_ed = TableSizeEntrySegidEnd(tsentry);
-				for (int j = seg_st; j < seg_ed; j++) TableSizeEntrySetFlushFlag(tsentry, j);
-			}
-
-			/* mark tsentry is_exist */
-			if (tsentry) set_table_size_entry_flag(tsentry, TABLE_EXIST);
-			active_table_key.reloid = relOid;
-			active_table_key.segid  = cur_segid;
-			active_table_entry      = (ActiveTableEntry *)hash_search(local_active_table_stat_map, &active_table_key,
-			                                                          HASH_FIND, &active_tbl_found);
-
-			/* skip to recalculate the tables which are not in active list */
-			if (active_tbl_found)
-			{
-				if (cur_segid == -1)
-				{
-					/* pretend process as utility mode, and append the table size on master */
-					Gp_role = GP_ROLE_UTILITY;
-
-					active_table_entry->tablesize += calculate_table_size(relOid);
-
-					Gp_role = GP_ROLE_DISPATCH;
-				}
-				/* firstly calculate the updated total size of a table */
-				updated_total_size = active_table_entry->tablesize - TableSizeEntryGetSize(tsentry, cur_segid);
-
-				/* update the table_size entry */
-				TableSizeEntrySetSize(tsentry, cur_segid, active_table_entry->tablesize);
-				TableSizeEntrySetFlushFlag(tsentry, cur_segid);
-
-				/* update the disk usage, there may be entries in the map whose keys are InvlidOid as the tsentry does
-				 * not exist in the table_size_map */
-				update_size_for_quota(updated_total_size, NAMESPACE_QUOTA, (Oid[]){tsentry->namespaceoid}, cur_segid);
-				update_size_for_quota(updated_total_size, ROLE_QUOTA, (Oid[]){tsentry->owneroid}, cur_segid);
-				update_size_for_quota(updated_total_size, ROLE_TABLESPACE_QUOTA,
-				                      (Oid[]){tsentry->owneroid, tsentry->tablespaceoid}, cur_segid);
-				update_size_for_quota(updated_total_size, NAMESPACE_TABLESPACE_QUOTA,
-				                      (Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid}, cur_segid);
-			}
-			/* table size info doesn't need to flush at init quota model stage */
-			if (is_init)
-			{
-				TableSizeEntryResetFlushFlag(tsentry, cur_segid);
-			}
-
-			/* if schema change, transfer the file size */
-			if (tsentry->namespaceoid != relnamespace)
-			{
-				transfer_table_for_quota(TableSizeEntryGetSize(tsentry, cur_segid), NAMESPACE_QUOTA,
-				                         (Oid[]){tsentry->namespaceoid}, (Oid[]){relnamespace}, cur_segid);
-			}
-			/* if owner change, transfer the file size */
-			if (tsentry->owneroid != relowner)
-			{
-				transfer_table_for_quota(TableSizeEntryGetSize(tsentry, cur_segid), ROLE_QUOTA,
-				                         (Oid[]){tsentry->owneroid}, (Oid[]){relowner}, cur_segid);
-			}
-
-			if (tsentry->tablespaceoid != reltablespace || tsentry->namespaceoid != relnamespace)
-			{
-				transfer_table_for_quota(TableSizeEntryGetSize(tsentry, cur_segid), NAMESPACE_TABLESPACE_QUOTA,
-				                         (Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid},
-				                         (Oid[]){relnamespace, reltablespace}, cur_segid);
-			}
-			if (tsentry->tablespaceoid != reltablespace || tsentry->owneroid != relowner)
-			{
-				transfer_table_for_quota(TableSizeEntryGetSize(tsentry, cur_segid), ROLE_TABLESPACE_QUOTA,
-				                         (Oid[]){tsentry->owneroid, tsentry->tablespaceoid},
-				                         (Oid[]){relowner, reltablespace}, cur_segid);
-			}
-
-			if (cur_segid == (TableSizeEntrySegidEnd(tsentry) - 1))
-			{
-				tsentry->namespaceoid  = relnamespace;
-				tsentry->owneroid      = relowner;
-				tsentry->tablespaceoid = reltablespace;
-			}
-		}
-		if (HeapTupleIsValid(classTup))
-		{
-			heap_freetuple(classTup);
-		}
-	}
-
-	list_free(oidlist);
-
-	/*
-	 * Process removed tables. Reduce schema and role size firstly. Remove
-	 * table from table_size_map in flush_to_table_size() function later.
-	 */
-	hash_seq_init(&iter, table_size_map);
-	while ((tsentry = hash_seq_search(&iter)) != NULL)
-	{
-		if (!get_table_size_entry_flag(tsentry, TABLE_EXIST))
-		{
-			int seg_st = TableSizeEntrySegidStart(tsentry);
-			int seg_ed = TableSizeEntrySegidEnd(tsentry);
-			for (int i = seg_st; i < seg_ed; i++)
-			{
-				update_size_for_quota(-TableSizeEntryGetSize(tsentry, i), NAMESPACE_QUOTA,
-				                      (Oid[]){tsentry->namespaceoid}, i);
-				update_size_for_quota(-TableSizeEntryGetSize(tsentry, i), ROLE_QUOTA, (Oid[]){tsentry->owneroid}, i);
-				update_size_for_quota(-TableSizeEntryGetSize(tsentry, i), ROLE_TABLESPACE_QUOTA,
-				                      (Oid[]){tsentry->owneroid, tsentry->tablespaceoid}, i);
-				update_size_for_quota(-TableSizeEntryGetSize(tsentry, i), NAMESPACE_TABLESPACE_QUOTA,
-				                      (Oid[]){tsentry->namespaceoid, tsentry->tablespaceoid}, i);
-			}
-		}
-	}
 }
 
 /*
