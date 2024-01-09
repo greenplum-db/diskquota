@@ -1,0 +1,50 @@
+-- start_ignore
+\! mkdir -p /tmp/spc1
+-- end_ignore
+CREATE SCHEMA s1;
+CREATE role r1 NOLOGIN;
+CREATE TABLESPACE spc1 LOCATION '/tmp/spc1';
+SELECT diskquota.set_schema_quota('s1', '1MB');
+ set_schema_quota 
+------------------
+ 
+(1 row)
+
+SELECT diskquota.set_role_quota('r1', '2MB');
+ set_role_quota 
+----------------
+ 
+(1 row)
+
+SELECT diskquota.set_schema_tablespace_quota('s1', 'spc1', '3MB');
+ set_schema_tablespace_quota 
+-----------------------------
+ 
+(1 row)
+
+SELECT diskquota.set_role_tablespace_quota('r1', 'spc1', '4MB');
+ set_role_tablespace_quota 
+---------------------------
+ 
+(1 row)
+
+SELECT diskquota.set_per_segment_quota('spc1', 0.1);
+ set_per_segment_quota 
+-----------------------
+ 
+(1 row)
+
+\c diskquota
+SELECT * from diskquota.quota_config;
+                                                                                                                                                                                                                                                                                                                                                                                                                                                            config                                                                                                                                                                                                                                                                                                                                                                                                                                                            
+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ {"version": "diskquota-3.0", "quota_list": [{"db_oid": 132796, "owner_oid": 133244, "quota_type": 3, "quota_limit_mb": 4, "tablespace_oid": 133245}, {"db_oid": 132346, "quota_type": 2, "namespace_oid": 132793, "quota_limit_mb": 3, "tablespace_oid": 132795}, {"db_oid": 132796, "owner_oid": 133244, "quota_type": 1, "quota_limit_mb": 2}, {"db_oid": 132796, "quota_type": 0, "namespace_oid": 133243, "quota_limit_mb": 1}, {"db_oid": 132796, "quota_type": 2, "namespace_oid": 133243, "quota_limit_mb": 3, "tablespace_oid": 133245}, {"db_oid": 132346, "owner_oid": 132794, "quota_type": 3, "quota_limit_mb": 4, "tablespace_oid": 132795}, {"db_oid": 132346, "quota_type": 0, "namespace_oid": 132793, "quota_limit_mb": 1}, {"db_oid": 132796, "segratio": 0.10000000149011612, "quota_type": 4, "tablespace_oid": 133245}, {"db_oid": 132346, "owner_oid": 132794, "quota_type": 1, "quota_limit_mb": 2}]}
+(1 row)
+
+\c contrib_regression
+DROP SCHEMA s1;
+DROP role r1;
+DROP TABLESPACE spc1;
+-- start_ignore
+\! rm -rf /tmp/spc1
+-- end_ignore

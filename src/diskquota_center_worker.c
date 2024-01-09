@@ -20,6 +20,9 @@
 #include "utils/ps_status.h"
 #include "utils/syscache.h"
 #include "utils/resowner.h"
+#include "utils/snapmgr.h"
+#include "executor/spi.h"
+#include "access/xact.h"
 
 #include "diskquota.h"
 #include "msg_looper.h"
@@ -41,6 +44,7 @@ void                     disk_quota_center_worker_main(Datum main_arg);
 static inline void       loop(DiskquotaLooper *looper);
 static DiskquotaMessage *disk_quota_message_handler(DiskquotaMessage *req_msg);
 static void              refresh_table_size(ReqMsgRefreshTableSize *req_msg_body);
+static DiskquotaMessage *set_quota_config(ReqMsgSetQuotaConfig *req_msg);
 
 /* flags set by signal handlers */
 static volatile sig_atomic_t got_sighup  = false;
@@ -191,6 +195,10 @@ disk_quota_message_handler(DiskquotaMessage *req_msg)
 			refresh_table_size((ReqMsgRefreshTableSize *)MessageBody(req_msg));
 		}
 		break;
+		case MSG_SET_QUOTA_CONFIG: {
+			rsp_msg = set_quota_config((ReqMsgSetQuotaConfig *)MessageBody(req_msg));
+		}
+		break;
 		default:
 			break;
 	}
@@ -339,4 +347,68 @@ refresh_table_size(ReqMsgRefreshTableSize *req_msg_body)
 			reset_table_size_entry_flag(entry, TABLE_EXIST);
 		}
 	}
+}
+
+static DiskquotaMessage *
+set_quota_config(ReqMsgSetQuotaConfig *req_msg)
+{
+	Oid                   dbid;
+	QuotaConfig           quota_config;
+	bool                  need_delete_quota;
+	DiskquotaMessage     *rsp_msg;
+	RspMsgSetQuotaConfig *rsp_msg_body;
+	bool                  success = true;
+	MemoryContext         cctx;
+	ErrorData            *error;
+	bool                  pushed_active_snap = false;
+	bool                  connected          = false;
+	Size                  rsp_msg_sz         = 0;
+
+	dbid              = req_msg->dbid;
+	quota_config      = req_msg->config;
+	need_delete_quota = req_msg->need_delete_quota;
+
+	cctx = CurrentMemoryContext;
+	PG_TRY();
+	{
+		StartTransactionCommand();
+		SPI_connect();
+		connected = true;
+		PushActiveSnapshot(GetTransactionSnapshot());
+		pushed_active_snap = true;
+		update_quota_config_table(&quota_config, need_delete_quota);
+	}
+	PG_CATCH();
+	{
+		// TODO: should we hold the interupts?
+		MemoryContextSwitchTo(cctx);
+		error   = CopyErrorData();
+		success = false;
+		EmitErrorReport();
+		FlushErrorState();
+	}
+	PG_END_TRY();
+
+	if (connected) SPI_finish();
+	if (pushed_active_snap) PopActiveSnapshot();
+	if (success)
+		CommitTransactionCommand();
+	else
+		AbortCurrentTransaction();
+
+	rsp_msg_sz = add_size(rsp_msg_sz, sizeof(RspMsgSetQuotaConfig));
+	if (!success) rsp_msg_sz = add_size(rsp_msg_sz, strlen(error->message));
+
+	rsp_msg      = InitResponseMessage(MSG_SET_QUOTA_CONFIG, rsp_msg_sz);
+	rsp_msg_body = (RspMsgSetQuotaConfig *)MessageBody(rsp_msg);
+
+	rsp_msg_body->success = success;
+	if (!success)
+	{
+		rsp_msg_body->error = (char *)rsp_msg_body + sizeof(RspMsgSetQuotaConfig);
+		memcpy(rsp_msg_body->error, error->message, strlen(error->message));
+		FreeErrorData(error);
+	}
+
+	return rsp_msg;
 }

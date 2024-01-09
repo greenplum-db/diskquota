@@ -70,4 +70,6 @@ typedef struct QuotaConfigKey
 	Oid       keys[MAX_QUOTA_KEY_NUM];
 } QuotaConfigKey;
 
+extern void update_quota_config_table(QuotaConfig *config, bool need_del_quota);
+
 #endif

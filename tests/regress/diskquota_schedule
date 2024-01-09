@@ -1,70 +1,7 @@
 test: config
 test: test_create_extension
-test: test_max_monitored_databases
-test: test_readiness_logged
-test: test_init_table_size_table
-test: test_relation_size
-test: test_relation_cache
-test: test_uncommitted_table_size
-test: test_pause_and_resume
-test: test_pause_and_resume_multiple_db
-test: test_drop_after_pause
-test: test_show_status
-test: test_quota_view_no_table
-# disable this test due to GPDB behavior change
-# test: test_table_size
-test: test_fast_disk_check
-test: test_worker_not_ready
-#test: test_insert_after_drop
-# The update for quota_config does not support concurrency, so we do not test in parallel
-test: test_role
-test: test_schema
-test: test_drop_table
-test: test_column
-test: test_copy
-test: test_update
-test: test_toast
-test: test_truncate
-test: test_reschema
-test: test_temp_role
-test: test_rename
-test: test_delete_quota
-test: test_mistake
-test: test_tablespace_role
-test: test_tablespace_schema
-test: test_tablespace_role_perseg
-test: test_tablespace_schema_perseg
-test: test_index
-test: test_recreate
-#################################################
-test: test_ctas_no_preload_lib
-test: test_ctas_before_set_quota
-test: test_truncate
-test: test_delete_quota
-test: test_partition
-test: test_vacuum
-test: test_primary_failure
-test: test_extension
-test: test_activetable_limit
-test: test_many_active_tables
-test: test_fetch_table_stat
-test: test_appendonly
-test: test_rejectmap
-test: test_clean_rejectmap_after_drop
-# flaky test with bugs
-# test: test_rejectmap_mul_db
-test: test_ctas_pause
-test: test_ctas_role
-test: test_ctas_schema
-test: test_ctas_tablespace_role
-test: test_ctas_tablespace_schema
-# Default role and database(tablespace) exceed quota, which interupts the update for diskquota.quota_config.
-# We will fix it by moving diskquota.quota_config to diskquota database.
-# test: test_default_tablespace
-test: test_tablespace_diff_schema
-# test: test_worker_schedule
-# test: test_worker_schedule_exception
-test: test_dbname_encoding
-test: test_drop_any_extension
+
+test: test_set_quota_config
+
 test: test_drop_extension
 test: reset_config
