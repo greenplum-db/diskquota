@@ -17,18 +17,41 @@
 #include "postgres.h"
 #include "storage/dsm.h"
 
+/*
+ * Example of message struct:
+ * typedef struct ReqMsgSample {
+ * 		int a;
+ * 		int list1_len;
+ * 		int list2_len;
+ * 		size_t list1_offset;
+ * 		size_t list2_offset;
+ * } ReqMsgSample;
+ *
+ * - 'a' is one of the message content.
+ * - 'list1_len' is the length of list1 in the message.
+ * - 'list2_len' is the length of list2 in the message.
+ * - 'list1_offset' is the address offset of list1.
+ *   The address of list1 is behind of ReqMsgSample.
+ * 	 list1_offset = sizeof(ReqMsgSample)
+ * - 'list1_offset' is the address offset of list2.
+ * 	 The address of list2 is behind of list1.
+ * 	 list2_offset = list1_offset + list1_len * sizeof(list1_entry)
+ */
+
 #define DiskquotaMessageID uint32
 #define MessageBody(msg) ((char *)msg + MAXALIGN(sizeof(DiskquotaMessage)))
 #define MessageSize(msg) (MAXALIGN(msg->size) + MAXALIGN(sizeof(DiskquotaMessage)))
 #define InitRequestMessage(msg_id, payload_len) init_message(msg_id, payload_len)
 #define InitResponseMessage(msg_id, payload_len) init_message(msg_id, payload_len)
-#define CopyValueFromMessageContentList(list, dst, idx, sz) \
-	do                                                      \
-	{                                                       \
-		memcpy(dst, (char *)list + (idx) * (sz), sz);       \
+#define MessageContentListAddr(msg, offset) ((char *)(msg) + (offset))
+#define CopyValueFromMessageContentList(msg, list_offset, dst, idx, sz)           \
+	do                                                                            \
+	{                                                                             \
+		memcpy(dst, MessageContentListAddr(msg, list_offset) + (idx) * (sz), sz); \
 	} while (0)
 
-#define GetPointFromMessageContentList(list, idx, sz) ((char *)list + (idx) * (sz))
+#define GetPointFromMessageContentList(msg, list_offset, idx, sz) \
+	(MessageContentListAddr(msg, list_offset) + (idx) * (sz))
 
 /*
  * The message header.
