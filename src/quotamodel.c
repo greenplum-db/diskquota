@@ -251,7 +251,7 @@ update_size_for_quota(int64 size, QuotaType type, Oid *keys, int16 segid)
 	memcpy(key.keys, keys, quota_key_num[type] * sizeof(Oid));
 	key.type  = type;
 	key.segid = segid;
-	action    = check_hash_fullness(quota_info_map, diskquota_max_quota_probes, quota_info_map_warning,
+	action    = check_hash_fullness(quota_info_map, MAX_QUOTA_MAP_ENTRIES, quota_info_map_warning,
 	                                quota_info_map_last_overflow_report);
 	entry     = hash_search(quota_info_map, &key, action, &found);
 	/* If the number of quota exceeds the limit, entry will be NULL */
@@ -278,7 +278,7 @@ update_limit_for_quota(int64 limit, float segratio, QuotaType type, Oid *keys)
 		memcpy(key.keys, keys, quota_key_num[type] * sizeof(Oid));
 		key.type  = type;
 		key.segid = i;
-		action    = check_hash_fullness(quota_info_map, diskquota_max_quota_probes, quota_info_map_warning,
+		action    = check_hash_fullness(quota_info_map, MAX_QUOTA_MAP_ENTRIES, quota_info_map_warning,
 		                                quota_info_map_last_overflow_report);
 		entry     = hash_search(quota_info_map, &key, action, &found);
 		/* If the number of quota exceeds the limit, entry will be NULL */
