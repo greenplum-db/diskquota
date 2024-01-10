@@ -54,50 +54,12 @@ int SEGCOUNT = 0;
 
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 
-/* functions to maintain the quota maps */
-static void refresh_quota_info_map(void);
-
 /* functions to refresh disk quota model*/
 static void refresh_disk_quota_usage(bool is_init);
 
 static Size DiskQuotaShmemSize(void);
 static void disk_quota_shmem_startup(void);
 static void init_lwlocks(void);
-
-/*
- * Check the quota map, if the entry doesn't exist anymore,
- * remove it from the map. Otherwise, check if it has hit
- * the quota limit, if it does, add it to the rejectmap.
- */
-static void
-refresh_quota_info_map(void)
-{
-	HASH_SEQ_STATUS iter;
-	QuotaInfoEntry *entry;
-
-	hash_seq_init(&iter, quota_info_map);
-	while ((entry = hash_seq_search(&iter)) != NULL)
-	{
-		QuotaType type    = entry->key.type;
-		bool      removed = remove_expired_quota(entry);
-		if (!removed && entry->limit > 0)
-		{
-			if (entry->size >= entry->limit)
-			{
-				Oid targetOid = entry->key.keys[0];
-				/* when quota type is not NAMESPACE_TABLESPACE_QUOTA or ROLE_TABLESPACE_QUOTA, the tablespaceoid
-				 * is set to be InvalidOid, so when we get it from map, also set it to be InvalidOid
-				 */
-				Oid tablespaceoid = (type == NAMESPACE_TABLESPACE_QUOTA) || (type == ROLE_TABLESPACE_QUOTA)
-				                            ? entry->key.keys[1]
-				                            : InvalidOid;
-
-				bool segmentExceeded = entry->key.segid == -1 ? false : true;
-				add_quota_to_rejectmap(type, targetOid, tablespaceoid, segmentExceeded);
-			}
-		}
-	}
-}
 
 /* ---- Functions for disk quota shared memory ---- */
 /*
@@ -240,7 +202,6 @@ DiskQuotaShmemSize(void)
 		size = add_size(size, diskquota_launcher_shmem_size());
 		size = add_size(size, sizeof(pg_atomic_uint32));
 		size = add_size(size, diskquota_worker_shmem_size() * diskquota_max_monitored_databases);
-		size = add_size(size, quota_info_map_shmem_size());
 		size = add_size(size, diskquota_center_worker_shmem_size());
 	}
 
@@ -256,9 +217,6 @@ init_disk_quota_model(uint32 id)
 {
 	/* for local_reject_map */
 	init_local_reject_map(id);
-
-	/* for quota_info_map */
-	init_quota_info_map(id);
 }
 
 /*
@@ -278,9 +236,6 @@ vacuum_disk_quota_model(uint32 id)
 {
 	/* localrejectmap */
 	vacuum_local_reject_map(id);
-
-	/* quota_info_map */
-	vacuum_quota_info_map(id);
 }
 
 /*
@@ -400,10 +355,7 @@ refresh_disk_quota_model(bool is_init)
 
 	if (is_init) ereport(LOG, (errmsg("[diskquota] initialize quota model started")));
 	/* skip refresh model when load_quotas failed */
-	if (load_quotas())
-	{
-		refresh_disk_quota_usage(is_init);
-	}
+	refresh_disk_quota_usage(is_init);
 	if (is_init) ereport(LOG, (errmsg("[diskquota] initialize quota model finished")));
 }
 
@@ -448,7 +400,7 @@ refresh_disk_quota_usage(bool is_init)
 		local_active_table_stat_map = gp_fetch_active_tables(is_init);
 		bool hasActiveTable         = (hash_get_num_entries(local_active_table_stat_map) != 0);
 		/* refresh quota_info_map */
-		refresh_quota_info_map();
+		// refresh_quota_info_map();
 		/* copy local reject map back to shared reject map */
 		bool reject_map_changed = flush_local_reject_map();
 		/*

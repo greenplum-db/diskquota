@@ -40,16 +40,14 @@ typedef struct QuotaInfoEntry
 
 extern HTAB *quota_info_map;
 
-extern Size quota_info_map_shmem_size(void);
-extern void init_quota_info_map(uint32 id);
-extern void vacuum_quota_info_map(uint32 id);
+extern HTAB *create_quota_info_map(const char *name);
+extern void  vacuum_quota_info_map(HTAB *quota_info_map);
 
-extern void update_size_for_quota(int64 size, QuotaType type, Oid *keys, int16 segid);
-extern void update_limit_for_quota(int64 limit, float segratio, QuotaType type, Oid *keys);
-extern void transfer_table_for_quota(int64 totalsize, QuotaType type, Oid *old_keys, Oid *new_keys, int16 segid);
-extern void clean_all_quota_limit(void);
-extern bool remove_expired_quota(QuotaInfoEntry *entry);
+extern void update_size_for_quota(HTAB *quota_info_map, int64 size, QuotaType type, Oid *keys, int16 segid);
+extern void transfer_table_for_quota(HTAB *quota_info_map, int64 totalsize, QuotaType type, Oid *old_keys,
+                                     Oid *new_keys, int16 segid);
 
-extern bool load_quotas(void);
+extern bool load_quotas(Oid dbid, int segcount, HTAB *quota_info_map);
+extern bool is_quota_expired(QuotaInfoEntryKey *key);
 
 #endif

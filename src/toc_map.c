@@ -55,8 +55,7 @@ search_toc_map(HTAB *toc_map, HashMapType type, Oid dbid)
 				entry->map = create_table_size_map(name.data);
 				break;
 			case QUOTA_INFO_MAP:
-				// TODO: enable in the next commit
-				// entry->map = create_quota_info_map(name.data);
+				entry->map = create_quota_info_map(name.data);
 				break;
 			default:
 				elog(ERROR, "incorrect hash map type: %d", type);
