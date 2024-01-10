@@ -31,6 +31,7 @@
 #include "relation_cache.h"
 #include "table_size.h"
 #include "gp_activetable.h"
+#include "quota.h"
 
 #include <unistd.h> // for useconds_t
 
@@ -39,8 +40,11 @@ static void disk_quota_sigterm(SIGNAL_ARGS);
 static void disk_quota_sighup(SIGNAL_ARGS);
 
 /* bgworker main function */
-void        disk_quota_worker_main_3(Datum main_arg);
-static void disk_quota_refresh(bool is_init);
+void                     disk_quota_worker_main_3(Datum main_arg);
+static void              disk_quota_refresh(bool is_init);
+static DiskquotaMessage *refresh_table_size(List *oidlist, HTAB *local_table_size_map, bool is_init);
+static DiskquotaMessage *refresh_quota_info(List *expired_quota_info_entries);
+static List             *get_expired_quota_info_entries(RspMsgRefreshTableSize *msg_body);
 
 /* extern function */
 // FIXME: free worker on launcher
@@ -390,6 +394,44 @@ disk_quota_refresh(bool is_init)
 	List                   *oidlist;
 	HTAB                   *local_active_table_map;
 	HTAB                   *local_table_size_map;
+	List                   *expired_quota_info_entries;
+	DiskquotaMessage       *rsp_msg_rts;
+	DiskquotaMessage       *rsp_msg_rqi;
+	RspMsgRefreshTableSize *rsp_msg_body_rts;
+	RspMsgRefreshQuotaInfo *rsp_msg_body_rqi;
+
+	/* refresh table size */
+	// TODO: do not load table size from diskquota.table_size when is_init == true
+	/* get active table size from all segments */
+	local_active_table_map = gp_fetch_active_tables(is_init);
+	/* get all relation oids in the current database */
+	oidlist = get_current_database_oid_list();
+	/* get table size map by local_active_table_map */
+	local_table_size_map = get_current_database_table_size_map(local_active_table_map);
+
+	rsp_msg_rts      = refresh_table_size(oidlist, local_table_size_map, is_init);
+	rsp_msg_body_rts = (RspMsgRefreshTableSize *)MessageBody(rsp_msg_rts);
+
+	/* refresh quota info */
+	expired_quota_info_entries = get_expired_quota_info_entries(rsp_msg_body_rts);
+
+	rsp_msg_rqi      = refresh_quota_info(expired_quota_info_entries);
+	rsp_msg_body_rqi = (RspMsgRefreshQuotaInfo *)MessageBody(rsp_msg_rqi);
+
+	// TODO: handle response message
+	// dispatch changed reject entry to segments
+
+	free_message(rsp_msg_rts);
+	list_free(oidlist);
+	hash_destroy(local_active_table_map);
+	hash_destroy(local_table_size_map);
+	free_message(rsp_msg_rqi);
+	list_free(expired_quota_info_entries);
+}
+
+static DiskquotaMessage *
+refresh_table_size(List *oidlist, HTAB *local_table_size_map, bool is_init)
+{
 	DiskquotaLooper        *looper;
 	DiskquotaMessage       *req_msg;
 	DiskquotaMessage       *rsp_msg;
@@ -397,15 +439,6 @@ disk_quota_refresh(bool is_init)
 	ReqMsgRefreshTableSize *req_msg_body;
 	int                     oid_list_len;
 	int                     table_size_entry_list_len;
-
-	// TODO: do not load table size from diskquota.table_size
-	// when is_init == true
-	/* get active table size from all segments */
-	local_active_table_map = gp_fetch_active_tables(is_init);
-	/* get all relation oids in the current database */
-	oidlist = get_current_database_oid_list();
-	/* get table size map by local_active_table_map */
-	local_table_size_map = get_current_database_table_size_map(local_active_table_map);
 
 	oid_list_len              = list_length(oidlist);
 	table_size_entry_list_len = hash_get_num_entries(local_table_size_map);
@@ -443,12 +476,60 @@ disk_quota_refresh(bool is_init)
 	// TODO: add signal handle function
 	rsp_msg = send_request_and_wait(looper, req_msg, NULL);
 
-	// TODO: handle response message
-	// update reject map and dispatch to segments
+	free_message(req_msg);
+
+	return rsp_msg;
+}
+
+static List *
+get_expired_quota_info_entries(RspMsgRefreshTableSize *msg_body)
+{
+	QuotaInfoEntryKey *qentry_key;
+	List              *expired_quota_info_entries = NIL;
+
+	for (int i = 0; i < msg_body->quota_info_entry_list_len; i++)
+	{
+		qentry_key = (QuotaInfoEntryKey *)GetPointFromMessageContentList(
+		        msg_body, msg_body->quota_info_entry_list_offset, i, sizeof(QuotaConfigKey));
+
+		if (is_quota_expired(qentry_key))
+		{
+			expired_quota_info_entries = lappend(expired_quota_info_entries, qentry_key);
+		}
+	}
+	return expired_quota_info_entries;
+}
+
+static DiskquotaMessage *
+refresh_quota_info(List *expired_quota_info_entries)
+{
+	DiskquotaLooper        *looper;
+	DiskquotaMessage       *req_msg;
+	DiskquotaMessage       *rsp_msg;
+	ReqMsgRefreshQuotaInfo *req_msg_body;
+	Size                    msg_sz = 0;
+
+	msg_sz = add_size(msg_sz, sizeof(ReqMsgRefreshQuotaInfo));
+	msg_sz = add_size(msg_sz, list_length(expired_quota_info_entries) * sizeof(QuotaInfoEntryKey));
+
+	/* attach the meesage looper */
+	looper = attach_message_looper(DISKQUOTA_CENTER_WORKER_MESSAGE_LOOPER_NAME);
+	/* initialize request message */
+	req_msg = InitRequestMessage(MSG_REFRESH_QUOTA_INFO, msg_sz);
+	/* get message body */
+	req_msg_body = (ReqMsgRefreshQuotaInfo *)MessageBody(req_msg);
+
+	/* fill message content in meesage body */
+	req_msg_body->dbid                                 = MyDatabaseId;
+	req_msg_body->expired_quota_info_entry_list_len    = list_length(expired_quota_info_entries);
+	req_msg_body->expired_quota_info_entry_list_offset = sizeof(ReqMsgRefreshQuotaInfo);
+	fill_message_content_by_list(
+	        MessageContentListAddr(req_msg_body, req_msg_body->expired_quota_info_entry_list_offset),
+	        expired_quota_info_entries, sizeof(QuotaInfoEntryKey));
+
+	rsp_msg = send_request_and_wait(looper, req_msg, NULL);
 
 	free_message(req_msg);
-	free_message(rsp_msg);
-	list_free(oidlist);
-	hash_destroy(local_active_table_map);
-	hash_destroy(local_table_size_map);
+
+	return rsp_msg;
 }

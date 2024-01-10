@@ -40,61 +40,39 @@
 static uint16 quota_key_num[NUM_QUOTA_TYPES]                       = {1, 1, 2, 2, 1};
 static Oid    quota_key_caches[NUM_QUOTA_TYPES][MAX_QUOTA_KEY_NUM] = {
         {NAMESPACEOID}, {AUTHOID}, {NAMESPACEOID, TABLESPACEOID}, {AUTHOID, TABLESPACEOID}, {TABLESPACEOID}};
-HTAB *quota_info_map;
 
-static void do_load_quotas(void);
+static void clean_all_quota_limit(HTAB *quota_info_map);
+static void do_load_quotas(Oid dbid, int segcount, HTAB *quota_info_map);
+static void update_limit_for_quota(HTAB *quota_info_map, int64 limit, float segratio, QuotaType type, Oid *keys,
+                                   int segcount);
 
 /* quota config function */
 extern HTAB *pull_quota_config(bool *found);
 
-Size
-quota_info_map_shmem_size(void)
+HTAB *
+create_quota_info_map(const char *name)
 {
-	return hash_estimate_size(MAX_QUOTA_MAP_ENTRIES, sizeof(QuotaInfoEntry)) * diskquota_max_monitored_databases;
+	HASHCTL ctl;
+	HTAB   *quota_info_map;
+
+	memset(&ctl, 0, sizeof(ctl));
+	ctl.entrysize  = sizeof(QuotaInfoEntry);
+	ctl.keysize    = sizeof(QuotaInfoEntryKey);
+	ctl.hcxt       = TopMemoryContext;
+	quota_info_map = diskquota_hash_create(name, 1024, &ctl, HASH_ELEM | HASH_CONTEXT, DISKQUOTA_TAG_HASH);
+	return quota_info_map;
 }
 
+// TODO: vacuum quota_info_map after dropping extension
 void
-init_quota_info_map(uint32 id)
+vacuum_quota_info_map(HTAB *quota_info_map)
 {
-	HASHCTL        hash_ctl;
-	StringInfoData str;
-
-	initStringInfo(&str);
-	appendStringInfo(&str, "QuotaInfoMap_%u", id);
-	memset(&hash_ctl, 0, sizeof(hash_ctl));
-	hash_ctl.entrysize = sizeof(QuotaInfoEntry);
-	hash_ctl.keysize   = sizeof(QuotaInfoEntryKey);
-	quota_info_map     = DiskquotaShmemInitHash(str.data, INIT_QUOTA_MAP_ENTRIES, MAX_QUOTA_MAP_ENTRIES, &hash_ctl,
-	                                            HASH_ELEM, DISKQUOTA_TAG_HASH);
-	pfree(str.data);
-}
-
-void
-vacuum_quota_info_map(uint32 id)
-{
-	HASHCTL         hash_ctl;
-	HASH_SEQ_STATUS iter;
-	StringInfoData  str;
-	QuotaInfoEntry *qentry;
-
-	initStringInfo(&str);
-	appendStringInfo(&str, "QuotaInfoMap_%u", id);
-	memset(&hash_ctl, 0, sizeof(hash_ctl));
-	hash_ctl.entrysize = sizeof(QuotaInfoEntry);
-	hash_ctl.keysize   = sizeof(QuotaInfoEntryKey);
-	quota_info_map     = DiskquotaShmemInitHash(str.data, INIT_QUOTA_MAP_ENTRIES, MAX_QUOTA_MAP_ENTRIES, &hash_ctl,
-	                                            HASH_ELEM, DISKQUOTA_TAG_HASH);
-	hash_seq_init(&iter, quota_info_map);
-	while ((qentry = hash_seq_search(&iter)) != NULL)
-	{
-		hash_search(quota_info_map, &qentry->key, HASH_REMOVE, NULL);
-	}
-	pfree(str.data);
+	hash_destroy(quota_info_map);
 }
 
 /* add a new entry quota or update the old entry quota */
 void
-update_size_for_quota(int64 size, QuotaType type, Oid *keys, int16 segid)
+update_size_for_quota(HTAB *quota_info_map, int64 size, QuotaType type, Oid *keys, int16 segid)
 {
 	bool              found;
 	QuotaInfoEntry   *entry;
@@ -113,17 +91,19 @@ update_size_for_quota(int64 size, QuotaType type, Oid *keys, int16 segid)
 }
 
 /* add a new entry quota or update the old entry limit */
-void
-update_limit_for_quota(int64 limit, float segratio, QuotaType type, Oid *keys)
+static void
+update_limit_for_quota(HTAB *quota_info_map, int64 limit, float segratio, QuotaType type, Oid *keys, int segcount)
 {
-	bool found;
+	QuotaInfoEntry   *entry;
+	QuotaInfoEntryKey key = {0};
+	bool              found;
+
+	memcpy(key.keys, keys, quota_key_num[type] * sizeof(Oid));
+	key.type = type;
+	if (is_quota_expired(&key)) return;
+
 	for (int i = -1; i < SEGCOUNT; i++)
 	{
-		QuotaInfoEntry   *entry;
-		QuotaInfoEntryKey key = {0};
-
-		memcpy(key.keys, keys, quota_key_num[type] * sizeof(Oid));
-		key.type  = type;
 		key.segid = i;
 		entry     = hash_search(quota_info_map, &key, HASH_ENTER, &found);
 		if (!found)
@@ -139,14 +119,15 @@ update_limit_for_quota(int64 limit, float segratio, QuotaType type, Oid *keys)
 
 /* transfer one table's size from one quota to another quota */
 void
-transfer_table_for_quota(int64 totalsize, QuotaType type, Oid *old_keys, Oid *new_keys, int16 segid)
+transfer_table_for_quota(HTAB *quota_info_map, int64 totalsize, QuotaType type, Oid *old_keys, Oid *new_keys,
+                         int16 segid)
 {
-	update_size_for_quota(-totalsize, type, old_keys, segid);
-	update_size_for_quota(totalsize, type, new_keys, segid);
+	update_size_for_quota(quota_info_map, -totalsize, type, old_keys, segid);
+	update_size_for_quota(quota_info_map, totalsize, type, new_keys, segid);
 }
 
-void
-clean_all_quota_limit(void)
+static void
+clean_all_quota_limit(HTAB *quota_info_map)
 {
 	HASH_SEQ_STATUS iter;
 	QuotaInfoEntry *entry;
@@ -157,31 +138,11 @@ clean_all_quota_limit(void)
 	}
 }
 
-bool
-remove_expired_quota(QuotaInfoEntry *entry)
-{
-	HeapTuple tuple;
-	QuotaType type    = entry->key.type;
-	bool      removed = false;
-	for (int i = 0; i < quota_key_num[type]; ++i)
-	{
-		tuple = SearchSysCache1(quota_key_caches[type][i], ObjectIdGetDatum(entry->key.keys[i]));
-		if (!HeapTupleIsValid(tuple))
-		{
-			hash_search(quota_info_map, &entry->key, HASH_REMOVE, NULL);
-			removed = true;
-			break;
-		}
-		ReleaseSysCache(tuple);
-	}
-	return removed;
-}
-
 /*
  * Load quotas from diskquota configuration table(quota_config).
  */
 static void
-do_load_quotas(void)
+do_load_quotas(Oid dbid, int segcount, HTAB *quota_info_map)
 {
 	QuotaConfigKey  key = {0};
 	QuotaConfig    *entry;
@@ -194,7 +155,7 @@ do_load_quotas(void)
 	 * quota.config. A flag in shared memory could be used to detect the quota
 	 * config change.
 	 */
-	clean_all_quota_limit();
+	clean_all_quota_limit(quota_info_map);
 
 	/* If a row exists, an update is needed. */
 	quota_config_map = pull_quota_config(NULL);
@@ -211,6 +172,9 @@ do_load_quotas(void)
 		int64  quota_limit_mb = entry->quota_limit_mb;
 		float4 segratio       = INVALID_SEGRATIO;
 
+		// TODO: pull quota_config_map for certain database
+		if (db_oid != dbid) continue;
+
 		if (quota_type == NAMESPACE_TABLESPACE_QUOTA || quota_type == ROLE_TABLESPACE_QUOTA)
 		{
 			key.quota_type                = TABLESPACE_QUOTA;
@@ -224,10 +188,11 @@ do_load_quotas(void)
 		}
 
 		if (!OidIsValid(tablespace_oid))
-			update_limit_for_quota(quota_limit_mb * (1 << 20), segratio, quota_type, (Oid[]){target_oid});
+			update_limit_for_quota(quota_info_map, quota_limit_mb * (1 << 20), segratio, quota_type,
+			                       (Oid[]){target_oid}, segcount);
 		else
-			update_limit_for_quota(quota_limit_mb * (1 << 20), segratio, quota_type,
-			                       (Oid[]){target_oid, tablespace_oid});
+			update_limit_for_quota(quota_info_map, quota_limit_mb * (1 << 20), segratio, quota_type,
+			                       (Oid[]){target_oid, tablespace_oid}, segcount);
 	}
 	hash_destroy(quota_config_map);
 }
@@ -236,7 +201,7 @@ do_load_quotas(void)
  * Interface to load quotas from diskquota configuration table(quota_config).
  */
 bool
-load_quotas(void)
+load_quotas(Oid dbid, int segcount, HTAB *quota_info_map)
 {
 	bool connected          = false;
 	bool pushed_active_snap = false;
@@ -260,7 +225,7 @@ load_quotas(void)
 		connected = true;
 		PushActiveSnapshot(GetTransactionSnapshot());
 		pushed_active_snap = true;
-		do_load_quotas();
+		do_load_quotas(dbid, segcount, quota_info_map);
 	}
 	PG_CATCH();
 	{
@@ -281,4 +246,23 @@ load_quotas(void)
 		AbortCurrentTransaction();
 
 	return ret;
+}
+
+bool
+is_quota_expired(QuotaInfoEntryKey *key)
+{
+	HeapTuple tuple;
+	QuotaType type    = key->type;
+	bool      removed = false;
+	for (int i = 0; i < quota_key_num[type]; ++i)
+	{
+		tuple = SearchSysCache1(quota_key_caches[type][i], ObjectIdGetDatum(key->keys[i]));
+		if (!HeapTupleIsValid(tuple))
+		{
+			removed = true;
+			break;
+		}
+		ReleaseSysCache(tuple);
+	}
+	return removed;
 }

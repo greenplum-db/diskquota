@@ -28,6 +28,7 @@
 #include "table_size.h"
 #include "quota.h"
 #include "toc_map.h"
+#include "rejectmap.h"
 
 /* table of content map in center worker */
 static HTAB *toc_map;
@@ -40,7 +41,8 @@ static void disk_quota_sighup(SIGNAL_ARGS);
 void                     disk_quota_center_worker_main(Datum main_arg);
 static inline void       loop(DiskquotaLooper *looper);
 static DiskquotaMessage *disk_quota_message_handler(DiskquotaMessage *req_msg);
-static void              refresh_table_size(ReqMsgRefreshTableSize *req_msg_body);
+static DiskquotaMessage *refresh_table_size(ReqMsgRefreshTableSize *req_msg_body);
+static DiskquotaMessage *refresh_quota_info(ReqMsgRefreshQuotaInfo *req_msg_body);
 
 /* flags set by signal handlers */
 static volatile sig_atomic_t got_sighup  = false;
@@ -188,7 +190,14 @@ disk_quota_message_handler(DiskquotaMessage *req_msg)
 		}
 		break;
 		case MSG_REFRESH_TABLE_SIZE: {
-			refresh_table_size((ReqMsgRefreshTableSize *)MessageBody(req_msg));
+			rsp_msg = refresh_table_size((ReqMsgRefreshTableSize *)MessageBody(req_msg));
+		}
+		break;
+		case MSG_REFRESH_QUOTA_INFO: {
+			rsp_msg = refresh_quota_info((ReqMsgRefreshQuotaInfo *)MessageBody(req_msg));
+		}
+		break;
+		case MSG_SET_QUOTA_CONFIG: {
 		}
 		break;
 		default:
@@ -213,9 +222,10 @@ disk_quota_message_handler(DiskquotaMessage *req_msg)
  * 	- get new_namespace sent by bgworker
  * 	- if old_namespace != new_namespace: update quota size
  */
-static void
+static DiskquotaMessage *
 refresh_table_size(ReqMsgRefreshTableSize *req_msg_body)
 {
+	/* request */
 	Oid               dbid;
 	int               segcount;
 	int               oid_list_len;
@@ -225,15 +235,22 @@ refresh_table_size(ReqMsgRefreshTableSize *req_msg_body)
 	TableSizeEntry   *new_entry;
 	bool              found;
 	HashMap          *table_size_map;
+	HashMap          *quota_info_map;
 	HASH_SEQ_STATUS   iter;
+	/* response */
+	DiskquotaMessage       *rsp_msg;
+	RspMsgRefreshTableSize *rsp_msg_body;
+	Size                    rsp_msg_size = 0;
+	QuotaInfoEntry         *qentry;
+	List                   *quota_info_entry_list = NIL;
 
 	dbid               = req_msg_body->dbid;
 	segcount           = req_msg_body->segcount;
 	oid_list_len       = req_msg_body->oid_list_len;
 	table_size_map_num = req_msg_body->table_size_entry_list_len;
 
-	/* find the table size map related to the current database */
 	table_size_map = search_toc_map(toc_map, TABLE_SIZE_MAP, dbid);
+	quota_info_map = search_toc_map(toc_map, QUOTA_INFO_MAP, dbid);
 
 	/* set the TABLE_EXIST flag for existing relations. */
 	for (int i = 0; i < oid_list_len; i++)
@@ -273,38 +290,37 @@ refresh_table_size(ReqMsgRefreshTableSize *req_msg_body)
 
 			/* update the disk usage, there may be entries in the map whose keys are InvlidOid as the entry does
 			 * not exist in the table_size_map */
-			// TODO: move quota map to center worker
-			update_size_for_quota(updated_size, NAMESPACE_QUOTA, (Oid[]){entry->namespaceoid}, segid);
-			update_size_for_quota(updated_size, ROLE_QUOTA, (Oid[]){entry->owneroid}, segid);
-			update_size_for_quota(updated_size, ROLE_TABLESPACE_QUOTA, (Oid[]){entry->owneroid, entry->tablespaceoid},
+			update_size_for_quota(quota_info_map->map, updated_size, NAMESPACE_QUOTA, (Oid[]){entry->namespaceoid},
 			                      segid);
-			update_size_for_quota(updated_size, NAMESPACE_TABLESPACE_QUOTA,
+			update_size_for_quota(quota_info_map->map, updated_size, ROLE_QUOTA, (Oid[]){entry->owneroid}, segid);
+			update_size_for_quota(quota_info_map->map, updated_size, ROLE_TABLESPACE_QUOTA,
+			                      (Oid[]){entry->owneroid, entry->tablespaceoid}, segid);
+			update_size_for_quota(quota_info_map->map, updated_size, NAMESPACE_TABLESPACE_QUOTA,
 			                      (Oid[]){entry->namespaceoid, entry->tablespaceoid}, segid);
 
 			/* if schema change, transfer the file size */
 			if (entry->namespaceoid != new_entry->namespaceoid)
 			{
-				// TODO: move quota map to center worker
-				transfer_table_for_quota(TableSizeEntryGetSize(entry, segid), NAMESPACE_QUOTA,
+				transfer_table_for_quota(quota_info_map->map, TableSizeEntryGetSize(entry, segid), NAMESPACE_QUOTA,
 				                         (Oid[]){entry->namespaceoid}, (Oid[]){new_entry->namespaceoid}, segid);
 			}
 			/* if owner change, transfer the file size */
 			if (entry->owneroid != new_entry->owneroid)
 			{
-				transfer_table_for_quota(TableSizeEntryGetSize(entry, segid), ROLE_QUOTA, (Oid[]){entry->owneroid},
-				                         (Oid[]){new_entry->owneroid}, segid);
+				transfer_table_for_quota(quota_info_map->map, TableSizeEntryGetSize(entry, segid), ROLE_QUOTA,
+				                         (Oid[]){entry->owneroid}, (Oid[]){new_entry->owneroid}, segid);
 			}
 
 			if (entry->tablespaceoid != new_entry->tablespaceoid || entry->namespaceoid != new_entry->namespaceoid)
 			{
-				transfer_table_for_quota(TableSizeEntryGetSize(entry, segid), NAMESPACE_TABLESPACE_QUOTA,
-				                         (Oid[]){entry->namespaceoid, entry->tablespaceoid},
+				transfer_table_for_quota(quota_info_map->map, TableSizeEntryGetSize(entry, segid),
+				                         NAMESPACE_TABLESPACE_QUOTA, (Oid[]){entry->namespaceoid, entry->tablespaceoid},
 				                         (Oid[]){new_entry->namespaceoid, new_entry->tablespaceoid}, segid);
 			}
 			if (entry->tablespaceoid != new_entry->tablespaceoid || entry->owneroid != new_entry->owneroid)
 			{
-				transfer_table_for_quota(TableSizeEntryGetSize(entry, segid), ROLE_TABLESPACE_QUOTA,
-				                         (Oid[]){entry->owneroid, entry->tablespaceoid},
+				transfer_table_for_quota(quota_info_map->map, TableSizeEntryGetSize(entry, segid),
+				                         ROLE_TABLESPACE_QUOTA, (Oid[]){entry->owneroid, entry->tablespaceoid},
 				                         (Oid[]){new_entry->owneroid, new_entry->tablespaceoid}, segid);
 			}
 		}
@@ -324,12 +340,13 @@ refresh_table_size(ReqMsgRefreshTableSize *req_msg_body)
 			int seg_ed = TableSizeEntrySegidEnd(entry);
 			for (int i = seg_st; i < seg_ed; i++)
 			{
-				update_size_for_quota(-TableSizeEntryGetSize(entry, i), NAMESPACE_QUOTA, (Oid[]){entry->namespaceoid},
-				                      i);
-				update_size_for_quota(-TableSizeEntryGetSize(entry, i), ROLE_QUOTA, (Oid[]){entry->owneroid}, i);
-				update_size_for_quota(-TableSizeEntryGetSize(entry, i), ROLE_TABLESPACE_QUOTA,
+				update_size_for_quota(quota_info_map->map, -TableSizeEntryGetSize(entry, i), NAMESPACE_QUOTA,
+				                      (Oid[]){entry->namespaceoid}, i);
+				update_size_for_quota(quota_info_map->map, -TableSizeEntryGetSize(entry, i), ROLE_QUOTA,
+				                      (Oid[]){entry->owneroid}, i);
+				update_size_for_quota(quota_info_map->map, -TableSizeEntryGetSize(entry, i), ROLE_TABLESPACE_QUOTA,
 				                      (Oid[]){entry->owneroid, entry->tablespaceoid}, i);
-				update_size_for_quota(-TableSizeEntryGetSize(entry, i), NAMESPACE_TABLESPACE_QUOTA,
+				update_size_for_quota(quota_info_map->map, -TableSizeEntryGetSize(entry, i), NAMESPACE_TABLESPACE_QUOTA,
 				                      (Oid[]){entry->namespaceoid, entry->tablespaceoid}, i);
 			}
 			hash_search(table_size_map->map, &entry->key, HASH_REMOVE, NULL);
@@ -339,4 +356,61 @@ refresh_table_size(ReqMsgRefreshTableSize *req_msg_body)
 			reset_table_size_entry_flag(entry, TABLE_EXIST);
 		}
 	}
+
+	/* update the quota limit for quota_info_map */
+	load_quotas(dbid, segcount, quota_info_map->map);
+
+	/* return the current quota information to bgworker */
+	hash_seq_init(&iter, quota_info_map->map);
+	while ((qentry = hash_seq_search(&iter)) != NULL)
+	{
+		if (qentry->key.segid == -1) quota_info_entry_list = lappend(quota_info_entry_list, &qentry->key);
+	}
+
+	/*
+	 * message content:
+	 * - RspMsgRefreshTableSize
+	 * - QuotaInfoEntryKey list
+	 */
+	rsp_msg_size = add_size(rsp_msg_size, sizeof(RspMsgRefreshTableSize));
+	rsp_msg_size = add_size(rsp_msg_size, sizeof(QuotaInfoEntryKey) * list_length(quota_info_entry_list));
+	/* initialize response message */
+	rsp_msg      = InitResponseMessage(MSG_REFRESH_TABLE_SIZE, rsp_msg_size);
+	rsp_msg_body = (RspMsgRefreshTableSize *)MessageBody(rsp_msg);
+	/* fill message content in meesage body */
+	rsp_msg_body->quota_info_entry_list_len    = list_length(quota_info_entry_list);
+	rsp_msg_body->quota_info_entry_list_offset = sizeof(RspMsgRefreshTableSize);
+	fill_message_content_by_list(MessageContentListAddr(rsp_msg_body, rsp_msg_body->quota_info_entry_list_offset),
+	                             quota_info_entry_list, sizeof(QuotaInfoEntryKey));
+
+	list_free(quota_info_entry_list);
+
+	return rsp_msg;
+}
+
+static DiskquotaMessage *
+refresh_quota_info(ReqMsgRefreshQuotaInfo *req_msg_body)
+{
+	Oid                dbid;
+	int                expired_quota_info_entry_list_len;
+	QuotaInfoEntryKey *key;
+	HashMap           *quota_info_map;
+	HASH_SEQ_STATUS    iter;
+	QuotaInfoEntry    *entry;
+
+	dbid                              = req_msg_body->dbid;
+	expired_quota_info_entry_list_len = req_msg_body->expired_quota_info_entry_list_len;
+
+	quota_info_map = search_toc_map(toc_map, QUOTA_INFO_MAP, dbid);
+
+	/* remove expired quota info entry */
+	for (int i = 0; i < expired_quota_info_entry_list_len; i++)
+	{
+		key = (QuotaInfoEntryKey *)GetPointFromMessageContentList(
+		        req_msg_body, req_msg_body->expired_quota_info_entry_list_offset, i, sizeof(QuotaInfoEntryKey));
+		hash_search(quota_info_map->map, key, HASH_REMOVE, NULL);
+	}
+
+	// TODO: update reject map by quota info map
+	// TODO: send reject map to bgworker
 }
