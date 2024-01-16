@@ -57,6 +57,8 @@ typedef struct ReqMsgRefreshQuotaInfo
 
 typedef struct RspMsgRefreshQuotaInfo
 {
+	int    reject_map_entry_list_len;
+	size_t reject_map_entry_list_offset;
 } RspMsgRefreshQuotaInfo;
 
 #endif

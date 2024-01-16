@@ -391,17 +391,24 @@ refresh_table_size(ReqMsgRefreshTableSize *req_msg_body)
 static DiskquotaMessage *
 refresh_quota_info(ReqMsgRefreshQuotaInfo *req_msg_body)
 {
+	/* request */
 	Oid                dbid;
 	int                expired_quota_info_entry_list_len;
 	QuotaInfoEntryKey *key;
 	HashMap           *quota_info_map;
+	HashMap           *reject_map;
 	HASH_SEQ_STATUS    iter;
 	QuotaInfoEntry    *entry;
+	/* response */
+	DiskquotaMessage       *rsp_msg;
+	RspMsgRefreshQuotaInfo *rsp_msg_body;
+	Size                    rsp_msg_sz = 0;
 
 	dbid                              = req_msg_body->dbid;
 	expired_quota_info_entry_list_len = req_msg_body->expired_quota_info_entry_list_len;
 
 	quota_info_map = search_toc_map(toc_map, QUOTA_INFO_MAP, dbid);
+	reject_map     = search_toc_map(toc_map, REJECT_MAP, dbid);
 
 	/* remove expired quota info entry */
 	for (int i = 0; i < expired_quota_info_entry_list_len; i++)
@@ -411,6 +418,58 @@ refresh_quota_info(ReqMsgRefreshQuotaInfo *req_msg_body)
 		hash_search(quota_info_map->map, key, HASH_REMOVE, NULL);
 	}
 
-	// TODO: update reject map by quota info map
-	// TODO: send reject map to bgworker
+	hash_seq_init(&iter, quota_info_map->map);
+	while ((entry = hash_seq_search(&iter)) != NULL)
+	{
+		if (entry->limit > 0 && entry->size >= entry->limit)
+		{
+			QuotaType type            = entry->key.type;
+			Oid       namespaceoid    = InvalidOid;
+			Oid       owneroid        = InvalidOid;
+			Oid       tablespaceoid   = InvalidOid;
+			bool      segmentExceeded = entry->key.segid == -1 ? false : true;
+			switch (type)
+			{
+				case NAMESPACE_QUOTA: {
+					namespaceoid = entry->key.keys[0];
+				}
+				break;
+				case NAMESPACE_TABLESPACE_QUOTA: {
+					namespaceoid  = entry->key.keys[0];
+					tablespaceoid = entry->key.keys[1];
+				}
+				break;
+				case ROLE_QUOTA: {
+					owneroid = entry->key.keys[0];
+				}
+				break;
+				case ROLE_TABLESPACE_QUOTA: {
+					owneroid      = entry->key.keys[0];
+					tablespaceoid = entry->key.keys[1];
+				}
+				default:
+					break;
+			}
+			add_quota_to_rejectmap(reject_map->map, type, namespaceoid, owneroid, tablespaceoid, dbid, segmentExceeded);
+		}
+	}
+
+	/* clean the reject entry whose isexceeded == false */
+	clean_expired_reject_entry(reject_map->map);
+
+	rsp_msg_sz = add_size(rsp_msg_sz, sizeof(RspMsgRefreshQuotaInfo));
+	rsp_msg_sz = add_size(rsp_msg_sz, sizeof(LocalRejectMapEntry) * hash_get_num_entries(reject_map->map));
+
+	rsp_msg      = InitResponseMessage(MSG_REFRESH_QUOTA_INFO, rsp_msg_sz);
+	rsp_msg_body = (RspMsgRefreshQuotaInfo *)MessageBody(rsp_msg);
+
+	rsp_msg_body->reject_map_entry_list_len    = hash_get_num_entries(reject_map->map);
+	rsp_msg_body->reject_map_entry_list_offset = sizeof(RspMsgRefreshQuotaInfo);
+	fill_message_content_by_hash_table(MessageContentListAddr(rsp_msg_body, rsp_msg_body->reject_map_entry_list_offset),
+	                                   reject_map->map, sizeof(LocalRejectMapEntry));
+
+	/* reset reject map */
+	reset_reject_map(reject_map->map);
+
+	return rsp_msg;
 }

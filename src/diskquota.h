@@ -182,7 +182,6 @@ extern void init_disk_quota_enforcement(void);
 
 /* quota model interface*/
 extern void init_disk_quota_shmem(void);
-extern void init_disk_quota_model(uint32 id);
 extern void refresh_disk_quota_model(bool force);
 extern bool check_diskquota_state_is_ready(void);
 extern bool quota_check_common(Oid reloid, RelFileNode *relfilenode);

@@ -176,7 +176,6 @@ static Size
 diskquota_worker_shmem_size()
 {
 	Size size = 0;
-	size      = add_size(size, diskquota_local_rejectmap_shmem_size());
 	return size;
 }
 
@@ -209,15 +208,6 @@ DiskQuotaShmemSize(void)
 }
 
 /* ---- Functions for disk quota model ---- */
-/*
- * Init disk quota model when the worker process firstly started.
- */
-void
-init_disk_quota_model(uint32 id)
-{
-	/* for local_reject_map */
-	init_local_reject_map(id);
-}
 
 /*
  * Reset the shared memory of diskquota worker
@@ -231,12 +221,10 @@ init_disk_quota_model(uint32 id)
  * - memset diskquotaDBStatus to 0
  * - clean all items in the maps
  */
+// TODO: call in center worker
 void
 vacuum_disk_quota_model(uint32 id)
-{
-	/* localrejectmap */
-	vacuum_local_reject_map(id);
-}
+{}
 
 /*
  * Check whether the diskquota state is ready
@@ -402,7 +390,7 @@ refresh_disk_quota_usage(bool is_init)
 		/* refresh quota_info_map */
 		// refresh_quota_info_map();
 		/* copy local reject map back to shared reject map */
-		bool reject_map_changed = flush_local_reject_map();
+		bool reject_map_changed = false;
 		/*
 		 * Dispatch rejectmap entries to segments to perform hard-limit.
 		 * If the bgworker is in init mode, the rejectmap should be refreshed anyway.

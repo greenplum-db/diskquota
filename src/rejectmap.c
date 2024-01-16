@@ -35,6 +35,8 @@ HTAB *disk_quota_reject_map       = NULL;
 HTAB *local_disk_quota_reject_map = NULL;
 
 static void export_exceeded_error(GlobalRejectMapEntry *entry, bool skip_name);
+static void prepare_rejectmap_search_key(RejectMapEntry *keyitem, QuotaType type, Oid relnamespace, Oid relowner,
+                                         Oid databaseoid, Oid reltablespace, Oid relfilenode);
 
 void
 init_shm_worker_rejectmap(void)
@@ -49,46 +51,24 @@ init_shm_worker_rejectmap(void)
 	                               MAX_DISK_QUOTA_REJECT_ENTRIES, &hash_ctl, HASH_ELEM, DISKQUOTA_TAG_HASH);
 }
 
-void
-init_local_reject_map(uint32 id)
+HTAB *
+create_reject_map(const char *name)
 {
-	HASHCTL        hash_ctl;
-	StringInfoData str;
+	HASHCTL ctl;
+	HTAB   *reject_map;
 
-	initStringInfo(&str);
-	appendStringInfo(&str, "LocalRejectmap_%u", id);
-	memset(&hash_ctl, 0, sizeof(hash_ctl));
-	hash_ctl.keysize   = sizeof(RejectMapEntry);
-	hash_ctl.entrysize = sizeof(LocalRejectMapEntry);
-	local_disk_quota_reject_map =
-	        DiskquotaShmemInitHash(str.data, MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES,
-	                               &hash_ctl, HASH_ELEM, DISKQUOTA_TAG_HASH);
-	pfree(str.data);
+	memset(&ctl, 0, sizeof(ctl));
+	ctl.entrysize = sizeof(RejectMapEntry);
+	ctl.keysize   = sizeof(LocalRejectMapEntry);
+	ctl.hcxt      = TopMemoryContext;
+	reject_map    = diskquota_hash_create(name, 1024, &ctl, HASH_ELEM | HASH_CONTEXT, DISKQUOTA_TAG_HASH);
+	return reject_map;
 }
 
 void
-vacuum_local_reject_map(uint32 id)
+vacuum_reject_map(HTAB *reject_map)
 {
-	HASHCTL              hash_ctl;
-	HASH_SEQ_STATUS      iter;
-	StringInfoData       str;
-	LocalRejectMapEntry *localrejectentry;
-
-	initStringInfo(&str);
-	appendStringInfo(&str, "LocalRejectmap_%u", id);
-
-	memset(&hash_ctl, 0, sizeof(hash_ctl));
-	hash_ctl.keysize   = sizeof(RejectMapEntry);
-	hash_ctl.entrysize = sizeof(LocalRejectMapEntry);
-	local_disk_quota_reject_map =
-	        DiskquotaShmemInitHash(str.data, MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES,
-	                               &hash_ctl, HASH_ELEM, DISKQUOTA_TAG_HASH);
-	hash_seq_init(&iter, local_disk_quota_reject_map);
-	while ((localrejectentry = hash_seq_search(&iter)) != NULL)
-	{
-		hash_search(local_disk_quota_reject_map, &localrejectentry->keyitem, HASH_REMOVE, NULL);
-	}
-	pfree(str.data);
+	hash_destroy(reject_map);
 }
 
 Size
@@ -97,107 +77,75 @@ diskquota_rejectmap_shmem_size(void)
 	return hash_estimate_size(MAX_DISK_QUOTA_REJECT_ENTRIES, sizeof(GlobalRejectMapEntry));
 }
 
-Size
-diskquota_local_rejectmap_shmem_size(void)
-{
-	return hash_estimate_size(MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, sizeof(LocalRejectMapEntry));
-}
-
 /*
  * Compare the disk quota limit and current usage of a database object.
  * Put them into local rejectmap if quota limit is exceeded.
  */
 void
-add_quota_to_rejectmap(QuotaType type, Oid targetOid, Oid tablespaceoid, bool segexceeded)
+add_quota_to_rejectmap(HTAB *reject_map, QuotaType type, Oid namespaceoid, Oid owneroid, Oid tablespaceoid,
+                       Oid databaseoid, bool segexceeded)
 {
-	LocalRejectMapEntry *localrejectentry;
-	RejectMapEntry       keyitem = {0};
+	LocalRejectMapEntry *entry;
+	RejectMapEntry       keyitem;
 
-	keyitem.targetoid     = targetOid;
-	keyitem.databaseoid   = MyDatabaseId;
-	keyitem.tablespaceoid = tablespaceoid;
-	keyitem.targettype    = (uint32)type;
-	ereport(DEBUG1, (errmsg("[diskquota] Put object %u to rejectmap", targetOid)));
-	localrejectentry = (LocalRejectMapEntry *)hash_search(local_disk_quota_reject_map, &keyitem, HASH_ENTER, NULL);
-	localrejectentry->isexceeded  = true;
-	localrejectentry->segexceeded = segexceeded;
+	/* There is no reject entry for tablespace quota */
+	if (type == TABLESPACE_QUOTA) return;
+
+	prepare_rejectmap_search_key(&keyitem, type, namespaceoid, owneroid, databaseoid, tablespaceoid, InvalidOid);
+
+	entry              = hash_search(reject_map, &keyitem, HASH_ENTER, NULL);
+	entry->isexceeded  = true;
+	entry->segexceeded = segexceeded;
 }
 
-/*
- * Generate the new shared rejectmap from the local_rejectmap which
- * exceed the quota limit.
- * local_rejectmap is used to reduce the lock contention.
- */
-bool
-flush_local_reject_map(void)
+void
+clean_expired_reject_entry(HTAB *reject_map)
 {
-	bool                  changed = false;
-	HASH_SEQ_STATUS       iter;
-	LocalRejectMapEntry  *localrejectentry;
-	GlobalRejectMapEntry *rejectentry;
-	bool                  found;
-
-	LWLockAcquire(diskquota_locks.reject_map_lock, LW_EXCLUSIVE);
-
-	hash_seq_init(&iter, local_disk_quota_reject_map);
-	while ((localrejectentry = hash_seq_search(&iter)) != NULL)
+	HASH_SEQ_STATUS      iter;
+	LocalRejectMapEntry *entry;
+	hash_seq_init(&iter, reject_map);
+	while ((entry = hash_seq_search(&iter)) != NULL)
 	{
-		/*
-		 * If localrejectentry->isexceeded is true, and it alredy exists in disk_quota_reject_map,
-		 * that means the reject entry exists in both last loop and current loop, but its segexceeded
-		 * feild may have changed.
-		 *
-		 * If localrejectentry->isexceeded is true, and it doesn't exist in disk_quota_reject_map,
-		 * then it is a new added reject entry in this loop.
-		 *
-		 * Otherwise, it means the reject entry has gone, we need to delete it.
-		 */
-		if (localrejectentry->isexceeded)
-		{
-			rejectentry = (GlobalRejectMapEntry *)hash_search(disk_quota_reject_map, (void *)&localrejectentry->keyitem,
-			                                                  HASH_ENTER_NULL, &found);
-			if (rejectentry == NULL)
-			{
-				ereport(WARNING, (errmsg("[diskquota] Shared disk quota reject map size limit reached."
-				                         "Some out-of-limit schemas or roles will be lost"
-				                         "in rejectmap.")));
-				continue;
-			}
-			/* new db objects which exceed quota limit */
-			if (!found)
-			{
-				rejectentry->keyitem.targetoid     = localrejectentry->keyitem.targetoid;
-				rejectentry->keyitem.databaseoid   = MyDatabaseId;
-				rejectentry->keyitem.targettype    = localrejectentry->keyitem.targettype;
-				rejectentry->keyitem.tablespaceoid = localrejectentry->keyitem.tablespaceoid;
-				rejectentry->segexceeded           = localrejectentry->segexceeded;
-				changed                            = true;
-			}
-			if (rejectentry->segexceeded != localrejectentry->segexceeded)
-			{
-				rejectentry->segexceeded = localrejectentry->segexceeded;
-				changed                  = true;
-			}
-			localrejectentry->isexceeded  = false;
-			localrejectentry->segexceeded = false;
-		}
-		else
-		{
-			changed = true;
-			/* db objects are removed or under quota limit in the new loop */
-			(void)hash_search(disk_quota_reject_map, (void *)&localrejectentry->keyitem, HASH_REMOVE, NULL);
-			(void)hash_search(local_disk_quota_reject_map, (void *)&localrejectentry->keyitem, HASH_REMOVE, NULL);
-		}
+		if (entry->isexceeded == false) hash_search(reject_map, &entry->keyitem, HASH_REMOVE, NULL);
 	}
-	LWLockRelease(diskquota_locks.reject_map_lock);
-	return changed;
+}
+
+void
+reset_reject_map(HTAB *reject_map)
+{
+	HASH_SEQ_STATUS      iter;
+	LocalRejectMapEntry *entry;
+	hash_seq_init(&iter, reject_map);
+	while ((entry = hash_seq_search(&iter)) != NULL)
+	{
+		entry->isexceeded  = false;
+		entry->segexceeded = false;
+	}
+}
+
+/* bgworker function */
+void
+update_global_reject_map(LocalRejectMapEntry *entry)
+{
+	GlobalRejectMapEntry *rejectentry =
+	        hash_search(disk_quota_reject_map, (void *)&entry->keyitem, HASH_ENTER_NULL, NULL);
+	if (rejectentry == NULL)
+	{
+		ereport(WARNING, (errmsg("[diskquota] Shared disk quota reject map size limit reached."
+		                         "Some out-of-limit schemas or roles will be lost"
+		                         "in rejectmap.")));
+		return;
+	}
+
+	rejectentry->segexceeded = entry->segexceeded;
 }
 
 /*
+ * bgworker function
  * Dispatch rejectmap to segment servers.
  */
 void
-dispatch_rejectmap(HTAB *local_active_table_stat_map)
+dispatch_rejectmap(HTAB *local_active_table_map)
 {
 	HASH_SEQ_STATUS       hash_seq;
 	GlobalRejectMapEntry *rejectmap_entry;
@@ -217,19 +165,24 @@ dispatch_rejectmap(HTAB *local_active_table_stat_map)
 	hash_seq_init(&hash_seq, disk_quota_reject_map);
 	while ((rejectmap_entry = hash_seq_search(&hash_seq)) != NULL)
 	{
-		appendStringInfo(&rows, "ROW(%d, %d, %d, %d, %s)", rejectmap_entry->keyitem.targetoid,
+		if (rejectmap_entry->keyitem.databaseoid != MyDatabaseId) continue;
+
+		appendStringInfo(&rows, "ROW(%d, %d, %d, %d, %d, %s)", rejectmap_entry->keyitem.type,
+		                 rejectmap_entry->keyitem.namespaceoid, rejectmap_entry->keyitem.owneroid,
 		                 rejectmap_entry->keyitem.databaseoid, rejectmap_entry->keyitem.tablespaceoid,
-		                 rejectmap_entry->keyitem.targettype, rejectmap_entry->segexceeded ? "true" : "false");
+		                 rejectmap_entry->segexceeded ? "true" : "false");
 
 		if (++count != num_entries) appendStringInfo(&rows, ",");
 	}
 	LWLockRelease(diskquota_locks.reject_map_lock);
 
 	count       = 0;
-	num_entries = hash_get_num_entries(local_active_table_stat_map);
-	hash_seq_init(&hash_seq, local_active_table_stat_map);
+	num_entries = hash_get_num_entries(local_active_table_map);
+	hash_seq_init(&hash_seq, local_active_table_map);
 	while ((active_table_entry = hash_seq_search(&hash_seq)) != NULL)
 	{
+		if (active_table_entry->segid != -1) continue;
+
 		appendStringInfo(&active_oids, "%d", active_table_entry->reloid);
 
 		if (++count != num_entries) appendStringInfo(&active_oids, ",");
@@ -252,39 +205,40 @@ static void
 export_exceeded_error(GlobalRejectMapEntry *entry, bool skip_name)
 {
 	RejectMapEntry *rejectentry = &entry->keyitem;
-	switch (rejectentry->targettype)
+	switch (rejectentry->type)
 	{
 		case NAMESPACE_QUOTA:
-			ereport(ERROR, (errcode(ERRCODE_DISK_FULL), errmsg("schema's disk space quota exceeded with name: %s",
-			                                                   GetNamespaceName(rejectentry->targetoid, skip_name))));
+			ereport(ERROR,
+			        (errcode(ERRCODE_DISK_FULL), errmsg("schema's disk space quota exceeded with name: %s",
+			                                            GetNamespaceName(rejectentry->namespaceoid, skip_name))));
 			break;
 		case ROLE_QUOTA:
 			ereport(ERROR, (errcode(ERRCODE_DISK_FULL), errmsg("role's disk space quota exceeded with name: %s",
-			                                                   GetUserName(rejectentry->targetoid, skip_name))));
+			                                                   GetUserName(rejectentry->owneroid, skip_name))));
 			break;
 		case NAMESPACE_TABLESPACE_QUOTA:
 			if (entry->segexceeded)
 				ereport(ERROR, (errcode(ERRCODE_DISK_FULL),
 				                errmsg("tablespace: %s, schema: %s diskquota exceeded per segment quota",
 				                       GetTablespaceName(rejectentry->tablespaceoid, skip_name),
-				                       GetNamespaceName(rejectentry->targetoid, skip_name))));
+				                       GetNamespaceName(rejectentry->namespaceoid, skip_name))));
 			else
 				ereport(ERROR,
 				        (errcode(ERRCODE_DISK_FULL), errmsg("tablespace: %s, schema: %s diskquota exceeded",
 				                                            GetTablespaceName(rejectentry->tablespaceoid, skip_name),
-				                                            GetNamespaceName(rejectentry->targetoid, skip_name))));
+				                                            GetNamespaceName(rejectentry->namespaceoid, skip_name))));
 			break;
 		case ROLE_TABLESPACE_QUOTA:
 			if (entry->segexceeded)
 				ereport(ERROR, (errcode(ERRCODE_DISK_FULL),
 				                errmsg("tablespace: %s, role: %s diskquota exceeded per segment quota",
 				                       GetTablespaceName(rejectentry->tablespaceoid, skip_name),
-				                       GetUserName(rejectentry->targetoid, skip_name))));
+				                       GetUserName(rejectentry->owneroid, skip_name))));
 			else
 				ereport(ERROR,
 				        (errcode(ERRCODE_DISK_FULL), errmsg("tablespace: %s, role: %s diskquota exceeded",
 				                                            GetTablespaceName(rejectentry->tablespaceoid, skip_name),
-				                                            GetUserName(rejectentry->targetoid, skip_name))));
+				                                            GetUserName(rejectentry->owneroid, skip_name))));
 			break;
 		default:
 			ereport(ERROR, (errcode(ERRCODE_DISK_FULL), errmsg("diskquota exceeded, unknown quota type")));
@@ -300,8 +254,8 @@ check_rejectmap_by_relfilenode(RelFileNode relfilenode)
 
 	SIMPLE_FAULT_INJECTOR("check_rejectmap_by_relfilenode");
 
-	memset(&keyitem, 0, sizeof(keyitem));
-	memcpy(&keyitem.relfilenode, &relfilenode, sizeof(RelFileNode));
+	prepare_rejectmap_search_key(&keyitem, INVALID_QUOTA_TYPE, InvalidOid, InvalidOid, MyDatabaseId, InvalidOid,
+	                             relfilenode.relNode);
 
 	LWLockAcquire(diskquota_locks.reject_map_lock, LW_SHARED);
 	entry = hash_search(disk_quota_reject_map, &keyitem, HASH_FIND, &found);
@@ -344,7 +298,7 @@ check_rejectmap_by_reloid(Oid reloid)
 	LWLockAcquire(diskquota_locks.reject_map_lock, LW_SHARED);
 	for (QuotaType type = 0; type < NUM_QUOTA_TYPES; ++type)
 	{
-		prepare_rejectmap_search_key(&keyitem, type, ownerOid, nsOid, tablespaceoid);
+		prepare_rejectmap_search_key(&keyitem, type, nsOid, ownerOid, MyDatabaseId, tablespaceoid, InvalidOid);
 		entry = hash_search(disk_quota_reject_map, &keyitem, HASH_FIND, &found);
 		if (found)
 		{
@@ -361,29 +315,40 @@ check_rejectmap_by_reloid(Oid reloid)
  * This function takes relowner, relnamespace, reltablespace as arguments,
  * prepares the searching key of the global rejectmap for us.
  */
-void
-prepare_rejectmap_search_key(RejectMapEntry *keyitem, QuotaType type, Oid relowner, Oid relnamespace, Oid reltablespace)
+static void
+prepare_rejectmap_search_key(RejectMapEntry *keyitem, QuotaType type, Oid relnamespace, Oid relowner, Oid databaseoid,
+                             Oid reltablespace, Oid relfilenode)
 {
 	Assert(keyitem != NULL);
 	memset(keyitem, 0, sizeof(RejectMapEntry));
-	if (type == ROLE_QUOTA || type == ROLE_TABLESPACE_QUOTA)
-		keyitem->targetoid = relowner;
-	else if (type == NAMESPACE_QUOTA || type == NAMESPACE_TABLESPACE_QUOTA)
-		keyitem->targetoid = relnamespace;
-	else if (type == TABLESPACE_QUOTA)
-		keyitem->targetoid = reltablespace;
-	else
-		ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] unknown quota type: %d", type)));
-
-	if (type == ROLE_TABLESPACE_QUOTA || type == NAMESPACE_TABLESPACE_QUOTA)
-		keyitem->tablespaceoid = reltablespace;
-	else
+	switch (type)
 	{
-		/* refer to add_quota_to_rejectmap */
-		keyitem->tablespaceoid = InvalidOid;
+		case NAMESPACE_QUOTA:
+			keyitem->namespaceoid = relnamespace;
+			break;
+		case ROLE_QUOTA:
+			keyitem->owneroid = relowner;
+			break;
+		case NAMESPACE_TABLESPACE_QUOTA:
+			keyitem->namespaceoid  = relnamespace;
+			keyitem->tablespaceoid = reltablespace;
+			break;
+		case ROLE_TABLESPACE_QUOTA:
+			keyitem->owneroid      = relowner;
+			keyitem->tablespaceoid = reltablespace;
+			break;
+		case TABLESPACE_QUOTA:
+			keyitem->tablespaceoid = reltablespace;
+			break;
+		case INVALID_QUOTA_TYPE:
+			break;
+		default:
+			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR), errmsg("[diskquota] unknown quota type: %d", type)));
+			break;
 	}
-	keyitem->databaseoid = MyDatabaseId;
-	keyitem->targettype  = type;
+	keyitem->databaseoid = databaseoid;
+	keyitem->relfilenode = relfilenode;
+	keyitem->type        = type;
 }
 
 /*
@@ -399,7 +364,7 @@ invalidate_database_rejectmap(Oid dbid)
 	hash_seq_init(&iter, disk_quota_reject_map);
 	while ((entry = hash_seq_search(&iter)) != NULL)
 	{
-		if (entry->databaseoid == dbid || entry->relfilenode.dbNode == dbid)
+		if (entry->databaseoid == dbid)
 		{
 			hash_search(disk_quota_reject_map, entry, HASH_REMOVE, NULL);
 		}
@@ -436,7 +401,6 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 	int                   reject_array_count;
 	int                   active_array_count;
 	HeapTupleHeader       lt;
-	bool                  segexceeded;
 	GlobalRejectMapEntry *rejectmapentry;
 	HASH_SEQ_STATUS       hash_seq;
 	HTAB                 *local_rejectmap;
@@ -479,18 +443,20 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 
 		if (nulls[i]) continue;
 
-		memset(&keyitem, 0, sizeof(RejectMapEntry));
-		lt                    = DatumGetHeapTupleHeader(datums[i]);
-		keyitem.targetoid     = DatumGetObjectId(GetAttributeByNum(lt, 1, &isnull));
-		keyitem.databaseoid   = DatumGetObjectId(GetAttributeByNum(lt, 2, &isnull));
-		keyitem.tablespaceoid = DatumGetObjectId(GetAttributeByNum(lt, 3, &isnull));
-		keyitem.targettype    = DatumGetInt32(GetAttributeByNum(lt, 4, &isnull));
+		lt                      = DatumGetHeapTupleHeader(datums[i]);
+		QuotaType type          = DatumGetInt32(GetAttributeByNum(lt, 1, &isnull));
+		Oid       namespaceoid  = DatumGetObjectId(GetAttributeByNum(lt, 2, &isnull));
+		Oid       owneroid      = DatumGetObjectId(GetAttributeByNum(lt, 3, &isnull));
+		Oid       databaseoid   = DatumGetObjectId(GetAttributeByNum(lt, 4, &isnull));
+		Oid       tablespaceoid = DatumGetObjectId(GetAttributeByNum(lt, 5, &isnull));
 		/* rejectmap entries from QD should have the real tablespace oid */
-		if ((keyitem.targettype == NAMESPACE_TABLESPACE_QUOTA || keyitem.targettype == ROLE_TABLESPACE_QUOTA))
+		if ((type == NAMESPACE_TABLESPACE_QUOTA || type == ROLE_TABLESPACE_QUOTA))
 		{
-			Assert(OidIsValid(keyitem.tablespaceoid));
+			Assert(OidIsValid(tablespaceoid));
 		}
-		segexceeded = DatumGetBool(GetAttributeByNum(lt, 5, &isnull));
+		bool segexceeded = DatumGetBool(GetAttributeByNum(lt, 6, &isnull));
+
+		prepare_rejectmap_search_key(&keyitem, type, namespaceoid, owneroid, databaseoid, tablespaceoid, InvalidOid);
 
 		rejectmapentry = hash_search(local_rejectmap, &keyitem, HASH_ENTER_NULL, NULL);
 		if (rejectmapentry) rejectmapentry->segexceeded = segexceeded;
@@ -532,7 +498,8 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 			for (QuotaType type = 0; type < NUM_QUOTA_TYPES; ++type)
 			{
 				/* Check that if the current relation should be blocked. */
-				prepare_rejectmap_search_key(&keyitem, type, relowner, relnamespace, reltablespace);
+				prepare_rejectmap_search_key(&keyitem, type, relnamespace, relowner, MyDatabaseId, reltablespace,
+				                             InvalidOid);
 				rejectmapentry = hash_search(local_rejectmap, &keyitem, HASH_FIND, &found);
 				if (found && rejectmapentry)
 				{
@@ -581,18 +548,13 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 						HeapTuple curr_tuple = SearchSysCacheCopy1(RELOID, ObjectIdGetDatum(curr_oid));
 						if (HeapTupleIsValid(curr_tuple))
 						{
-							Form_pg_class curr_form = (Form_pg_class)GETSTRUCT(curr_tuple);
-							Oid curr_reltablespace  = OidIsValid(curr_form->reltablespace) ? curr_form->reltablespace
-							                                                               : MyDatabaseTableSpace;
-							RelFileNode           relfilenode = {.dbNode  = MyDatabaseId,
-							                                     .relNode = curr_form->relfilenode,
-							                                     .spcNode = curr_reltablespace};
+							Form_pg_class         curr_form = (Form_pg_class)GETSTRUCT(curr_tuple);
 							bool                  found;
 							GlobalRejectMapEntry *blocked_filenode_entry;
 							RejectMapEntry        blocked_filenode_keyitem;
 
-							memset(&blocked_filenode_keyitem, 0, sizeof(RejectMapEntry));
-							memcpy(&blocked_filenode_keyitem.relfilenode, &relfilenode, sizeof(RelFileNode));
+							prepare_rejectmap_search_key(&blocked_filenode_keyitem, INVALID_QUOTA_TYPE, InvalidOid,
+							                             InvalidOid, MyDatabaseId, InvalidOid, curr_form->relfilenode);
 
 							blocked_filenode_entry =
 							        hash_search(local_rejectmap, &blocked_filenode_keyitem, HASH_ENTER_NULL, &found);
@@ -631,7 +593,8 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 				for (QuotaType type = 0; type < NUM_QUOTA_TYPES; ++type)
 				{
 					/* Check that if the current relation should be blocked. */
-					prepare_rejectmap_search_key(&keyitem, type, relowner, relnamespace, reltablespace);
+					prepare_rejectmap_search_key(&keyitem, type, relnamespace, relowner, MyDatabaseId, reltablespace,
+					                             InvalidOid);
 					rejectmapentry = hash_search(local_rejectmap, &keyitem, HASH_FIND, &found);
 
 					if (found && rejectmapentry)
@@ -654,9 +617,9 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 							relation_cache_entry = hash_search(relation_cache, &curr_oid, HASH_FIND, &found);
 							if (found && relation_cache_entry)
 							{
-								memset(&blocked_filenode_keyitem, 0, sizeof(RejectMapEntry));
-								memcpy(&blocked_filenode_keyitem.relfilenode, &relation_cache_entry->rnode.node,
-								       sizeof(RelFileNode));
+								prepare_rejectmap_search_key(&blocked_filenode_keyitem, INVALID_QUOTA_TYPE, InvalidOid,
+								                             InvalidOid, MyDatabaseId, InvalidOid,
+								                             relation_cache_entry->rnode.node.relNode);
 
 								blocked_filenode_entry = hash_search(local_rejectmap, &blocked_filenode_keyitem,
 								                                     HASH_ENTER_NULL, &found);
@@ -680,9 +643,7 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 	hash_seq_init(&hash_seq, disk_quota_reject_map);
 	while ((rejectmapentry = hash_seq_search(&hash_seq)) != NULL)
 	{
-		if (rejectmapentry->keyitem.relfilenode.dbNode != MyDatabaseId &&
-		    rejectmapentry->keyitem.databaseoid != MyDatabaseId)
-			continue;
+		if (rejectmapentry->keyitem.databaseoid != MyDatabaseId) continue;
 		hash_search(disk_quota_reject_map, &rejectmapentry->keyitem, HASH_REMOVE, NULL);
 	}
 
@@ -695,14 +656,16 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 
 		/*
 		 * Skip soft limit reject entry. We don't perform soft-limit on segment servers, so we don't flush the
-		 * rejectmap entry with a valid targetoid to the global rejectmap on segment servers.
+		 * rejectmap entry with a valid quota type to the global rejectmap on segment servers.
 		 */
-		if (OidIsValid(rejectmapentry->keyitem.targetoid)) continue;
+		if (rejectmapentry->keyitem.type != INVALID_QUOTA_TYPE) continue;
 
 		new_entry = hash_search(disk_quota_reject_map, &rejectmapentry->keyitem, HASH_ENTER_NULL, &found);
 		if (!found && new_entry) memcpy(new_entry, rejectmapentry, sizeof(GlobalRejectMapEntry));
 	}
 	LWLockRelease(diskquota_locks.reject_map_lock);
+
+	hash_destroy(local_rejectmap);
 
 	PG_RETURN_VOID();
 }
@@ -736,16 +699,15 @@ show_rejectmap(PG_FUNCTION_ARGS)
 
 		/* Switch to memory context appropriate for multiple function calls */
 		oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
-		tupdesc    = DiskquotaCreateTemplateTupleDesc(9);
+		tupdesc    = DiskquotaCreateTemplateTupleDesc(8);
 		TupleDescInitEntry(tupdesc, (AttrNumber)1, "target_type", TEXTOID, -1 /*typmod*/, 0 /*attdim*/);
-		TupleDescInitEntry(tupdesc, (AttrNumber)2, "target_oid", OIDOID, -1 /*typmod*/, 0 /*attdim*/);
-		TupleDescInitEntry(tupdesc, (AttrNumber)3, "database_oid", OIDOID, -1 /*typmod*/, 0 /*attdim*/);
-		TupleDescInitEntry(tupdesc, (AttrNumber)4, "tablespace_oid", OIDOID, -1 /*typmod*/, 0 /*attdim*/);
-		TupleDescInitEntry(tupdesc, (AttrNumber)5, "seg_exceeded", BOOLOID, -1 /*typmod*/, 0 /*attdim*/);
-		TupleDescInitEntry(tupdesc, (AttrNumber)6, "dbnode", OIDOID, -1 /*typmod*/, 0 /*attdim*/);
-		TupleDescInitEntry(tupdesc, (AttrNumber)7, "spcnode", OIDOID, -1 /*typmod*/, 0 /*attdim*/);
-		TupleDescInitEntry(tupdesc, (AttrNumber)8, "relnode", OIDOID, -1 /*typmod*/, 0 /*attdim*/);
-		TupleDescInitEntry(tupdesc, (AttrNumber)9, "segid", INT4OID, -1 /*typmod*/, 0 /*attdim*/);
+		TupleDescInitEntry(tupdesc, (AttrNumber)2, "namespace_oid", OIDOID, -1 /*typmod*/, 0 /*attdim*/);
+		TupleDescInitEntry(tupdesc, (AttrNumber)3, "owner_oid", OIDOID, -1 /*typmod*/, 0 /*attdim*/);
+		TupleDescInitEntry(tupdesc, (AttrNumber)4, "database_oid", OIDOID, -1 /*typmod*/, 0 /*attdim*/);
+		TupleDescInitEntry(tupdesc, (AttrNumber)5, "tablespace_oid", OIDOID, -1 /*typmod*/, 0 /*attdim*/);
+		TupleDescInitEntry(tupdesc, (AttrNumber)6, "relfilenode", OIDOID, -1 /*typmod*/, 0 /*attdim*/);
+		TupleDescInitEntry(tupdesc, (AttrNumber)7, "seg_exceeded", BOOLOID, -1 /*typmod*/, 0 /*attdim*/);
+		TupleDescInitEntry(tupdesc, (AttrNumber)8, "segid", INT4OID, -1 /*typmod*/, 0 /*attdim*/);
 
 		funcctx->tuple_desc = BlessTupleDesc(tupdesc);
 
@@ -763,14 +725,13 @@ show_rejectmap(PG_FUNCTION_ARGS)
 		hash_seq_init(&hash_seq, disk_quota_reject_map);
 		while ((rejectmap_entry = hash_seq_search(&hash_seq)) != NULL)
 		{
-			GlobalRejectMapEntry *local_rejectmap_entry = NULL;
-			local_rejectmap_entry =
+			if (rejectmap_entry->keyitem.databaseoid != MyDatabaseId) continue;
+
+			GlobalRejectMapEntry *local_rejectmap_entry =
 			        hash_search(rejectmap_ctx->rejectmap, &rejectmap_entry->keyitem, HASH_ENTER_NULL, NULL);
 			if (local_rejectmap_entry)
 			{
-				memcpy(&local_rejectmap_entry->keyitem, &rejectmap_entry->keyitem, sizeof(RejectMapEntry));
-				local_rejectmap_entry->segexceeded = rejectmap_entry->segexceeded;
-				memcpy(&local_rejectmap_entry->auxblockinfo, &rejectmap_entry->auxblockinfo, sizeof(RejectMapEntry));
+				memcpy(local_rejectmap_entry, rejectmap_entry, sizeof(GlobalRejectMapEntry));
 			}
 		}
 		LWLockRelease(diskquota_locks.reject_map_lock);
@@ -786,54 +747,50 @@ show_rejectmap(PG_FUNCTION_ARGS)
 
 	while ((rejectmap_entry = hash_seq_search(&(rejectmap_ctx->rejectmap_seq))) != NULL)
 	{
-#define _TARGETTYPE_STR_SIZE 32
 		Datum          result;
-		Datum          values[9];
-		bool           nulls[9];
+		Datum          values[8];
+		bool           nulls[8];
 		HeapTuple      tuple;
 		RejectMapEntry keyitem;
-		char           targettype_str[_TARGETTYPE_STR_SIZE];
-		RelFileNode    blocked_relfilenode;
+		char           targettype_str[NAMEDATALEN];
 
-		memcpy(&blocked_relfilenode, &rejectmap_entry->keyitem.relfilenode, sizeof(RelFileNode));
 		/*
 		 * If the rejectmap entry is indexed by relfilenode, we dump the blocking
 		 * condition from auxblockinfo.
 		 */
-		if (!OidIsValid(blocked_relfilenode.relNode))
+		if (!OidIsValid(rejectmap_entry->keyitem.relfilenode))
 			memcpy(&keyitem, &rejectmap_entry->keyitem, sizeof(keyitem));
 		else
 			memcpy(&keyitem, &rejectmap_entry->auxblockinfo, sizeof(keyitem));
 		memset(targettype_str, 0, sizeof(targettype_str));
 
-		switch ((QuotaType)keyitem.targettype)
+		switch (keyitem.type)
 		{
 			case ROLE_QUOTA:
-				StrNCpy(targettype_str, "ROLE_QUOTA", _TARGETTYPE_STR_SIZE);
+				StrNCpy(targettype_str, "ROLE_QUOTA", NAMEDATALEN);
 				break;
 			case NAMESPACE_QUOTA:
-				StrNCpy(targettype_str, "NAMESPACE_QUOTA", _TARGETTYPE_STR_SIZE);
+				StrNCpy(targettype_str, "NAMESPACE_QUOTA", NAMEDATALEN);
 				break;
 			case ROLE_TABLESPACE_QUOTA:
-				StrNCpy(targettype_str, "ROLE_TABLESPACE_QUOTA", _TARGETTYPE_STR_SIZE);
+				StrNCpy(targettype_str, "ROLE_TABLESPACE_QUOTA", NAMEDATALEN);
 				break;
 			case NAMESPACE_TABLESPACE_QUOTA:
-				StrNCpy(targettype_str, "NAMESPACE_TABLESPACE_QUOTA", _TARGETTYPE_STR_SIZE);
+				StrNCpy(targettype_str, "NAMESPACE_TABLESPACE_QUOTA", NAMEDATALEN);
 				break;
 			default:
-				StrNCpy(targettype_str, "UNKNOWN", _TARGETTYPE_STR_SIZE);
+				StrNCpy(targettype_str, "UNKNOWN", NAMEDATALEN);
 				break;
 		}
 
 		values[0] = CStringGetTextDatum(targettype_str);
-		values[1] = ObjectIdGetDatum(keyitem.targetoid);
-		values[2] = ObjectIdGetDatum(keyitem.databaseoid);
-		values[3] = ObjectIdGetDatum(keyitem.tablespaceoid);
-		values[4] = BoolGetDatum(rejectmap_entry->segexceeded);
-		values[5] = ObjectIdGetDatum(blocked_relfilenode.dbNode);
-		values[6] = ObjectIdGetDatum(blocked_relfilenode.spcNode);
-		values[7] = ObjectIdGetDatum(blocked_relfilenode.relNode);
-		values[8] = Int32GetDatum(GpIdentity.segindex);
+		values[1] = ObjectIdGetDatum(keyitem.namespaceoid);
+		values[2] = ObjectIdGetDatum(keyitem.owneroid);
+		values[3] = ObjectIdGetDatum(keyitem.databaseoid);
+		values[4] = ObjectIdGetDatum(keyitem.tablespaceoid);
+		values[5] = ObjectIdGetDatum(keyitem.relfilenode);
+		values[6] = BoolGetDatum(rejectmap_entry->segexceeded);
+		values[7] = Int32GetDatum(GpIdentity.segindex);
 
 		memset(nulls, false, sizeof(nulls));
 		tuple  = heap_form_tuple(funcctx->tuple_desc, values, nulls);

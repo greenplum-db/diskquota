@@ -32,6 +32,7 @@
 #include "table_size.h"
 #include "gp_activetable.h"
 #include "quota.h"
+#include "rejectmap.h"
 
 #include <unistd.h> // for useconds_t
 
@@ -45,6 +46,7 @@ static void              disk_quota_refresh(bool is_init);
 static DiskquotaMessage *refresh_table_size(List *oidlist, HTAB *local_table_size_map, bool is_init);
 static DiskquotaMessage *refresh_quota_info(List *expired_quota_info_entries);
 static List             *get_expired_quota_info_entries(RspMsgRefreshTableSize *msg_body);
+static void              refresh_coordinator_global_reject_map(RspMsgRefreshQuotaInfo *msg_body);
 
 /* extern function */
 // FIXME: free worker on launcher
@@ -159,12 +161,6 @@ disk_quota_worker_main_3(Datum main_arg)
 	set_config_option("application_name", DISKQUOTA_APPLICATION_NAME, PGC_USERSET, PGC_S_SESSION, GUC_ACTION_SAVE, true,
 	                  0, true);
 #endif /* GP_VERSION_NUM */
-
-	/*
-	 * Initialize diskquota related local hash map and refresh model
-	 * immediately
-	 */
-	init_disk_quota_model(MyWorkerInfo->dbEntry->id);
 
 	// FIXME: version check should be run for each starting bgworker?
 	//  check current binary version and SQL DLL version are matched
@@ -418,8 +414,9 @@ disk_quota_refresh(bool is_init)
 	rsp_msg_rqi      = refresh_quota_info(expired_quota_info_entries);
 	rsp_msg_body_rqi = (RspMsgRefreshQuotaInfo *)MessageBody(rsp_msg_rqi);
 
-	// TODO: handle response message
-	// dispatch changed reject entry to segments
+	refresh_coordinator_global_reject_map(rsp_msg_body_rqi);
+
+	dispatch_rejectmap(local_active_table_map);
 
 	free_message(rsp_msg_rts);
 	list_free(oidlist);
@@ -532,4 +529,25 @@ refresh_quota_info(List *expired_quota_info_entries)
 	free_message(req_msg);
 
 	return rsp_msg;
+}
+
+/*
+ * Generate the global reject map from RspMsgRefreshQuotaInfo.
+ * global reject map contains quotas which exceed limit.
+ */
+static void
+refresh_coordinator_global_reject_map(RspMsgRefreshQuotaInfo *msg_body)
+{
+	LocalRejectMapEntry *localrejectentry;
+
+	invalidate_database_rejectmap(MyDatabaseId);
+
+	LWLockAcquire(diskquota_locks.reject_map_lock, LW_EXCLUSIVE);
+	for (int i = 0; i < msg_body->reject_map_entry_list_len; i++)
+	{
+		localrejectentry = (LocalRejectMapEntry *)GetPointFromMessageContentList(
+		        msg_body, msg_body->reject_map_entry_list_offset, i, sizeof(LocalRejectMapEntry));
+		update_global_reject_map(localrejectentry);
+	}
+	LWLockRelease(diskquota_locks.reject_map_lock);
 }

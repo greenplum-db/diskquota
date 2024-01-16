@@ -3,11 +3,13 @@
 
 #define TableSizeMapNamePrefix "TableSizeMap"
 #define QuotaInfoMapNamePrefix "QuotaInfoMap"
+#define RejectMapNamePrefix "RejectMap"
 
 typedef enum
 {
 	TABLE_SIZE_MAP,
 	QUOTA_INFO_MAP,
+	REJECT_MAP,
 } HashMapType;
 
 typedef struct HashMap

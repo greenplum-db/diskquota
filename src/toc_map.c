@@ -6,6 +6,7 @@
 #include "toc_map.h"
 #include "table_size.h"
 #include "quota.h"
+#include "rejectmap.h"
 
 HTAB *
 init_toc_map(void)
@@ -40,6 +41,9 @@ search_toc_map(HTAB *toc_map, HashMapType type, Oid dbid)
 		case QUOTA_INFO_MAP:
 			appendStringInfo(&name, "%s_%d", QuotaInfoMapNamePrefix, dbid);
 			break;
+		case REJECT_MAP:
+			appendStringInfo(&name, "%s_%d", RejectMapNamePrefix, dbid);
+			break;
 		default:
 			elog(ERROR, "incorrect hash map type: %d", type);
 			break;
@@ -56,6 +60,9 @@ search_toc_map(HTAB *toc_map, HashMapType type, Oid dbid)
 				break;
 			case QUOTA_INFO_MAP:
 				entry->map = create_quota_info_map(name.data);
+				break;
+			case REJECT_MAP:
+				entry->map = create_reject_map(name.data);
 				break;
 			default:
 				elog(ERROR, "incorrect hash map type: %d", type);

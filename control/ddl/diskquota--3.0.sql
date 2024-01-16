@@ -31,22 +31,22 @@ CREATE TYPE diskquota.diskquota_active_table_type AS (
 );
 
 CREATE TYPE diskquota.rejectmap_entry AS (
-	target_oid oid,
+	quota_type integer,
+	namespace_oid oid,
+	owner_oid oid,
 	database_oid oid,
 	tablespace_oid oid,
-	target_type integer,
 	seg_exceeded boolean
 );
 
 CREATE TYPE diskquota.rejectmap_entry_detail AS (
 	target_type text,
-	target_oid oid,
+	namespace_oid oid,
+	owner_oid oid,
 	database_oid oid,
 	tablespace_oid oid,
+	relfilenode oid,
 	seg_exceeded boolean,
-	dbnode oid,
-	spcnode oid,
-	relnode oid,
 	segid int
 );
 
