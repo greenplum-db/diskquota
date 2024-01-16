@@ -45,7 +45,7 @@
 #include <math.h>
 
 /* cluster level max size of rejectmap */
-#define MAX_DISK_QUOTA_REJECT_ENTRIES (diskquota_max_local_reject_entries * diskquota_max_monitored_databases)
+#define MAX_DISK_QUOTA_REJECT_ENTRIES (diskquota_max_active_tables * diskquota_max_monitored_databases)
 /* Number of attributes in quota configuration records. */
 #define NUM_QUOTA_CONFIG_ATTRS 6
 /* Number of entries for diskquota.table_size update SQL */
@@ -83,7 +83,7 @@ int        SEGCOUNT = 0;
 extern int diskquota_max_table_segments;
 extern int diskquota_max_monitored_databases;
 extern int diskquota_max_quota_probes;
-extern int diskquota_max_local_reject_entries;
+extern int diskquota_max_active_tables;
 /*
  * local cache of table disk size and corresponding schema and owner.
  *
@@ -202,11 +202,11 @@ static TimestampTz *local_disk_quota_reject_map_last_overflow_report = NULL;
 
 static const char *disk_quota_reject_map_warning =
         "the number of quota reject map entries reached the limit, "
-        "please increase the GUC value for diskquota.max_reject_entries.";
+        "please increase the GUC value for diskquota.max_active_tables.";
 
 static const char *local_disk_quota_reject_map_warning =
         "the number of local quota reject map entries reached the limit, "
-        "please increase the GUC value for diskquota.max_reject_entries.";
+        "please increase the GUC value for diskquota.max_active_tables.";
 
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 
@@ -309,7 +309,7 @@ add_quota_to_rejectmap(QuotaType type, Oid targetOid, Oid tablespaceoid, bool se
 	keyitem.tablespaceoid = tablespaceoid;
 	keyitem.targettype    = (uint32)type;
 	HASHACTION action =
-	        check_hash_fullness(local_disk_quota_reject_map, diskquota_max_local_reject_entries,
+	        check_hash_fullness(local_disk_quota_reject_map, diskquota_max_active_tables,
 	                            local_disk_quota_reject_map_warning, local_disk_quota_reject_map_last_overflow_report);
 	localrejectentry = hash_search(local_disk_quota_reject_map, &keyitem, action, NULL);
 	if (localrejectentry)
@@ -440,7 +440,7 @@ disk_quota_shmem_startup(void)
 	hash_ctl.keysize   = sizeof(RejectMapEntry);
 	hash_ctl.entrysize = sizeof(GlobalRejectMapEntry);
 	disk_quota_reject_map =
-	        DiskquotaShmemInitHash("rejectmap whose quota limitation is reached", diskquota_max_local_reject_entries,
+	        DiskquotaShmemInitHash("rejectmap whose quota limitation is reached", diskquota_max_active_tables,
 	                               MAX_DISK_QUOTA_REJECT_ENTRIES, &hash_ctl, HASH_ELEM, DISKQUOTA_TAG_HASH);
 
 	init_shm_worker_active_tables();
@@ -510,7 +510,7 @@ diskquota_worker_shmem_size()
 	Size size;
 	size = hash_estimate_size(MAX_NUM_TABLE_SIZE_ENTRIES / diskquota_max_monitored_databases + 100,
 	                          sizeof(TableSizeEntry));
-	size = add_size(size, hash_estimate_size(diskquota_max_local_reject_entries, sizeof(LocalRejectMapEntry)));
+	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(LocalRejectMapEntry)));
 	size = add_size(size, hash_estimate_size(MAX_QUOTA_MAP_ENTRIES, sizeof(QuotaInfoEntry)));
 	size = add_size(size, sizeof(TimestampTz)); // table_size_map_last_overflow_report
 	size = add_size(size, sizeof(TimestampTz)); // local_disk_quota_reject_map_last_overflow_report
@@ -574,8 +574,8 @@ init_disk_quota_model(uint32 id)
 	hash_ctl.keysize   = sizeof(RejectMapEntry);
 	hash_ctl.entrysize = sizeof(LocalRejectMapEntry);
 	local_disk_quota_reject_map =
-	        DiskquotaShmemInitHash(str.data, diskquota_max_local_reject_entries, diskquota_max_local_reject_entries,
-	                               &hash_ctl, HASH_ELEM, DISKQUOTA_TAG_HASH);
+	        DiskquotaShmemInitHash(str.data, diskquota_max_active_tables, diskquota_max_active_tables, &hash_ctl,
+	                               HASH_ELEM, DISKQUOTA_TAG_HASH);
 
 	format_name("localrejectmap_last_overflow_report", id, &str);
 	local_disk_quota_reject_map_last_overflow_report = ShmemInitStruct(str.data, sizeof(TimestampTz), &found);
@@ -642,8 +642,8 @@ vacuum_disk_quota_model(uint32 id)
 	hash_ctl.keysize   = sizeof(RejectMapEntry);
 	hash_ctl.entrysize = sizeof(LocalRejectMapEntry);
 	local_disk_quota_reject_map =
-	        DiskquotaShmemInitHash(str.data, diskquota_max_local_reject_entries, diskquota_max_local_reject_entries,
-	                               &hash_ctl, HASH_ELEM, DISKQUOTA_TAG_HASH);
+	        DiskquotaShmemInitHash(str.data, diskquota_max_active_tables, diskquota_max_active_tables, &hash_ctl,
+	                               HASH_ELEM, DISKQUOTA_TAG_HASH);
 	hash_seq_init(&iter, local_disk_quota_reject_map);
 	while ((localrejectentry = hash_seq_search(&iter)) != NULL)
 	{

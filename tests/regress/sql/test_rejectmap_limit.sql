@@ -2,11 +2,6 @@
 -- This file contains tests for limiting reject map
 --
 
-\! gpconfig -c diskquota.max_reject_entries -v 4 > /dev/null
-\! gpstop -arf > /dev/null
-
-\c
-
 CREATE DATABASE test_reject_map_limit_01;
 
 \c test_reject_map_limit_01
@@ -36,6 +31,12 @@ CREATE TABLE s3.a(i int) DISTRIBUTED BY (i);
 CREATE TABLE s4.a(i int) DISTRIBUTED BY (i);
 CREATE TABLE s5.a(i int) DISTRIBUTED BY (i);
 
+
+\! gpconfig -c diskquota.max_active_tables -v 4 > /dev/null
+\! gpstop -arf > /dev/null
+
+\c test_reject_map_limit_01
+
 INSERT INTO s1.a SELECT generate_series(1,100000);
 INSERT INTO s2.a SELECT generate_series(1,100000);
 INSERT INTO s3.a SELECT generate_series(1,100000);
@@ -51,5 +52,5 @@ DROP EXTENSION diskquota;
 \c contrib_regression
 DROP DATABASE test_reject_map_limit_01;
 
-\! gpconfig -r diskquota.max_reject_entries > /dev/null
+\! gpconfig -r diskquota.max_active_tables > /dev/null
 \! gpstop -arf > /dev/null
