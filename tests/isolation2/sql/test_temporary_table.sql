@@ -1,6 +1,6 @@
 -- Ensure diskquota does not save information about temporary table during restart cluster by invalidates it at startup
 
-!\retcode gpconfig -c diskquota.naptime -v 2 --skipvalidation;
+!\retcode gpconfig -c diskquota.naptime -v 5 --skipvalidation;
 !\retcode gpstop -u;
 
 1: CREATE SCHEMA temporary_schema;
@@ -8,7 +8,7 @@
 1: SELECT diskquota.set_schema_quota('temporary_schema', '1 MB');
 1: SELECT diskquota.wait_for_worker_new_epoch();
 1: CREATE TEMPORARY TABLE temporary_table(id int) DISTRIBUTED BY (id);
-1: INSERT INTO temporary_table SELECT generate_series(1, 100000);
+1: INSERT INTO temporary_table SELECT generate_series(1, 10000);
 -- Wait for the diskquota bgworker refreshing the size of 'temporary_table'.
 1: SELECT diskquota.wait_for_worker_new_epoch();
 1q:
