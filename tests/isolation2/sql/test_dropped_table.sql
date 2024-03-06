@@ -20,6 +20,7 @@
 -- Indicates that there is no dropped table in pg_catalog.pg_class
 1: SELECT oid FROM pg_catalog.pg_class WHERE relname = 'dropped_table';
 -- Indicates that there are no entries in diskquota.table_size that are not present in pg_catalog.pg_class
+1: SELECT diskquota.wait_for_worker_new_epoch();
 1: SELECT tableid FROM diskquota.table_size WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class WHERE tableid = oid) AND segid = -1;
 1: DROP SCHEMA dropped_schema CASCADE;
 1q:

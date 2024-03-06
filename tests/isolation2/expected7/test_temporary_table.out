@@ -47,6 +47,11 @@ INSERT 0 10000
 -----
 (0 rows)
 -- Indicates that there are no entries in diskquota.table_size that are not present in pg_catalog.pg_class
+1: SELECT diskquota.wait_for_worker_new_epoch();
+ wait_for_worker_new_epoch 
+---------------------------
+ t                         
+(1 row)
 1: SELECT tableid FROM diskquota.table_size WHERE NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class WHERE tableid = oid) AND segid = -1;
  tableid 
 ---------
