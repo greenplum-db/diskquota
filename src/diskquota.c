@@ -70,14 +70,15 @@ static volatile sig_atomic_t got_sigusr1 = false;
 static volatile sig_atomic_t got_sigusr2 = false;
 
 /* GUC variables */
-int  diskquota_naptime                 = 0;
-int  diskquota_max_active_tables       = 0;
-int  diskquota_worker_timeout          = 60; /* default timeout is 60 seconds */
-bool diskquota_hardlimit               = false;
-int  diskquota_max_workers             = 10;
-int  diskquota_max_table_segments      = 0;
-int  diskquota_max_monitored_databases = 0;
-int  diskquota_max_quota_probes        = 0;
+int  diskquota_naptime                         = 0;
+int  diskquota_max_active_tables               = 0;
+int  diskquota_worker_timeout                  = 60; /* default timeout is 60 seconds */
+bool diskquota_hardlimit                       = false;
+int  diskquota_max_workers                     = 10;
+int  diskquota_max_table_segments              = 0;
+int  diskquota_max_monitored_databases         = 0;
+int  diskquota_max_quota_probes                = 0;
+int  diskquota_hashmap_overflow_report_timeout = 0;
 
 DiskQuotaLocks       diskquota_locks;
 ExtensionDDLMessage *extension_ddl_message = NULL;
@@ -414,6 +415,10 @@ define_guc_variables(void)
 	DefineCustomIntVariable("diskquota.max_quota_probes", "Max number of quotas on the cluster.", NULL,
 	                        &diskquota_max_quota_probes, 1024 * 1024, 1024 * INIT_QUOTA_MAP_ENTRIES, INT_MAX,
 	                        PGC_POSTMASTER, 0, NULL, NULL, NULL);
+	DefineCustomIntVariable("diskquota.hashmap_overflow_report_timeout",
+	                        "The duration between each warning report about the shared hashmap overflow (in seconds).",
+	                        NULL, &diskquota_hashmap_overflow_report_timeout, 60, 0, INT_MAX / 1000, PGC_SUSET, 0, NULL,
+	                        NULL, NULL);
 }
 
 /* ---- Functions for disk quota worker process ---- */

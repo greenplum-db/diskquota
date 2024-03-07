@@ -32,6 +32,16 @@
 HTAB *relation_cache = NULL;
 HTAB *relid_cache    = NULL;
 
+extern TimestampTz active_tables_map_last_overflow_report;
+
+static const char *relation_cache_warning =
+        "the number of relation cache entries reached the limit, please increase "
+        "the GUC value for diskquota.max_active_tables.";
+
+static const char *relid_cache_warning =
+        "the number of relid cache entries reached the limit, please increase "
+        "the GUC value for diskquota.max_active_tables.";
+
 static void update_relation_entry(Oid relid, DiskQuotaRelationCacheEntry *relation_entry,
                                   DiskQuotaRelidCacheEntry *relid_entry);
 
@@ -173,14 +183,31 @@ update_relation_cache(Oid relid)
 	DiskQuotaRelidCacheEntry     relid_entry_data = {0};
 	DiskQuotaRelidCacheEntry    *relid_entry;
 	Oid                          prelid;
+	HASHACTION                   action;
 
 	update_relation_entry(relid, &relation_entry_data, &relid_entry_data);
 
 	LWLockAcquire(diskquota_locks.relation_cache_lock, LW_EXCLUSIVE);
-	relation_entry = hash_search(relation_cache, &relation_entry_data.relid, HASH_ENTER, NULL);
+
+	action         = check_hash_fullness(relation_cache, diskquota_max_active_tables, relation_cache_warning,
+	                                     &active_tables_map_last_overflow_report);
+	relation_entry = hash_search(relation_cache, &relation_entry_data.relid, action, NULL);
+
+	if (relation_entry == NULL)
+	{
+		LWLockRelease(diskquota_locks.relation_cache_lock);
+		return;
+	}
 	memcpy(relation_entry, &relation_entry_data, sizeof(DiskQuotaRelationCacheEntry));
 
-	relid_entry = hash_search(relid_cache, &relid_entry_data.relfilenode, HASH_ENTER, NULL);
+	action      = check_hash_fullness(relid_cache, diskquota_max_active_tables, relid_cache_warning,
+	                                  &active_tables_map_last_overflow_report);
+	relid_entry = hash_search(relid_cache, &relid_entry_data.relfilenode, action, NULL);
+	if (relid_entry == NULL)
+	{
+		LWLockRelease(diskquota_locks.relation_cache_lock);
+		return;
+	}
 	memcpy(relid_entry, &relid_entry_data, sizeof(DiskQuotaRelidCacheEntry));
 	LWLockRelease(diskquota_locks.relation_cache_lock);
 

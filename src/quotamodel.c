@@ -45,11 +45,7 @@
 #include <math.h>
 
 /* cluster level max size of rejectmap */
-#define MAX_DISK_QUOTA_REJECT_ENTRIES (1024 * 1024)
-/* cluster level init size of rejectmap */
-#define INIT_DISK_QUOTA_REJECT_ENTRIES 8192
-/* per database level max size of rejectmap */
-#define MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES 8192
+#define MAX_DISK_QUOTA_REJECT_ENTRIES (diskquota_max_active_tables * diskquota_max_monitored_databases)
 /* Number of attributes in quota configuration records. */
 #define NUM_QUOTA_CONFIG_ATTRS 6
 /* Number of entries for diskquota.table_size update SQL */
@@ -88,6 +84,7 @@ extern int               diskquota_max_table_segments;
 extern pg_atomic_uint32 *diskquota_table_size_entry_num;
 extern int               diskquota_max_monitored_databases;
 extern int               diskquota_max_quota_probes;
+extern int               diskquota_max_active_tables;
 extern pg_atomic_uint32 *diskquota_quota_info_entry_num;
 
 /*
@@ -144,7 +141,7 @@ typedef enum
 uint16 quota_key_num[NUM_QUOTA_TYPES]                            = {1, 1, 2, 2, 1};
 Oid    quota_key_caches[NUM_QUOTA_TYPES][MAX_NUM_KEYS_QUOTA_MAP] = {
         {NAMESPACEOID}, {AUTHOID}, {NAMESPACEOID, TABLESPACEOID}, {AUTHOID, TABLESPACEOID}, {TABLESPACEOID}};
-HTAB *quota_info_map;
+static HTAB *quota_info_map;
 
 /* global rejectmap for which exceed their quota limit */
 struct RejectMapEntry
@@ -189,6 +186,18 @@ static HTAB *table_size_map = NULL;
 /* rejectmap for database objects which exceed their quota limit */
 static HTAB *disk_quota_reject_map       = NULL;
 static HTAB *local_disk_quota_reject_map = NULL;
+
+static TimestampTz disk_quota_reject_map_last_overflow_report = 0;
+/* stored in shared memory */
+static TimestampTz *local_disk_quota_reject_map_last_overflow_report = NULL;
+
+static const char *disk_quota_reject_map_warning =
+        "the number of quota reject map entries reached the limit, "
+        "please increase the GUC value for diskquota.max_active_tables.";
+
+static const char *local_disk_quota_reject_map_warning =
+        "the number of local quota reject map entries reached the limit, "
+        "please increase the GUC value for diskquota.max_active_tables.";
 
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 
@@ -325,10 +334,16 @@ add_quota_to_rejectmap(QuotaType type, Oid targetOid, Oid tablespaceoid, bool se
 	keyitem.databaseoid   = MyDatabaseId;
 	keyitem.tablespaceoid = tablespaceoid;
 	keyitem.targettype    = (uint32)type;
-	ereport(DEBUG1, (errmsg("[diskquota] Put object %u to rejectmap", targetOid)));
-	localrejectentry = (LocalRejectMapEntry *)hash_search(local_disk_quota_reject_map, &keyitem, HASH_ENTER, NULL);
-	localrejectentry->isexceeded  = true;
-	localrejectentry->segexceeded = segexceeded;
+	HASHACTION action =
+	        check_hash_fullness(local_disk_quota_reject_map, diskquota_max_active_tables,
+	                            local_disk_quota_reject_map_warning, local_disk_quota_reject_map_last_overflow_report);
+	localrejectentry = hash_search(local_disk_quota_reject_map, &keyitem, action, NULL);
+	if (localrejectentry)
+	{
+		ereport(DEBUG1, (errmsg("[diskquota] Put object %u to rejectmap", targetOid)));
+		localrejectentry->isexceeded  = true;
+		localrejectentry->segexceeded = segexceeded;
+	}
 }
 
 /*
@@ -452,7 +467,7 @@ disk_quota_shmem_startup(void)
 	hash_ctl.keysize   = sizeof(RejectMapEntry);
 	hash_ctl.entrysize = sizeof(GlobalRejectMapEntry);
 	disk_quota_reject_map =
-	        DiskquotaShmemInitHash("rejectmap whose quota limitation is reached", INIT_DISK_QUOTA_REJECT_ENTRIES,
+	        DiskquotaShmemInitHash("rejectmap whose quota limitation is reached", diskquota_max_active_tables,
 	                               MAX_DISK_QUOTA_REJECT_ENTRIES, &hash_ctl, HASH_ELEM, DISKQUOTA_TAG_HASH);
 
 	init_shm_worker_active_tables();
@@ -522,7 +537,8 @@ diskquota_worker_shmem_size()
 	Size size;
 	size = hash_estimate_size(MAX_NUM_TABLE_SIZE_ENTRIES / diskquota_max_monitored_databases + 100,
 	                          sizeof(TableSizeEntry));
-	size = add_size(size, hash_estimate_size(MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, sizeof(LocalRejectMapEntry)));
+	size = add_size(size, hash_estimate_size(diskquota_max_active_tables, sizeof(LocalRejectMapEntry)));
+	size = add_size(size, sizeof(TimestampTz)); // local_disk_quota_reject_map_last_overflow_report
 	return size;
 }
 
@@ -547,7 +563,8 @@ DiskQuotaShmemSize(void)
 	{
 		size = add_size(size, sizeof(ExtensionDDLMessage));
 		size = add_size(size, diskquota_launcher_shmem_size());
-		size = add_size(size, sizeof(pg_atomic_uint32));
+		size = add_size(size, sizeof(pg_atomic_uint32)); // diskquota_table_size_entry_num
+		size = add_size(size, sizeof(pg_atomic_uint32)); // diskquota_quota_info_entry_num
 		size = add_size(size, diskquota_worker_shmem_size() * diskquota_max_monitored_databases);
 		size = add_size(size, hash_estimate_size(MAX_QUOTA_MAP_ENTRIES, sizeof(QuotaInfoEntry)) *
 		                              diskquota_max_monitored_databases);
@@ -565,6 +582,7 @@ init_disk_quota_model(uint32 id)
 {
 	HASHCTL        hash_ctl;
 	StringInfoData str;
+	bool           found;
 	initStringInfo(&str);
 
 	format_name("TableSizeEntrymap", id, &str);
@@ -581,8 +599,12 @@ init_disk_quota_model(uint32 id)
 	hash_ctl.keysize   = sizeof(RejectMapEntry);
 	hash_ctl.entrysize = sizeof(LocalRejectMapEntry);
 	local_disk_quota_reject_map =
-	        DiskquotaShmemInitHash(str.data, MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES,
-	                               &hash_ctl, HASH_ELEM, DISKQUOTA_TAG_HASH);
+	        DiskquotaShmemInitHash(str.data, diskquota_max_active_tables, diskquota_max_active_tables, &hash_ctl,
+	                               HASH_ELEM, DISKQUOTA_TAG_HASH);
+
+	format_name("localrejectmap_last_overflow_report", id, &str);
+	local_disk_quota_reject_map_last_overflow_report = ShmemInitStruct(str.data, sizeof(TimestampTz), &found);
+	if (!found) *local_disk_quota_reject_map_last_overflow_report = 0;
 
 	/* for quota_info_map */
 	format_name("QuotaInfoMap", id, &str);
@@ -614,6 +636,7 @@ vacuum_disk_quota_model(uint32 id)
 	TableSizeEntry      *tsentry = NULL;
 	LocalRejectMapEntry *localrejectentry;
 	QuotaInfoEntry      *qentry;
+	bool                 found;
 
 	HASHCTL        hash_ctl;
 	StringInfoData str;
@@ -639,13 +662,16 @@ vacuum_disk_quota_model(uint32 id)
 	hash_ctl.keysize   = sizeof(RejectMapEntry);
 	hash_ctl.entrysize = sizeof(LocalRejectMapEntry);
 	local_disk_quota_reject_map =
-	        DiskquotaShmemInitHash(str.data, MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES,
-	                               &hash_ctl, HASH_ELEM, DISKQUOTA_TAG_HASH);
+	        DiskquotaShmemInitHash(str.data, diskquota_max_active_tables, diskquota_max_active_tables, &hash_ctl,
+	                               HASH_ELEM, DISKQUOTA_TAG_HASH);
 	hash_seq_init(&iter, local_disk_quota_reject_map);
 	while ((localrejectentry = hash_seq_search(&iter)) != NULL)
 	{
 		hash_search(local_disk_quota_reject_map, &localrejectentry->keyitem, HASH_REMOVE, NULL);
 	}
+	format_name("localrejectmap_last_overflow_report", id, &str);
+	local_disk_quota_reject_map_last_overflow_report = ShmemInitStruct(str.data, sizeof(TimestampTz), &found);
+	if (!found) *local_disk_quota_reject_map_last_overflow_report = 0;
 
 	/* quota_info_map */
 	format_name("QuotaInfoMap", id, &str);
@@ -1312,13 +1338,12 @@ flush_local_reject_map(void)
 		 */
 		if (localrejectentry->isexceeded)
 		{
-			rejectentry = (GlobalRejectMapEntry *)hash_search(disk_quota_reject_map, (void *)&localrejectentry->keyitem,
-			                                                  HASH_ENTER_NULL, &found);
+			HASHACTION action =
+			        check_hash_fullness(disk_quota_reject_map, MAX_DISK_QUOTA_REJECT_ENTRIES,
+			                            disk_quota_reject_map_warning, &disk_quota_reject_map_last_overflow_report);
+			rejectentry = hash_search(disk_quota_reject_map, &localrejectentry->keyitem, action, &found);
 			if (rejectentry == NULL)
 			{
-				ereport(WARNING, (errmsg("[diskquota] Shared disk quota reject map size limit reached."
-				                         "Some out-of-limit schemas or roles will be lost"
-				                         "in rejectmap.")));
 				continue;
 			}
 			/* new db objects which exceed quota limit */
@@ -2156,7 +2181,10 @@ refresh_rejectmap(PG_FUNCTION_ARGS)
 		 */
 		if (OidIsValid(rejectmapentry->keyitem.targetoid)) continue;
 
-		new_entry = hash_search(disk_quota_reject_map, &rejectmapentry->keyitem, HASH_ENTER_NULL, &found);
+		HASHACTION action =
+		        check_hash_fullness(disk_quota_reject_map, MAX_DISK_QUOTA_REJECT_ENTRIES, disk_quota_reject_map_warning,
+		                            &disk_quota_reject_map_last_overflow_report);
+		new_entry = hash_search(disk_quota_reject_map, &rejectmapentry->keyitem, action, &found);
 		if (!found && new_entry) memcpy(new_entry, rejectmapentry, sizeof(GlobalRejectMapEntry));
 	}
 	LWLockRelease(diskquota_locks.reject_map_lock);
