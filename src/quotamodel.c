@@ -17,6 +17,7 @@
 #include "diskquota.h"
 #include "gp_activetable.h"
 #include "relation_cache.h"
+#include "diskquota_error.h"
 
 #include "postgres.h"
 
@@ -523,6 +524,7 @@ diskquota_worker_shmem_size()
 	size = hash_estimate_size(MAX_NUM_TABLE_SIZE_ENTRIES / diskquota_max_monitored_databases + 100,
 	                          sizeof(TableSizeEntry));
 	size = add_size(size, hash_estimate_size(MAX_LOCAL_DISK_QUOTA_REJECT_ENTRIES, sizeof(LocalRejectMapEntry)));
+	size = add_size(size, hash_estimate_size(BGWORKER_ERROR_MAP_SIZE, sizeof(BGworkerErrorEntry)));
 	return size;
 }
 
@@ -662,6 +664,8 @@ vacuum_disk_quota_model(uint32 id)
 	}
 
 	pfree(str.data);
+
+	init_bgworker_error_map(id);
 }
 
 /*
@@ -853,6 +857,7 @@ refresh_disk_quota_usage(bool is_init)
 		HOLD_INTERRUPTS();
 		EmitErrorReport();
 		FlushErrorState();
+		diskquota_status_push_error(UPDATE_TABLE_SIZE_ERROR);
 		ret = false;
 		/* Now we can allow interrupts again */
 		RESUME_INTERRUPTS();

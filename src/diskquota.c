@@ -17,6 +17,7 @@
  */
 #include "diskquota.h"
 #include "gp_activetable.h"
+#include "diskquota_error.h"
 
 #include "postgres.h"
 
@@ -1668,6 +1669,10 @@ diskquota_status(PG_FUNCTION_ARGS)
 	typedef struct Context
 	{
 		int index;
+		int error_indx;
+		int error_num;
+
+		BGworkerErrorEntry errors[BGWORKER_ERROR_MAP_SIZE];
 	} Context;
 
 	typedef struct FeatureStatus
@@ -1698,7 +1703,14 @@ diskquota_status(PG_FUNCTION_ARGS)
 			funcctx->tuple_desc = BlessTupleDesc(tupdesc);
 			Context *context    = (Context *)palloc(sizeof(Context));
 			context->index      = 0;
+			context->error_indx = 0;
+			context->error_num  = diskquota_status_get_error_num();
 			funcctx->user_fctx  = context;
+
+			DiskQuotaBGworkerError *errors;
+			errors = diskquota_status_error_map_to_array();
+			memcpy(&context->errors, errors, sizeof(DiskQuotaBGworkerError) * context->error_num);
+			pfree(errors);
 		}
 		MemoryContextSwitchTo(oldcontext);
 	}
@@ -1708,6 +1720,18 @@ diskquota_status(PG_FUNCTION_ARGS)
 
 	if (context->index >= sizeof(fs) / sizeof(FeatureStatus))
 	{
+		if (context->error_indx < context->error_num)
+		{
+			DiskQuotaBGworkerError error    = context->errors[context->error_indx++].error;
+			bool                   nulls[2] = {false, false};
+			Datum                  v[2]     = {
+                    DirectFunctionCall1(textin, CStringGetDatum(diskquota_status_error_to_string(error))),
+                    DirectFunctionCall1(textin, CStringGetDatum(diskquota_status_error_hint(error))),
+            };
+			ReturnSetInfo *rsi   = (ReturnSetInfo *)fcinfo->resultinfo;
+			HeapTuple      tuple = heap_form_tuple(rsi->expectedDesc, v, nulls);
+			SRF_RETURN_NEXT(funcctx, HeapTupleGetDatum(tuple));
+		}
 		SRF_RETURN_DONE(funcctx);
 	}
 
