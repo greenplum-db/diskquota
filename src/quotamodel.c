@@ -17,6 +17,7 @@
 #include "diskquota.h"
 #include "gp_activetable.h"
 #include "relation_cache.h"
+#include "diskquota_stat.h"
 
 #include "postgres.h"
 
@@ -83,46 +84,10 @@ typedef struct RejectMapEntry       RejectMapEntry;
 typedef struct GlobalRejectMapEntry GlobalRejectMapEntry;
 typedef struct LocalRejectMapEntry  LocalRejectMapEntry;
 
-int                      SEGCOUNT = 0;
-extern int               diskquota_max_table_segments;
-extern pg_atomic_uint32 *diskquota_table_size_entry_num;
-extern int               diskquota_max_monitored_databases;
-extern int               diskquota_max_quota_probes;
-extern pg_atomic_uint32 *diskquota_quota_info_entry_num;
-
-/*
- * local cache of table disk size and corresponding schema and owner.
- *
- * When id is 0, this TableSizeEntry stores the table size in the (-1 ~
- * SEGMENT_SIZE_ARRAY_LENGTH - 2)th segment, and so on.
- * |---------|--------------------------------------------------------------------------|
- * |   id    |                                segment index                             |
- * |---------|--------------------------------------------------------------------------|
- * |    0    |  [-1,                                SEGMENT_SIZE_ARRAY_LENGTH - 1)      |
- * |    1    |  [SEGMENT_SIZE_ARRAY_LENGTH - 1,     2 * SEGMENT_SIZE_ARRAY_LENGTH - 1)  |
- * |    2    |  [2 * SEGMENT_SIZE_ARRAY_LENGTH - 1, 3 * SEGMENT_SIZE_ARRAY_LENGTH - 1)  |
- * --------------------------------------------------------------------------------------
- *
- * flag's each bit is used to show the table's status, which is described in TableSizeEntryFlag.
- *
- * totalsize contains tables' size on segments. When id is 0, totalsize[0] is the sum of all segments' table size.
- * table size including fsm, visibility map etc.
- */
-typedef struct TableSizeEntryKey
-{
-	Oid reloid;
-	int id;
-} TableSizeEntryKey;
-
-struct TableSizeEntry
-{
-	TableSizeEntryKey key;
-	Oid               tablespaceoid;
-	Oid               namespaceoid;
-	Oid               owneroid;
-	uint32            flag;
-	int64             totalsize[SEGMENT_SIZE_ARRAY_LENGTH];
-};
+int        SEGCOUNT = 0;
+extern int diskquota_max_table_segments;
+extern int diskquota_max_monitored_databases;
+extern int diskquota_max_quota_probes;
 
 typedef enum
 {
@@ -199,7 +164,7 @@ static void add_quota_to_rejectmap(QuotaType type, Oid targetOid, Oid tablespace
 static void refresh_quota_info_map(void);
 static void clean_all_quota_limit(void);
 static void transfer_table_for_quota(int64 totalsize, QuotaType type, Oid *old_keys, Oid *new_keys, int16 segid);
-static QuotaInfoEntry *put_quota_map_entry(QuotaInfoEntryKey *key, bool *found);
+static QuotaInfoEntry *put_quota_info_entry(QuotaInfoEntryKey *key, bool *found);
 
 /* functions to refresh disk quota model*/
 static void refresh_disk_quota_usage(bool is_init);
@@ -230,33 +195,29 @@ static void delete_from_table_size_map(char *str);
  * found cannot be NULL
  */
 static QuotaInfoEntry *
-put_quota_map_entry(QuotaInfoEntryKey *key, bool *found)
+put_quota_info_entry(QuotaInfoEntryKey *key, bool *found)
 {
 	QuotaInfoEntry *entry;
-	uint32          counter = pg_atomic_read_u32(diskquota_quota_info_entry_num);
-	if (counter >= diskquota_max_quota_probes)
+	entry = hash_search(quota_info_map, key, HASH_FIND, found);
+	if (!(*found))
 	{
-		entry = hash_search(quota_info_map, key, HASH_FIND, found);
 		/*
 		 * Too many quotas have been added to the quota_info_map, to avoid diskquota using
 		 * too much shared memory, just return NULL. The diskquota won't work correctly
 		 * anymore.
 		 */
-		if (!(*found)) return NULL;
-	}
-	else
-	{
-		entry = hash_search(quota_info_map, key, HASH_ENTER, found);
-		if (!(*found))
+		bool success = alloc_quota_info_entry(quota_info_map);
+		if (success)
 		{
-			counter = pg_atomic_add_fetch_u32(diskquota_quota_info_entry_num, 1);
-			if (counter >= diskquota_max_quota_probes)
-			{
-				ereport(WARNING, (errmsg("[diskquota] the number of quota probe exceeds the limit, please "
-				                         "increase the GUC value for diskquota.max_quota_probes. Current "
-				                         "diskquota.max_quota_probes value: %d",
-				                         diskquota_max_quota_probes)));
-			}
+			entry = hash_search(quota_info_map, key, HASH_ENTER, NULL);
+		}
+		/* For the first exceeding, print a warning to the log. */
+		if (quota_info_entry_exceed_limit(quota_info_map))
+		{
+			ereport(WARNING, (errmsg("[diskquota] the number of quota exceeds the limit, please increase "
+			                         "the GUC value for diskquota.max_quota_probes. Current "
+			                         "diskquota.max_quota_probes value: %d",
+			                         diskquota_max_quota_probes)));
 		}
 	}
 	return entry;
@@ -273,7 +234,7 @@ update_size_for_quota(int64 size, QuotaType type, Oid *keys, int16 segid)
 	memcpy(key.keys, keys, quota_key_num[type] * sizeof(Oid));
 	key.type  = type;
 	key.segid = segid;
-	entry     = put_quota_map_entry(&key, &found);
+	entry     = put_quota_info_entry(&key, &found);
 	/* If the number of quota exceeds the limit, entry will be NULL */
 	if (entry == NULL) return;
 	if (!found)
@@ -297,7 +258,7 @@ update_limit_for_quota(int64 limit, float segratio, QuotaType type, Oid *keys)
 		memcpy(key.keys, keys, quota_key_num[type] * sizeof(Oid));
 		key.type  = type;
 		key.segid = i;
-		entry     = put_quota_map_entry(&key, &found);
+		entry     = put_quota_info_entry(&key, &found);
 		/* If the number of quota exceeds the limit, entry will be NULL */
 		if (entry == NULL) continue;
 		if (!found)
@@ -354,7 +315,6 @@ refresh_quota_info_map(void)
 			if (!HeapTupleIsValid(tuple))
 			{
 				hash_search(quota_info_map, &entry->key, HASH_REMOVE, NULL);
-				pg_atomic_fetch_sub_u32(diskquota_quota_info_entry_num, 1);
 				removed = true;
 				break;
 			}
@@ -593,6 +553,8 @@ init_disk_quota_model(uint32 id)
 	                                            HASH_ELEM, DISKQUOTA_TAG_HASH);
 
 	pfree(str.data);
+
+	init_diskquota_status(id);
 }
 
 /*
@@ -630,7 +592,6 @@ vacuum_disk_quota_model(uint32 id)
 	while ((tsentry = hash_seq_search(&iter)) != NULL)
 	{
 		hash_search(table_size_map, &tsentry->key, HASH_REMOVE, NULL);
-		pg_atomic_fetch_sub_u32(diskquota_table_size_entry_num, 1);
 	}
 
 	/* localrejectmap */
@@ -658,7 +619,6 @@ vacuum_disk_quota_model(uint32 id)
 	while ((qentry = hash_seq_search(&iter)) != NULL)
 	{
 		hash_search(quota_info_map, &qentry->key, HASH_REMOVE, NULL);
-		pg_atomic_fetch_sub_u32(diskquota_quota_info_entry_num, 1);
 	}
 
 	pfree(str.data);
@@ -1009,32 +969,19 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 			key.reloid = relOid;
 			key.id     = TableSizeEntryId(cur_segid);
 
-			uint32 counter = pg_atomic_read_u32(diskquota_table_size_entry_num);
-			if (counter > MAX_NUM_TABLE_SIZE_ENTRIES)
+			tsentry = (TableSizeEntry *)hash_search(table_size_map, &key, HASH_FIND, &table_size_map_found);
+			if (!table_size_map_found)
 			{
-				tsentry = (TableSizeEntry *)hash_search(table_size_map, &key, HASH_FIND, &table_size_map_found);
-				/* Too many tables have been added to the table_size_map, to avoid diskquota using
-				   too much share memory, just quit the loop. The diskquota won't work correctly
-				   anymore. */
-				if (!table_size_map_found)
+				/*
+				 * Too many tables have been added to the table_size_map, to avoid diskquota using
+				 * too much share memory, just quit the loop. The diskquota won't work correctly
+				 * anymore.
+				 */
+				bool success = alloc_table_size_entry(table_size_map);
+				if (success)
 				{
-					break;
-				}
-			}
-			else
-			{
-				tsentry = (TableSizeEntry *)hash_search(table_size_map, &key, HASH_ENTER, &table_size_map_found);
+					tsentry = (TableSizeEntry *)hash_search(table_size_map, &key, HASH_ENTER, NULL);
 
-				if (!table_size_map_found)
-				{
-					counter = pg_atomic_add_fetch_u32(diskquota_table_size_entry_num, 1);
-					if (counter > MAX_NUM_TABLE_SIZE_ENTRIES)
-					{
-						ereport(WARNING, (errmsg("[diskquota] the number of tables exceeds the limit, please increase "
-						                         "the GUC value for diskquota.max_table_segments. Current "
-						                         "diskquota.max_table_segments value: %d",
-						                         diskquota_max_table_segments)));
-					}
 					tsentry->key.reloid = relOid;
 					tsentry->key.id     = key.id;
 					Assert(TableSizeEntrySegidStart(tsentry) == cur_segid);
@@ -1047,6 +994,14 @@ calculate_table_disk_usage(bool is_init, HTAB *local_active_table_stat_map)
 					int seg_st = TableSizeEntrySegidStart(tsentry);
 					int seg_ed = TableSizeEntrySegidEnd(tsentry);
 					for (int j = seg_st; j < seg_ed; j++) TableSizeEntrySetFlushFlag(tsentry, j);
+				}
+				/* For the first exceeding, print a warning to the log. */
+				if (table_size_entry_exceed_limit(table_size_map))
+				{
+					ereport(WARNING, (errmsg("[diskquota] the number of tables exceeds the limit, please increase "
+					                         "the GUC value for diskquota.max_table_segments. Current "
+					                         "diskquota.max_table_segments value: %d",
+					                         diskquota_max_table_segments)));
 				}
 			}
 
@@ -1268,7 +1223,6 @@ flush_to_table_size(void)
 		if (!get_table_size_entry_flag(tsentry, TABLE_EXIST))
 		{
 			hash_search(table_size_map, &tsentry->key, HASH_REMOVE, NULL);
-			pg_atomic_fetch_sub_u32(diskquota_table_size_entry_num, 1);
 		}
 	}
 

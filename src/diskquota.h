@@ -265,6 +265,40 @@ struct MonitorDBEntryStruct
 };
 extern HTAB *disk_quota_worker_map;
 
+/*
+ * local cache of table disk size and corresponding schema and owner.
+ *
+ * When id is 0, this TableSizeEntry stores the table size in the (-1 ~
+ * SEGMENT_SIZE_ARRAY_LENGTH - 2)th segment, and so on.
+ * |---------|--------------------------------------------------------------------------|
+ * |   id    |                                segment index                             |
+ * |---------|--------------------------------------------------------------------------|
+ * |    0    |  [-1,                                SEGMENT_SIZE_ARRAY_LENGTH - 1)      |
+ * |    1    |  [SEGMENT_SIZE_ARRAY_LENGTH - 1,     2 * SEGMENT_SIZE_ARRAY_LENGTH - 1)  |
+ * |    2    |  [2 * SEGMENT_SIZE_ARRAY_LENGTH - 1, 3 * SEGMENT_SIZE_ARRAY_LENGTH - 1)  |
+ * --------------------------------------------------------------------------------------
+ *
+ * flag's each bit is used to show the table's status, which is described in TableSizeEntryFlag.
+ *
+ * totalsize contains tables' size on segments. When id is 0, totalsize[0] is the sum of all segments' table size.
+ * table size including fsm, visibility map etc.
+ */
+typedef struct TableSizeEntryKey
+{
+	Oid reloid;
+	int id;
+} TableSizeEntryKey;
+
+typedef struct TableSizeEntry
+{
+	TableSizeEntryKey key;
+	Oid               tablespaceoid;
+	Oid               namespaceoid;
+	Oid               owneroid;
+	uint32            flag;
+	int64             totalsize[SEGMENT_SIZE_ARRAY_LENGTH];
+} TableSizeEntry;
+
 /* drop extension hook */
 extern void register_diskquota_object_access_hook(void);
 

@@ -1,56 +1,68 @@
 select * from diskquota.status() where name not like '%version';
-    name     | status 
--------------+--------
- soft limits | on
- hard limits | off
-(2 rows)
+          name          | status 
+------------------------+--------
+ soft limits            | on
+ hard limits            | off
+ TableSize map capacity | 0.00%
+ QuotaInfo map capacity | 0.00%
+(4 rows)
 
 \! gpconfig -c "diskquota.hard_limit" -v "on" > /dev/null
 \! gpstop -u > /dev/null
 select * from diskquota.status() where name not like '%version';
-    name     | status 
--------------+--------
- soft limits | on
- hard limits | on
-(2 rows)
+          name          | status 
+------------------------+--------
+ soft limits            | on
+ hard limits            | on
+ TableSize map capacity | 0.00%
+ QuotaInfo map capacity | 0.00%
+(4 rows)
 
 \! gpconfig -c "diskquota.hard_limit" -v "off" > /dev/null
 \! gpstop -u > /dev/null
 select * from diskquota.status() where name not like '%version';
-    name     | status 
--------------+--------
- soft limits | on
- hard limits | off
-(2 rows)
+          name          | status 
+------------------------+--------
+ soft limits            | on
+ hard limits            | off
+ TableSize map capacity | 0.00%
+ QuotaInfo map capacity | 0.00%
+(4 rows)
 
 select from diskquota.pause();
 --
 (1 row)
 
 select * from diskquota.status() where name not like '%version';
-    name     | status 
--------------+--------
- soft limits | paused
- hard limits | off
-(2 rows)
+          name          | status 
+------------------------+--------
+ soft limits            | paused
+ hard limits            | off
+ TableSize map capacity | 0.00%
+ QuotaInfo map capacity | 0.00%
+(4 rows)
 
 \! gpconfig -c "diskquota.hard_limit" -v "on" > /dev/null
 \! gpstop -u > /dev/null
 select * from diskquota.status() where name not like '%version';
-    name     | status 
--------------+--------
- soft limits | paused
- hard limits | paused
-(2 rows)
+          name          | status 
+------------------------+--------
+ soft limits            | paused
+ hard limits            | paused
+ TableSize map capacity | 0.00%
+ QuotaInfo map capacity | 0.00%
+(4 rows)
 
 \! gpconfig -c "diskquota.hard_limit" -v "off" > /dev/null
 \! gpstop -u > /dev/null
 select * from diskquota.status() where name not like '%version';
-    name     | status 
--------------+--------
- soft limits | paused
- hard limits | off
-(2 rows)
+          name          | status 
+------------------------+--------
+ soft limits            | paused
+ hard limits            | off
+ TableSize map capacity | 0.00%
+ QuotaInfo map capacity | 0.00%
+(4 rows)
 
 select from diskquota.resume();
 --
@@ -59,9 +71,11 @@ select from diskquota.resume();
 \! gpconfig -c "diskquota.hard_limit" -v "off" > /dev/null
 \! gpstop -u > /dev/null
 select * from diskquota.status() where name not like '%version';
-    name     | status 
--------------+--------
- soft limits | on
- hard limits | off
-(2 rows)
+          name          | status 
+------------------------+--------
+ soft limits            | on
+ hard limits            | off
+ TableSize map capacity | 0.00%
+ QuotaInfo map capacity | 0.00%
+(4 rows)
 
